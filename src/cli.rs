@@ -22,13 +22,20 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
         #[arg(long)]
-        status: Option<String>,
+        status: Option<StatusArg>,
     },
     Show {
         selector: String,
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum StatusArg {
+    Ok,
+    Broken,
+    Missing,
 }
 
 impl Cli {
