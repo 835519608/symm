@@ -33,10 +33,9 @@ pub fn adopt_link_to_target(link: &Path, target: &Path) -> Result<(), SymmError>
             });
         }
 
-        let options = procs.iter().map(|p| p.display.clone()).collect::<Vec<_>>();
         let selected = MultiSelect::new(
             "检测到可能占用该路径的进程，请用空格选择要结束的进程，回车确认：",
-            options,
+            procs,
         )
         .with_help_message("↑↓ 移动  空格 选择/取消  Enter 确认  Esc 取消")
         .prompt()
@@ -45,10 +44,8 @@ pub fn adopt_link_to_target(link: &Path, target: &Path) -> Result<(), SymmError>
         })?;
 
         let mut pids = Vec::new();
-        for s in selected {
-            if let Some(pid) = extract_pid(&s) {
-                pids.push(pid);
-            }
+        for p in selected {
+            pids.push(p.pid);
         }
         if pids.is_empty() {
             return Err(SymmError::InvalidArgument {
@@ -81,16 +78,4 @@ fn staging_path(link: &Path) -> PathBuf {
         .unwrap_or_else(|| "link".to_string());
     p.set_file_name(format!("{file_name}.__symm_staging__"));
     p
-}
-
-fn extract_pid(line: &str) -> Option<u32> {
-    // 形如 "PID 1234  xxx"
-    let mut it = line.split_whitespace();
-    let a = it.next()?;
-    let b = it.next()?;
-    if a.eq_ignore_ascii_case("pid") {
-        b.parse::<u32>().ok()
-    } else {
-        None
-    }
 }

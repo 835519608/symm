@@ -45,16 +45,6 @@ pub fn normalize_link(path: &Path) -> String {
     }
 }
 
-pub fn abs_path_string(path: &Path) -> String {
-    if path.is_absolute() {
-        return path.to_string_lossy().to_string();
-    }
-    match std::env::current_dir() {
-        Ok(cwd) => cwd.join(path).to_string_lossy().to_string(),
-        Err(_) => path.to_string_lossy().to_string(),
-    }
-}
-
 fn canonicalish(path: &Path) -> String {
     match fs::canonicalize(path) {
         Ok(p) => p.to_string_lossy().to_string(),

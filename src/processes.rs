@@ -1,10 +1,17 @@
 use crate::error::SymmError;
+use std::fmt::{Display, Formatter};
 use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct ProcInfo {
     pub pid: u32,
     pub display: String,
+}
+
+impl Display for ProcInfo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display)
+    }
 }
 
 #[cfg(windows)]
@@ -61,42 +68,42 @@ fn unix_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> 
     let out = std::process::Command::new("fuser")
         .args(["-a", &p])
         .output();
-    if let Ok(out) = out {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout).to_string()
-                + &String::from_utf8_lossy(&out.stderr);
-            let pids = text
-                .split_whitespace()
-                .filter_map(|t| t.parse::<u32>().ok())
-                .collect::<Vec<_>>();
-            return Ok(pids
-                .into_iter()
-                .map(|pid| ProcInfo {
-                    pid,
-                    display: format!("PID {pid}"),
-                })
-                .collect());
-        }
+    if let Ok(out) = out
+        && out.status.success()
+    {
+        let text = String::from_utf8_lossy(&out.stdout).to_string()
+            + &String::from_utf8_lossy(&out.stderr);
+        let pids = text
+            .split_whitespace()
+            .filter_map(|t| t.parse::<u32>().ok())
+            .collect::<Vec<_>>();
+        return Ok(pids
+            .into_iter()
+            .map(|pid| ProcInfo {
+                pid,
+                display: format!("PID {pid}"),
+            })
+            .collect());
     }
 
     let out = std::process::Command::new("lsof")
         .args(["-t", "--", &p])
         .output();
-    if let Ok(out) = out {
-        if out.status.success() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            let pids = text
-                .lines()
-                .filter_map(|l| l.trim().parse::<u32>().ok())
-                .collect::<Vec<_>>();
-            return Ok(pids
-                .into_iter()
-                .map(|pid| ProcInfo {
-                    pid,
-                    display: format!("PID {pid}"),
-                })
-                .collect());
-        }
+    if let Ok(out) = out
+        && out.status.success()
+    {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let pids = text
+            .lines()
+            .filter_map(|l| l.trim().parse::<u32>().ok())
+            .collect::<Vec<_>>();
+        return Ok(pids
+            .into_iter()
+            .map(|pid| ProcInfo {
+                pid,
+                display: format!("PID {pid}"),
+            })
+            .collect());
     }
 
     Ok(vec![])
