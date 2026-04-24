@@ -9,7 +9,7 @@ struct ErrorPayload<'a> {
 }
 
 pub fn render_list_table(items: &[LinkView]) -> String {
-    let mut out = String::from("NAME\tSTATUS\tKIND\tLINK\tTARGET\n");
+    let mut out = String::from("名称\t状态\t类型\t链接路径\t目标路径\n");
     for item in items {
         out.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\n",
@@ -21,7 +21,7 @@ pub fn render_list_table(items: &[LinkView]) -> String {
 
 pub fn render_show_table(item: &LinkView) -> String {
     format!(
-        "name: {}\nstatus: {}\nkind: {}\nlink: {}\ntarget: {}\n",
+        "名称: {}\n状态: {}\n类型: {}\n链接路径: {}\n目标路径: {}\n",
         item.name, item.status, item.link_kind, item.link_path, item.target_path
     )
 }
@@ -38,6 +38,6 @@ pub fn render_error_json(err: &SymmError) -> String {
         message: err.to_string(),
     };
     serde_json::to_string_pretty(&payload).unwrap_or_else(|_| {
-        "{\"code\":\"io_error\",\"message\":\"failed to serialize error\"}".to_string()
+        "{\"code\":\"io_error\",\"message\":\"错误信息序列化失败\"}".to_string()
     })
 }

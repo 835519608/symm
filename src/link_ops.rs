@@ -19,7 +19,7 @@ pub fn create_link(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
             match std::os::windows::fs::symlink_dir(target, link) {
                 Ok(_) => return Ok(LinkKind::Symlink),
                 Err(_) => {
-                    // On Windows, symlink can fail due to privilege settings.
+                    // Windows 下软链接可能因权限策略失败，目录场景回退为 junction。
                     create_junction(target, link)?;
                     return Ok(LinkKind::Junction);
                 }
@@ -42,7 +42,7 @@ pub fn create_link(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
 
     #[allow(unreachable_code)]
     Err(SymmError::InvalidArgument {
-        message: "Unsupported platform".to_string(),
+        message: "不支持的平台".to_string(),
     })
 }
 

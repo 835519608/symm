@@ -2,21 +2,21 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SymmError {
-    #[error("invalid argument: {message}")]
+    #[error("参数错误：{message}")]
     InvalidArgument { message: String },
-    #[error("permission denied: {message}")]
+    #[error("权限不足：{message}")]
     PermissionDenied { message: String },
-    #[error("target not found: {path}")]
+    #[error("目标不存在：{path}")]
     TargetNotFound { path: String },
-    #[error("name conflict: {name}")]
+    #[error("名称冲突：{name}")]
     NameConflict { name: String },
-    #[error("path conflict: {path}")]
+    #[error("路径冲突：{path}")]
     PathConflict { path: String },
-    #[error("not found: {selector}")]
+    #[error("未找到记录：{selector}")]
     NotFound { selector: String },
-    #[error("database error: {message}")]
+    #[error("数据库错误：{message}")]
     DbError { message: String },
-    #[error("io error: {message}")]
+    #[error("IO 错误：{message}")]
     IoError { message: String },
 }
 

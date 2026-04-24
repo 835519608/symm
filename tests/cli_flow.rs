@@ -27,7 +27,7 @@ fn add_then_ls_then_show_then_rm() {
         ])
         .assert()
         .success()
-        .stdout(contains("created: demo"));
+        .stdout(contains("创建成功：demo"));
 
     cmd()
         .env("SYMM_HOME", &symm_home)
@@ -42,14 +42,14 @@ fn add_then_ls_then_show_then_rm() {
         .args(["show", "demo"])
         .assert()
         .success()
-        .stdout(contains("name: demo"));
+        .stdout(contains("名称: demo"));
 
     cmd()
         .env("SYMM_HOME", &symm_home)
         .args(["rm", "demo"])
         .assert()
         .success()
-        .stdout(contains("removed: demo"));
+        .stdout(contains("删除成功：demo"));
 }
 
 #[test]

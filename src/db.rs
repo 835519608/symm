@@ -24,7 +24,7 @@ pub fn symm_home() -> Result<PathBuf, SymmError> {
     }
 
     let home = dirs::home_dir().ok_or_else(|| SymmError::InvalidArgument {
-        message: "Cannot resolve home directory".to_string(),
+        message: "无法解析用户主目录".to_string(),
     })?;
     let p = home.join(".symm");
     fs::create_dir_all(&p).map_err(|e| SymmError::IoError {
@@ -202,7 +202,7 @@ fn map_sql_error(err: SqlError, name: &str, link_path: &str) -> SymmError {
                 Ok(c) => c,
                 Err(_) => {
                     return SymmError::DbError {
-                        message: format!("constraint violation for name={name} link={link_path}"),
+                        message: format!("唯一约束冲突：name={name}, link={link_path}"),
                     };
                 }
             };
@@ -217,7 +217,7 @@ fn map_sql_error(err: SqlError, name: &str, link_path: &str) -> SymmError {
                 };
             }
             SymmError::DbError {
-                message: format!("constraint violation for name={name} link={link_path}"),
+                message: format!("唯一约束冲突：name={name}, link={link_path}"),
             }
         }
         _ => SymmError::DbError {

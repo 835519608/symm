@@ -1,320 +1,51 @@
-# Symm CLI Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
-**Goal:** Build a Rust CLI (`symm`) for managed symlink creation, deletion, and inspection with SQLite-backed registry and cross-platform behavior.
-
-**Architecture:** Implement a small CLI with clear module boundaries: argument parsing, domain models, database access, filesystem link operations, and output rendering. Runtime statuses are derived from filesystem state and not persisted. Windows link creation tries symlink first and falls back to junction for directory targets.
-
-**Tech Stack:** Rust stable, `clap`, `rusqlite` (bundled), `serde`, `serde_json`, `anyhow`/`thiserror`, `assert_cmd`, `tempfile`.
-
----
-
-### Task 1: Initialize repository and Rust workspace
-
-**Files:**
-- Create: `.gitignore`
-- Create: `Cargo.toml`
-- Create: `src/main.rs`
-- Create: `src/cli.rs`
-- Create: `src/model.rs`
-- Create: `src/error.rs`
-- Create: `src/db.rs`
-- Create: `src/link_ops.rs`
-- Create: `src/output.rs`
-- Create: `tests/cli_flow.rs`
-
-- [ ] **Step 1: Initialize git and Cargo project**
+# Symm CLI 实施计划
 
-Run:
-```bash
-git init
-cargo init --bin --name symm .
-```
-Expected:
-- `Initialized empty Git repository`
-- `Created binary (application) package`
+**目标**：交付一个可用的 Rust 软链接管理 CLI（`symm`），支持创建、删除、查看，并使用 SQLite 做受管登记。
 
-- [ ] **Step 2: Add dependencies to `Cargo.toml`**
+## 任务拆分
 
-```toml
-[dependencies]
-clap = { version = "4", features = ["derive"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "1"
-anyhow = "1"
-dirs = "5"
+### 任务 1：工程初始化
 
-[dev-dependencies]
-assert_cmd = "2"
-predicates = "3"
-tempfile = "3"
-```
+- 初始化 git 与 Cargo 项目
+- 建立模块骨架（`src/*` 与 `tests/*`）
+- 添加依赖（`clap`、`rusqlite`、`serde` 等）
+- 完成首个提交（工程基线）
 
-- [ ] **Step 3: Add base module wiring**
+### 任务 2：先写测试
 
-```rust
-// src/main.rs
-mod cli;
-mod db;
-mod error;
-mod link_ops;
-mod model;
-mod output;
-
-fn main() -> anyhow::Result<()> {
-    symm::run()
-}
-```
+- 编写 CLI 生命周期测试（`add -> ls -> show -> rm`）
+- 增加 `--json` 输出断言
+- 提交测试用例，作为后续实现约束
 
-- [ ] **Step 4: Verify baseline compiles**
+### 任务 3：实现数据库层
 
-Run: `cargo check`
-Expected: `Finished` without errors.
-
-- [ ] **Step 5: Commit bootstrap**
-
-Run:
-```bash
-git add .
-git commit -m "chore: bootstrap symm rust cli project"
-```
+- 初始化 `symm.db`
+- 创建 `links` 表与唯一索引
+- 实现按名称/路径查询、列表、删除
+- 做冲突与异常映射
 
-### Task 2: Add failing integration tests for MVP commands
+### 任务 4：实现链接操作层
 
-**Files:**
-- Modify: `tests/cli_flow.rs`
-- Modify: `src/main.rs`
-
-- [ ] **Step 1: Write failing tests for add/ls/show/rm**
-
-```rust
-#[test]
-fn add_then_ls_then_show_then_rm() {
-    // Use temp dir + SYMM_HOME.
-    // 1) add succeeds
-    // 2) ls shows name
-    // 3) show shows link/target
-    // 4) rm succeeds
-}
-```
+- 实现跨平台创建/删除链接
+- Windows 目录链接失败时回退为 junction
+- 实现运行时状态计算（`ok`、`broken`、`missing`）
 
-- [ ] **Step 2: Run tests to verify failure**
+### 任务 5：实现命令处理与输出
 
-Run: `cargo test --test cli_flow -- --nocapture`
-Expected: FAIL because commands are not implemented.
+- 命令：`add`、`rm`、`ls`、`show`
+- 输出：默认可读 + `--json`
+- 错误统一结构化输出
 
-- [ ] **Step 3: Add minimal command dispatch skeleton**
+### 任务 6：收尾与文档
 
-```rust
-enum Commands { Add, Rm, Ls, Show }
-```
+- 补充 README
+- 运行格式化、静态检查与测试（环境允许时）
+- 按阶段提交，保证可回滚
 
-- [ ] **Step 4: Re-run test and confirm still failing at behavior level**
+## 完成标准
 
-Run: `cargo test --test cli_flow -- --nocapture`
-Expected: FAIL with "not implemented" style error, not parse errors.
-
-- [ ] **Step 5: Commit test scaffold**
-
-Run:
-```bash
-git add tests/cli_flow.rs src/main.rs src/cli.rs
-git commit -m "test: add failing integration tests for mvp commands"
-```
-
-### Task 3: Implement data model, DB schema, and basic CRUD
-
-**Files:**
-- Modify: `src/model.rs`
-- Modify: `src/db.rs`
-- Modify: `src/error.rs`
-- Test: `tests/cli_flow.rs`
-
-- [ ] **Step 1: Add failing unit tests for DB uniqueness and lookup**
-
-```rust
-#[test]
-fn unique_name_conflict_maps_to_name_conflict() {}
-#[test]
-fn unique_link_conflict_maps_to_path_conflict() {}
-```
-
-- [ ] **Step 2: Run tests to verify failures**
-
-Run: `cargo test db:: -- --nocapture`
-Expected: FAIL for missing schema/logic.
-
-- [ ] **Step 3: Implement schema migration and CRUD**
-
-```sql
-CREATE TABLE IF NOT EXISTS links (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  link_path TEXT NOT NULL UNIQUE,
-  target_path TEXT NOT NULL,
-  link_kind TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-```
-
-- [ ] **Step 4: Re-run tests**
-
-Run: `cargo test`
-Expected: DB tests pass; CLI flow still fails on filesystem behavior.
-
-- [ ] **Step 5: Commit DB layer**
-
-Run:
-```bash
-git add src/model.rs src/db.rs src/error.rs tests/cli_flow.rs
-git commit -m "feat: add sqlite registry schema and core crud"
-```
-
-### Task 4: Implement link creation/removal with Windows fallback
-
-**Files:**
-- Modify: `src/link_ops.rs`
-- Modify: `src/model.rs`
-- Test: `tests/cli_flow.rs`
-
-- [ ] **Step 1: Write failing tests for runtime status and missing link behavior**
-
-```rust
-#[test]
-fn status_ok_when_link_and_target_exist() {}
-#[test]
-fn status_missing_when_registry_exists_but_link_deleted() {}
-```
-
-- [ ] **Step 2: Run tests to verify failure**
-
-Run: `cargo test --test cli_flow -- --nocapture`
-Expected: FAIL with incorrect status/ops behavior.
-
-- [ ] **Step 3: Implement cross-platform operations**
-
-```rust
-// Unix: std::os::unix::fs::symlink
-// Windows: std::os::windows::fs::{symlink_dir, symlink_file}
-// Fallback: junction crate or mklink /J wrapper for directory target
-```
-
-- [ ] **Step 4: Re-run tests**
-
-Run: `cargo test --test cli_flow -- --nocapture`
-Expected: core lifecycle passes on current OS.
-
-- [ ] **Step 5: Commit filesystem ops**
-
-Run:
-```bash
-git add src/link_ops.rs src/model.rs tests/cli_flow.rs
-git commit -m "feat: implement cross-platform link operations and status checks"
-```
-
-### Task 5: Implement command handlers and output modes
-
-**Files:**
-- Modify: `src/cli.rs`
-- Modify: `src/main.rs`
-- Modify: `src/output.rs`
-- Modify: `src/error.rs`
-- Test: `tests/cli_flow.rs`
-
-- [ ] **Step 1: Add failing tests for `--json` output shape**
-
-```rust
-#[test]
-fn ls_json_contains_code_and_fields() {}
-#[test]
-fn show_json_contains_status_field() {}
-```
-
-- [ ] **Step 2: Run tests to verify failures**
-
-Run: `cargo test --test cli_flow -- --nocapture`
-Expected: FAIL for missing JSON contract.
-
-- [ ] **Step 3: Implement handlers and formatter**
-
-```rust
-symm add <name> <target> <link>
-symm rm <name_or_link>
-symm ls [--json] [--status ...]
-symm show <name_or_link> [--json]
-```
-
-- [ ] **Step 4: Re-run full test suite**
-
-Run: `cargo test`
-Expected: PASS for unit and integration tests.
-
-- [ ] **Step 5: Commit command layer**
-
-Run:
-```bash
-git add src/cli.rs src/main.rs src/output.rs src/error.rs tests/cli_flow.rs
-git commit -m "feat: implement mvp commands with table and json output"
-```
-
-### Task 6: Verification, docs, and release-ready polish
-
-**Files:**
-- Modify: `README.md`
-- Modify: `docs/superpowers/specs/2026-04-24-symm-cli-design.md` (if needed for drift alignment)
-
-- [ ] **Step 1: Add usage docs**
-
-```md
-# symm
-symm add ...
-symm ls --json
-```
-
-- [ ] **Step 2: Run quality checks**
-
-Run:
-```bash
-cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-```
-Expected: all commands succeed.
-
-- [ ] **Step 3: Manual smoke checks**
-
-Run:
-```bash
-cargo run -- add demo ./target_file ./demo_link
-cargo run -- ls
-cargo run -- show demo
-cargo run -- rm demo
-```
-Expected: lifecycle works and outputs are correct.
-
-- [ ] **Step 4: Commit final polish**
-
-Run:
-```bash
-git add README.md
-git commit -m "docs: add usage guide and finalize mvp verification"
-```
-
-- [ ] **Step 5: Tag optional milestone**
-
-Run: `git tag -a v0.1.0 -m "symm mvp"`
-Expected: local tag created.
-
-## Spec Coverage Checklist
-
-- CLI commands add/rm/ls/show: covered in Tasks 2 and 5.
-- SQLite registry and indexed lookup behavior: covered in Task 3.
-- Runtime status model (`ok|broken|missing`): covered in Task 4.
-- Windows symlink fallback to junction: covered in Task 4.
-- Table + JSON output: covered in Task 5.
-- Reliability and verification: covered in Task 6.
+- 功能闭环：可完成 add/rm/ls/show
+- 受管数据可持久化
+- 状态判断正确
+- 文档与面向用户信息中文化
 

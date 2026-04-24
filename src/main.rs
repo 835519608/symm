@@ -22,7 +22,7 @@ fn run() -> Result<(), error::SymmError> {
     let command = cli
         .command
         .ok_or_else(|| error::SymmError::InvalidArgument {
-            message: "No command provided".to_string(),
+            message: "未提供命令，请使用 --help 查看帮助".to_string(),
         })?;
     let conn = db::open_db()?;
 
@@ -30,7 +30,7 @@ fn run() -> Result<(), error::SymmError> {
         cli::Commands::Add { name, target, link } => {
             if name.trim().is_empty() {
                 return Err(error::SymmError::InvalidArgument {
-                    message: "name cannot be empty".to_string(),
+                    message: "名称不能为空".to_string(),
                 });
             }
             let target_norm = db::normalize_target(&target)?;
@@ -41,13 +41,13 @@ fn run() -> Result<(), error::SymmError> {
                 let _ = link_ops::remove_link(Path::new(&link_norm));
                 return Err(e);
             }
-            println!("created: {name}");
+            println!("创建成功：{name}");
         }
         cli::Commands::Rm { selector } => {
             let record = db::get_by_selector(&conn, &selector)?;
             link_ops::remove_link(Path::new(&record.link_path))?;
             db::delete_by_selector(&conn, &selector)?;
-            println!("removed: {}", record.name);
+            println!("删除成功：{}", record.name);
         }
         cli::Commands::Ls { json, status } => {
             let mut views: Vec<_> = db::list_links(&conn)?
