@@ -57,6 +57,7 @@
 
 - `ls` 与 `show` 走 SQLite 索引查询，不做目录递归扫描。
 - 状态计算基于 `symlink_metadata` 与目标存在性判定，避免断链误判。
+- `ls` 在记录量较大时会并行计算状态（默认阈值 128），提升大批量查询速度。
 - SQLite 连接默认启用：
   - `busy_timeout=5000`
   - `journal_mode=WAL`

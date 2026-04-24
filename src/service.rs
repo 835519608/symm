@@ -5,6 +5,7 @@ use crate::link_ops;
 use crate::model::{LinkStatus, LinkView};
 use crate::output;
 use crate::paths;
+use rayon::prelude::*;
 use std::path::Path;
 
 pub fn execute(command: Commands) -> Result<String, SymmError> {
@@ -57,8 +58,18 @@ fn list_views(
     wanted: Option<LinkStatus>,
 ) -> Result<Vec<LinkView>, SymmError> {
     let records = db::list_links(conn)?;
+    const PARALLEL_THRESHOLD: usize = 128;
+
+    if records.len() < PARALLEL_THRESHOLD {
+        return Ok(records
+            .into_iter()
+            .map(link_ops::as_view)
+            .filter(|view| wanted.is_none_or(|s| view.status == s))
+            .collect());
+    }
+
     Ok(records
-        .into_iter()
+        .into_par_iter()
         .map(link_ops::as_view)
         .filter(|view| wanted.is_none_or(|s| view.status == s))
         .collect())
