@@ -35,7 +35,7 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
                 });
             }
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(windows))]
@@ -53,7 +53,7 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
                 });
             }
         }
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -110,9 +110,10 @@ fn unix_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> 
 fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::ERROR_MORE_DATA;
+    use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::RestartManager::{
-        CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RmEndSession, RmGetList, RmRegisterResources,
-        RmStartSession,
+        CCH_RM_MAX_APP_NAME, CCH_RM_MAX_SVC_NAME, CCH_RM_SESSION_KEY, RM_PROCESS_INFO,
+        RM_UNIQUE_PROCESS, RmEndSession, RmGetList, RmRegisterResources, RmStartSession,
     };
 
     let mut session: u32 = 0;
@@ -166,8 +167,22 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
             return Ok(vec![]);
         }
 
-        let mut buf: Vec<RM_PROCESS_INFO> = Vec::with_capacity(needed as usize);
-        unsafe { buf.set_len(needed as usize) };
+        let empty = RM_PROCESS_INFO {
+            Process: RM_UNIQUE_PROCESS {
+                dwProcessId: 0,
+                ProcessStartTime: FILETIME {
+                    dwLowDateTime: 0,
+                    dwHighDateTime: 0,
+                },
+            },
+            strAppName: [0; (CCH_RM_MAX_APP_NAME as usize) + 1],
+            strServiceShortName: [0; (CCH_RM_MAX_SVC_NAME as usize) + 1],
+            ApplicationType: 0,
+            AppStatus: 0,
+            TSSessionId: 0,
+            bRestartable: 0,
+        };
+        let mut buf: Vec<RM_PROCESS_INFO> = vec![empty; needed as usize];
         count = needed;
 
         let second = unsafe {
