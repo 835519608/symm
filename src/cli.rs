@@ -37,9 +37,3 @@ pub enum StatusArg {
     Broken,
     Missing,
 }
-
-impl Cli {
-    pub fn parse_args() -> Self {
-        Self::parse()
-    }
-}

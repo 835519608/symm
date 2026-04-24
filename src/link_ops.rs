@@ -91,7 +91,7 @@ pub fn remove_link(link: &Path) -> Result<(), SymmError> {
 
 pub fn status_for(record: &LinkRecord) -> LinkStatus {
     let link = Path::new(&record.link_path);
-    if !link.exists() {
+    if fs::symlink_metadata(link).is_err() {
         return LinkStatus::Missing;
     }
     let target = Path::new(&record.target_path);

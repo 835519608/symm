@@ -1,6 +1,7 @@
 use crate::error::SymmError;
 use crate::model::LinkView;
 use serde::Serialize;
+use std::fmt::Write;
 
 #[derive(Serialize)]
 struct ErrorPayload<'a> {
@@ -9,12 +10,14 @@ struct ErrorPayload<'a> {
 }
 
 pub fn render_list_table(items: &[LinkView]) -> String {
-    let mut out = String::from("名称\t状态\t类型\t链接路径\t目标路径\n");
+    let mut out = String::with_capacity(items.len().saturating_mul(64) + 64);
+    out.push_str("名称\t状态\t类型\t链接路径\t目标路径\n");
     for item in items {
-        out.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\n",
+        let _ = writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}",
             item.name, item.status, item.link_kind, item.link_path, item.target_path
-        ));
+        );
     }
     out
 }

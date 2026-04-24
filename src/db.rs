@@ -1,11 +1,8 @@
 use crate::error::SymmError;
 use crate::model::{LinkKind, LinkRecord};
+use crate::paths;
 use rusqlite::{Connection, Error as SqlError, ErrorCode, params};
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-pub const DB_FILE_NAME: &str = "symm.db";
 
 fn now_ts() -> i64 {
     SystemTime::now()
@@ -14,36 +11,27 @@ fn now_ts() -> i64 {
         .unwrap_or(0)
 }
 
-pub fn symm_home() -> Result<PathBuf, SymmError> {
-    if let Ok(v) = std::env::var("SYMM_HOME") {
-        let p = PathBuf::from(v);
-        fs::create_dir_all(&p).map_err(|e| SymmError::IoError {
-            message: e.to_string(),
-        })?;
-        return Ok(p);
-    }
-
-    let home = dirs::home_dir().ok_or_else(|| SymmError::InvalidArgument {
-        message: "无法解析用户主目录".to_string(),
-    })?;
-    let p = home.join(".symm");
-    fs::create_dir_all(&p).map_err(|e| SymmError::IoError {
-        message: e.to_string(),
-    })?;
-    Ok(p)
-}
-
-pub fn db_path() -> Result<PathBuf, SymmError> {
-    Ok(symm_home()?.join(DB_FILE_NAME))
-}
-
 pub fn open_db() -> Result<Connection, SymmError> {
-    let path = db_path()?;
+    let path = paths::db_path()?;
     let conn = Connection::open(path).map_err(|e| SymmError::DbError {
         message: e.to_string(),
     })?;
+    tune_connection(&conn)?;
     migrate(&conn)?;
     Ok(conn)
+}
+
+fn tune_connection(conn: &Connection) -> Result<(), SymmError> {
+    conn.execute_batch(
+        "PRAGMA busy_timeout = 5000;
+         PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA temp_store = MEMORY;",
+    )
+    .map_err(|e| SymmError::DbError {
+        message: format!("数据库连接调优失败：{e}"),
+    })?;
+    Ok(())
 }
 
 fn migrate(conn: &Connection) -> Result<(), SymmError> {
@@ -56,32 +44,14 @@ fn migrate(conn: &Connection) -> Result<(), SymmError> {
             link_kind TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
-        );",
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_links_name ON links(name);
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_links_link_path ON links(link_path);",
     )
     .map_err(|e| SymmError::DbError {
         message: e.to_string(),
     })?;
     Ok(())
-}
-
-fn canonicalish(path: &Path) -> String {
-    match fs::canonicalize(path) {
-        Ok(p) => p.to_string_lossy().to_string(),
-        Err(_) => path.to_string_lossy().to_string(),
-    }
-}
-
-pub fn normalize_target(path: &Path) -> Result<String, SymmError> {
-    if !path.exists() {
-        return Err(SymmError::TargetNotFound {
-            path: path.to_string_lossy().to_string(),
-        });
-    }
-    Ok(canonicalish(path))
-}
-
-pub fn normalize_link(path: &Path) -> String {
-    canonicalish(path)
 }
 
 pub fn insert_link(
@@ -193,25 +163,18 @@ pub fn list_links(conn: &Connection) -> Result<Vec<LinkRecord>, SymmError> {
 
 fn map_sql_error(err: SqlError, name: &str, link_path: &str) -> SymmError {
     match err {
-        SqlError::SqliteFailure(e, _)
+        SqlError::SqliteFailure(e, msg)
             if e.code == ErrorCode::ConstraintViolation
                 || e.code == ErrorCode::ConstraintPrimaryKey
                 || e.code == ErrorCode::ConstraintUnique =>
         {
-            let conn = match open_db() {
-                Ok(c) => c,
-                Err(_) => {
-                    return SymmError::DbError {
-                        message: format!("唯一约束冲突：name={name}, link={link_path}"),
-                    };
-                }
-            };
-            if get_by_selector(&conn, name).is_ok() {
+            let msg = msg.unwrap_or_default();
+            if msg.contains("links.name") || msg.contains("ux_links_name") {
                 return SymmError::NameConflict {
                     name: name.to_string(),
                 };
             }
-            if get_by_selector(&conn, link_path).is_ok() {
+            if msg.contains("links.link_path") || msg.contains("ux_links_link_path") {
                 return SymmError::PathConflict {
                     path: link_path.to_string(),
                 };

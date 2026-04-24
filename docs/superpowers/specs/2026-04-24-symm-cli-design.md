@@ -20,7 +20,7 @@
 
 ## 数据模型
 
-- 默认数据目录：`$HOME/.symm`
+- 默认数据目录：可执行文件同级 `data/`
 - 可通过 `SYMM_HOME` 覆盖
 - 数据库文件：`symm.db`
 - 表：`links(name, link_path, target_path, link_kind, created_at, updated_at)`
