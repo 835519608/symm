@@ -7,54 +7,50 @@ pub struct ProcInfo {
     pub display: String,
 }
 
+#[cfg(windows)]
 pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
-    #[cfg(windows)]
-    {
-        return windows_list_locking_processes(path);
-    }
-
-    #[cfg(not(windows))]
-    {
-        return unix_list_locking_processes(path);
-    }
+    windows_list_locking_processes(path)
 }
 
-pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
-    #[cfg(windows)]
-    {
-        for pid in pids {
-            let status = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .status()
-                .map_err(|e| SymmError::IoError {
-                    message: format!("执行 taskkill 失败：{e}"),
-                })?;
-            if !status.success() {
-                return Err(SymmError::PermissionDenied {
-                    message: format!("无法结束进程 PID={pid}（可能无权限）"),
-                });
-            }
-        }
-        Ok(())
-    }
+#[cfg(not(windows))]
+pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+    unix_list_locking_processes(path)
+}
 
-    #[cfg(not(windows))]
-    {
-        for pid in pids {
-            let status = std::process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .status()
-                .map_err(|e| SymmError::IoError {
-                    message: format!("执行 kill 失败：{e}"),
-                })?;
-            if !status.success() {
-                return Err(SymmError::PermissionDenied {
-                    message: format!("无法结束进程 PID={pid}（可能无权限）"),
-                });
-            }
+#[cfg(windows)]
+pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
+    for pid in pids {
+        let status = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+            .map_err(|e| SymmError::IoError {
+                message: format!("执行 taskkill 失败：{e}"),
+            })?;
+        if !status.success() {
+            return Err(SymmError::PermissionDenied {
+                message: format!("无法结束进程 PID={pid}（可能无权限）"),
+            });
         }
-        Ok(())
     }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
+    for pid in pids {
+        let status = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .map_err(|e| SymmError::IoError {
+                message: format!("执行 kill 失败：{e}"),
+            })?;
+        if !status.success() {
+            return Err(SymmError::PermissionDenied {
+                message: format!("无法结束进程 PID={pid}（可能无权限）"),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
