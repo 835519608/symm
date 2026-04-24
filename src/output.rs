@@ -1,28 +1,12 @@
 use crate::error::SymmError;
 use crate::model::LinkView;
 use serde::Serialize;
-use std::fmt::Write as FmtWrite;
 use std::io::Write;
 
 #[derive(Serialize)]
 struct ErrorPayload<'a> {
     code: &'a str,
     message: String,
-}
-
-pub fn render_list_table(items: &[LinkView]) -> String {
-    let mut out = String::with_capacity(items.len().saturating_mul(64) + 64);
-    out.push_str("名称\t状态\t类型\t链接路径\t目标路径\n");
-    for item in items {
-        let _ = FmtWrite::write_fmt(
-            &mut out,
-            format_args!(
-                "{}\t{}\t{}\t{}\t{}\n",
-                item.name, item.status, item.link_kind, item.link_path, item.target_path
-            ),
-        );
-    }
-    out
 }
 
 pub fn write_list_header<W: Write>(writer: &mut W) -> Result<(), SymmError> {
