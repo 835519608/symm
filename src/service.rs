@@ -5,6 +5,7 @@ use crate::link_ops;
 use crate::model::LinkStatus;
 use crate::output;
 use crate::paths;
+use crate::adopt;
 use std::io::Write;
 use std::path::Path;
 
@@ -17,8 +18,14 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
                     message: "名称不能为空".to_string(),
                 });
             }
-            let target_norm = paths::normalize_target(&target)?;
             let link_norm = paths::normalize_link(&link);
+
+            // 默认接管：link 有实体，target 不存在 -> 先把实体移动到 target，再用 link 指向 target
+            if !target.exists() && Path::new(&link_norm).exists() {
+                adopt::adopt_link_to_target(Path::new(&link_norm), &target)?;
+            }
+
+            let target_norm = paths::normalize_target(&target)?;
             let link_kind = link_ops::create_link(Path::new(&target_norm), Path::new(&link_norm))?;
 
             if let Err(e) = db::insert_link(&conn, &name, &link_norm, &target_norm, link_kind) {

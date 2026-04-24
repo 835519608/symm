@@ -5,6 +5,8 @@ mod link_ops;
 mod model;
 mod output;
 mod paths;
+mod processes;
+mod adopt;
 mod service;
 
 use anyhow::Result;
