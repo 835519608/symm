@@ -20,10 +20,13 @@ fn main() -> Result<()> {
 
 fn run() -> Result<(), error::SymmError> {
     let cli = cli::Cli::parse();
-    let command = cli.command.ok_or_else(|| error::SymmError::InvalidArgument {
-        message: "未提供命令，请使用 --help 查看帮助".to_string(),
-    })?;
-    let out = service::execute(command)?;
-    print!("{out}");
+    let command = cli
+        .command
+        .ok_or_else(|| error::SymmError::InvalidArgument {
+            message: "未提供命令，请使用 --help 查看帮助".to_string(),
+        })?;
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    service::execute(command, &mut lock)?;
     Ok(())
 }

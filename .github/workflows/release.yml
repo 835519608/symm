@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: 发布产物 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: target/release/symm
+            out: symm-linux-x64
+          - os: windows-latest
+            bin: target/release/symm.exe
+            out: symm-windows-x64.exe
+          - os: macos-latest
+            bin: target/release/symm
+            out: symm-macos-x64
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建 release
+        run: cargo build --release
+
+      - name: 准备发布文件
+        shell: bash
+        run: cp "${{ matrix.bin }}" "${{ matrix.out }}"
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.out }}

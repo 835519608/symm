@@ -2,13 +2,13 @@ use crate::cli::{Commands, StatusArg};
 use crate::db;
 use crate::error::SymmError;
 use crate::link_ops;
-use crate::model::{LinkStatus, LinkView};
+use crate::model::LinkStatus;
 use crate::output;
 use crate::paths;
-use rayon::prelude::*;
+use std::io::Write;
 use std::path::Path;
 
-pub fn execute(command: Commands) -> Result<String, SymmError> {
+pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmError> {
     let conn = db::open_db()?;
     match command {
         Commands::Add { name, target, link } => {
@@ -25,54 +25,80 @@ pub fn execute(command: Commands) -> Result<String, SymmError> {
                 let _ = link_ops::remove_link(Path::new(&link_norm));
                 return Err(e);
             }
-            Ok(format!("创建成功：{name}\n"))
+            writeln!(writer, "创建成功：{name}").map_err(|e| SymmError::IoError {
+                message: e.to_string(),
+            })?;
+            Ok(())
         }
         Commands::Rm { selector } => {
             let record = db::get_by_selector(&conn, &selector)?;
             link_ops::remove_link(Path::new(&record.link_path))?;
             db::delete_by_selector(&conn, &selector)?;
-            Ok(format!("删除成功：{}\n", record.name))
+            writeln!(writer, "删除成功：{}", record.name).map_err(|e| SymmError::IoError {
+                message: e.to_string(),
+            })?;
+            Ok(())
         }
         Commands::Ls { json, status } => {
             let wanted = status.map(status_to_model);
-            let views = list_views(&conn, wanted)?;
             if json {
-                output::render_json(&views).map(|s| format!("{s}\n"))
+                stream_ls_json(&conn, wanted, writer)
             } else {
-                Ok(output::render_list_table(&views))
+                stream_ls_table(&conn, wanted, writer)
             }
         }
         Commands::Show { selector, json } => {
             let view = link_ops::as_view(db::get_by_selector(&conn, &selector)?);
             if json {
-                output::render_json(&view).map(|s| format!("{s}\n"))
+                let text = output::render_json(&view)?;
+                writeln!(writer, "{text}").map_err(|e| SymmError::IoError {
+                    message: e.to_string(),
+                })?;
+                Ok(())
             } else {
-                Ok(output::render_show_table(&view))
+                writer
+                    .write_all(output::render_show_table(&view).as_bytes())
+                    .map_err(|e| SymmError::IoError {
+                        message: e.to_string(),
+                    })?;
+                Ok(())
             }
         }
     }
 }
 
-fn list_views(
+fn stream_ls_table<W: Write>(
     conn: &rusqlite::Connection,
     wanted: Option<LinkStatus>,
-) -> Result<Vec<LinkView>, SymmError> {
+    writer: &mut W,
+) -> Result<(), SymmError> {
     let records = db::list_links(conn)?;
-    const PARALLEL_THRESHOLD: usize = 128;
-
-    if records.len() < PARALLEL_THRESHOLD {
-        return Ok(records
-            .into_iter()
-            .map(link_ops::as_view)
-            .filter(|view| wanted.is_none_or(|s| view.status == s))
-            .collect());
+    output::write_list_header(writer)?;
+    for record in records {
+        let view = link_ops::as_view(record);
+        if wanted.is_none_or(|s| view.status == s) {
+            output::write_list_row(writer, &view)?;
+        }
     }
+    Ok(())
+}
 
-    Ok(records
-        .into_par_iter()
-        .map(link_ops::as_view)
-        .filter(|view| wanted.is_none_or(|s| view.status == s))
-        .collect())
+fn stream_ls_json<W: Write>(
+    conn: &rusqlite::Connection,
+    wanted: Option<LinkStatus>,
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    let records = db::list_links(conn)?;
+    output::write_json_array_start(writer)?;
+    let mut first = true;
+    for record in records {
+        let view = link_ops::as_view(record);
+        if wanted.is_none_or(|s| view.status == s) {
+            output::write_json_item(writer, &view, first)?;
+            first = false;
+        }
+    }
+    output::write_json_array_end(writer)
 }
 
 fn status_to_model(arg: StatusArg) -> LinkStatus {

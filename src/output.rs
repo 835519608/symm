@@ -1,7 +1,7 @@
 use crate::error::SymmError;
 use crate::model::LinkView;
 use serde::Serialize;
-use std::fmt::Write;
+use std::io::Write;
 
 #[derive(Serialize)]
 struct ErrorPayload<'a> {
@@ -20,6 +20,52 @@ pub fn render_list_table(items: &[LinkView]) -> String {
         );
     }
     out
+}
+
+pub fn write_list_header<W: Write>(writer: &mut W) -> Result<(), SymmError> {
+    writer
+        .write_all("名称\t状态\t类型\t链接路径\t目标路径\n".as_bytes())
+        .map_err(|e| SymmError::IoError {
+            message: e.to_string(),
+        })
+}
+
+pub fn write_list_row<W: Write>(writer: &mut W, item: &LinkView) -> Result<(), SymmError> {
+    writeln!(
+        writer,
+        "{}\t{}\t{}\t{}\t{}",
+        item.name, item.status, item.link_kind, item.link_path, item.target_path
+    )
+    .map_err(|e| SymmError::IoError {
+        message: e.to_string(),
+    })
+}
+
+pub fn write_json_array_start<W: Write>(writer: &mut W) -> Result<(), SymmError> {
+    writer.write_all(b"[").map_err(|e| SymmError::IoError {
+        message: e.to_string(),
+    })
+}
+
+pub fn write_json_array_end<W: Write>(writer: &mut W) -> Result<(), SymmError> {
+    writer.write_all(b"]\n").map_err(|e| SymmError::IoError {
+        message: e.to_string(),
+    })
+}
+
+pub fn write_json_item<W: Write>(
+    writer: &mut W,
+    item: &LinkView,
+    is_first: bool,
+) -> Result<(), SymmError> {
+    if !is_first {
+        writer.write_all(b",").map_err(|e| SymmError::IoError {
+            message: e.to_string(),
+        })?;
+    }
+    serde_json::to_writer(writer, item).map_err(|e| SymmError::IoError {
+        message: e.to_string(),
+    })
 }
 
 pub fn render_show_table(item: &LinkView) -> String {
