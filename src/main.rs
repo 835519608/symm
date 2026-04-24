@@ -1,3 +1,4 @@
+mod adopt;
 mod cli;
 mod db;
 mod error;
@@ -6,7 +7,6 @@ mod model;
 mod output;
 mod paths;
 mod processes;
-mod adopt;
 mod service;
 
 use anyhow::Result;

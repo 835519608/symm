@@ -1,3 +1,4 @@
+use crate::adopt;
 use crate::cli::{Commands, StatusArg};
 use crate::db;
 use crate::error::SymmError;
@@ -5,7 +6,6 @@ use crate::link_ops;
 use crate::model::LinkStatus;
 use crate::output;
 use crate::paths;
-use crate::adopt;
 use std::io::Write;
 use std::path::Path;
 

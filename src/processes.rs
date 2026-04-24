@@ -111,8 +111,8 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::ERROR_MORE_DATA;
     use windows_sys::Win32::System::RestartManager::{
-        RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
-        RM_PROCESS_INFO,
+        CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RmEndSession, RmGetList, RmRegisterResources,
+        RmStartSession,
     };
 
     let mut session: u32 = 0;
@@ -131,7 +131,17 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
             .collect();
         let resources = [wide.as_ptr()];
 
-        let reg = unsafe { RmRegisterResources(session, 1, resources.as_ptr(), 0, std::ptr::null(), 0, std::ptr::null()) };
+        let reg = unsafe {
+            RmRegisterResources(
+                session,
+                1,
+                resources.as_ptr(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+            )
+        };
         if reg != 0 {
             return Ok(vec![]);
         }
@@ -152,7 +162,7 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
         if first == 0 && needed == 0 {
             return Ok(vec![]);
         }
-        if first != ERROR_MORE_DATA as i32 && first != 0 {
+        if first != ERROR_MORE_DATA && first != 0 {
             return Ok(vec![]);
         }
 

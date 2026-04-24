@@ -34,12 +34,15 @@ pub fn adopt_link_to_target(link: &Path, target: &Path) -> Result<(), SymmError>
         }
 
         let options = procs.iter().map(|p| p.display.clone()).collect::<Vec<_>>();
-        let selected = MultiSelect::new("检测到可能占用该路径的进程，请用空格选择要结束的进程，回车确认：", options)
-            .with_help_message("↑↓ 移动  空格 选择/取消  Enter 确认  Esc 取消")
-            .prompt()
-            .map_err(|e| SymmError::InvalidArgument {
-                message: format!("已取消：{e}"),
-            })?;
+        let selected = MultiSelect::new(
+            "检测到可能占用该路径的进程，请用空格选择要结束的进程，回车确认：",
+            options,
+        )
+        .with_help_message("↑↓ 移动  空格 选择/取消  Enter 确认  Esc 取消")
+        .prompt()
+        .map_err(|e| SymmError::InvalidArgument {
+            message: format!("已取消：{e}"),
+        })?;
 
         let mut pids = Vec::new();
         for s in selected {
@@ -91,4 +94,3 @@ fn extract_pid(line: &str) -> Option<u32> {
         None
     }
 }
-
