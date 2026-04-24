@@ -163,11 +163,7 @@ pub fn list_links(conn: &Connection) -> Result<Vec<LinkRecord>, SymmError> {
 
 fn map_sql_error(err: SqlError, name: &str, link_path: &str) -> SymmError {
     match err {
-        SqlError::SqliteFailure(e, msg)
-            if e.code == ErrorCode::ConstraintViolation
-                || e.code == ErrorCode::ConstraintPrimaryKey
-                || e.code == ErrorCode::ConstraintUnique =>
-        {
+        SqlError::SqliteFailure(e, msg) if e.code == ErrorCode::ConstraintViolation => {
             let msg = msg.unwrap_or_default();
             if msg.contains("links.name") || msg.contains("ux_links_name") {
                 return SymmError::NameConflict {
