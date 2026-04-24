@@ -108,11 +108,11 @@ fn unix_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> 
 
 #[cfg(windows)]
 fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
-    use std::mem::MaybeUninit;
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::ERROR_MORE_DATA;
     use windows_sys::Win32::System::RestartManager::{
         RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
-        CCH_RM_MAX_APP_NAME, CCH_RM_MAX_SVC_NAME, RM_PROCESS_INFO,
-        RM_REBOOT_REASON_NONE, ERROR_MORE_DATA,
+        RM_PROCESS_INFO,
     };
 
     let mut session: u32 = 0;
@@ -138,7 +138,7 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
 
         let mut needed: u32 = 0;
         let mut count: u32 = 0;
-        let mut reason: u32 = RM_REBOOT_REASON_NONE;
+        let mut reason: u32 = 0;
         let first = unsafe {
             RmGetList(
                 session,
@@ -152,7 +152,7 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
         if first == 0 && needed == 0 {
             return Ok(vec![]);
         }
-        if first != ERROR_MORE_DATA && first != 0 {
+        if first != ERROR_MORE_DATA as i32 && first != 0 {
             return Ok(vec![]);
         }
 
