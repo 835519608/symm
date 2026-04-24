@@ -2,13 +2,22 @@ use crate::error::SymmError;
 use crate::model::{LinkKind, LinkRecord, LinkStatus, LinkView};
 use std::fs;
 use std::path::Path;
+#[cfg(windows)]
 use std::process::Command;
 
 pub fn create_link(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(target, link).map_err(|e| SymmError::IoError {
-            message: e.to_string(),
+        std::os::unix::fs::symlink(target, link).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                SymmError::PermissionDenied {
+                    message: e.to_string(),
+                }
+            } else {
+                SymmError::IoError {
+                    message: e.to_string(),
+                }
+            }
         })?;
         return Ok(LinkKind::Symlink);
     }

@@ -78,8 +78,8 @@ fn ls_json_and_show_json_work() {
         .args(["ls", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"name\": \"demo2\""))
-        .stdout(contains("\"status\": \"ok\""));
+        .stdout(contains("\"name\":\"demo2\""))
+        .stdout(contains("\"status\":\"ok\""));
 
     cmd()
         .env("SYMM_HOME", &symm_home)
