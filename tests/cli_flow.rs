@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use predicates::str::contains;
+use serde_json::Value;
 use std::fs;
 use tempfile::tempdir;
 
@@ -182,14 +183,18 @@ fn add_when_target_and_link_both_exist_cancel() {
     fs::write(&target, "keep-target").expect("write target");
     fs::write(&link, "keep-link").expect("write link entity");
 
-    cmd()
+    let cancel_output = cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "cancel-add")
         .env("SYMM_ADD_CONFLICT_CHOICE", "cancel")
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
-        .assert()
-        .failure()
-        .stderr(contains("\"code\": \"invalid_argument\""));
+        .output()
+        .expect("run cancel add");
+    assert!(!cancel_output.status.success());
+    let cancel_err =
+        String::from_utf8(cancel_output.stderr).expect("cancel stderr should be valid utf-8 json");
+    let cancel_json: Value = serde_json::from_str(&cancel_err).expect("stderr should be json");
+    assert_eq!(cancel_json["code"], "invalid_argument");
 
     assert_eq!(
         fs::read_to_string(&target).expect("read target"),
@@ -226,12 +231,19 @@ fn add_same_link_updates_record_instead_of_inserting_new_one() {
         .assert()
         .success();
 
-    cmd()
+    let ls_output = cmd()
         .env("SYMM_HOME", &symm_home)
         .args(["ls", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"name\":\"v2\""));
+        .get_output()
+        .stdout
+        .clone();
+    let ls_text = String::from_utf8(ls_output).expect("ls stdout should be valid utf-8 json");
+    let ls_json: Value = serde_json::from_str(&ls_text).expect("ls output should be json");
+    let items = ls_json.as_array().expect("ls json should be an array");
+    assert_eq!(items.len(), 1, "same link should upsert instead of insert");
+    assert_eq!(items[0]["name"], "v2");
 
     // Windows 下 JSON 中 target_path 可能是规范化后的 \\?\ 前缀绝对路径，避免直接比字符串。
     assert_eq!(
