@@ -6,34 +6,45 @@ use crate::link_ops;
 use crate::model::LinkStatus;
 use crate::output;
 use crate::paths;
+use inquire::Text;
 use std::io::Write;
 use std::path::Path;
 
 pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmError> {
     let conn = db::open_db()?;
     match command {
-        Commands::Add { name, target, link } => {
-            if name.trim().is_empty() {
-                return Err(SymmError::InvalidArgument {
-                    message: "名称不能为空".to_string(),
-                });
-            }
+        Commands::Add { link, target } => {
             let link_norm = paths::normalize_link(&link);
-
-            // 默认接管：link 有实体，target 不存在 -> 先把实体移动到 target，再用 link 指向 target
-            if !target.exists() && Path::new(&link_norm).exists() {
-                adopt::adopt_link_to_target(Path::new(&link_norm), &target)?;
-            }
+            let existing = db::get_by_link_path(&conn, &link_norm)?;
+            let prep = adopt::resolve_add_conflict(Path::new(&link_norm), &target)?;
 
             let target_norm = paths::normalize_target(&target)?;
-            let link_kind = link_ops::create_link(Path::new(&target_norm), Path::new(&link_norm))?;
+            let link_kind =
+                match link_ops::create_link(Path::new(&target_norm), Path::new(&link_norm)) {
+                    Ok(kind) => kind,
+                    Err(e) => {
+                        let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
+                        return Err(e);
+                    }
+                };
 
+            let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
+            let name = resolve_add_name(default_name)?;
             if let Err(e) = db::insert_link(&conn, &name, &link_norm, &target_norm, link_kind) {
                 let _ = link_ops::remove_link(Path::new(&link_norm));
+                let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
                 return Err(e);
             }
-            writeln!(writer, "创建成功：{name}").map_err(|e| SymmError::IoError {
-                message: e.to_string(),
+            prep.commit()?;
+            let display_name = if name.is_empty() {
+                "(空)"
+            } else {
+                name.as_str()
+            };
+            writeln!(writer, "创建成功：{link_norm}（name: {display_name}）").map_err(|e| {
+                SymmError::IoError {
+                    message: e.to_string(),
+                }
             })?;
             Ok(())
         }
@@ -114,4 +125,18 @@ fn status_to_model(arg: StatusArg) -> LinkStatus {
         StatusArg::Broken => LinkStatus::Broken,
         StatusArg::Missing => LinkStatus::Missing,
     }
+}
+
+fn resolve_add_name(default_name: &str) -> Result<String, SymmError> {
+    if let Ok(v) = std::env::var("SYMM_ADD_NAME") {
+        return Ok(v.trim().to_string());
+    }
+
+    Text::new("可选填写 name（回车保持默认值）:")
+        .with_default(default_name)
+        .prompt()
+        .map(|s| s.trim().to_string())
+        .map_err(|e| SymmError::InvalidArgument {
+            message: format!("已取消：{e}"),
+        })
 }

@@ -38,15 +38,15 @@ fn migrate(conn: &Connection) -> Result<(), SymmError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS links (
             id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL DEFAULT '',
             link_path TEXT NOT NULL UNIQUE,
             target_path TEXT NOT NULL,
             link_kind TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_links_name ON links(name);
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_links_link_path ON links(link_path);",
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_links_link_path ON links(link_path);
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_links_name_nonempty ON links(name) WHERE name <> '';",
     )
     .map_err(|e| SymmError::DbError {
         message: e.to_string(),
@@ -65,7 +65,12 @@ pub fn insert_link(
     let mut stmt = conn
         .prepare(
             "INSERT INTO links(name, link_path, target_path, link_kind, created_at, updated_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(link_path) DO UPDATE SET
+               name = excluded.name,
+               target_path = excluded.target_path,
+               link_kind = excluded.link_kind,
+               updated_at = excluded.updated_at",
         )
         .map_err(|e| SymmError::DbError {
             message: e.to_string(),
@@ -81,7 +86,41 @@ pub fn insert_link(
     ]);
     match res {
         Ok(_) => Ok(()),
-        Err(e) => Err(map_sql_error(e, name, link_path)),
+        Err(e) => Err(map_sql_error(e, name)),
+    }
+}
+
+pub fn get_by_link_path(
+    conn: &Connection,
+    link_path: &str,
+) -> Result<Option<LinkRecord>, SymmError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT name, link_path, target_path, link_kind, created_at, updated_at
+             FROM links WHERE link_path = ?1 LIMIT 1",
+        )
+        .map_err(|e| SymmError::DbError {
+            message: e.to_string(),
+        })?;
+
+    let rec = stmt.query_row(params![link_path], |row| {
+        let kind_str: String = row.get(3)?;
+        Ok(LinkRecord {
+            name: row.get(0)?,
+            link_path: row.get(1)?,
+            target_path: row.get(2)?,
+            link_kind: kind_str.parse().unwrap_or(LinkKind::Symlink),
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+        })
+    });
+
+    match rec {
+        Ok(v) => Ok(Some(v)),
+        Err(SqlError::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(SymmError::DbError {
+            message: e.to_string(),
+        }),
     }
 }
 
@@ -161,22 +200,17 @@ pub fn list_links(conn: &Connection) -> Result<Vec<LinkRecord>, SymmError> {
         })
 }
 
-fn map_sql_error(err: SqlError, name: &str, link_path: &str) -> SymmError {
+fn map_sql_error(err: SqlError, name: &str) -> SymmError {
     match err {
         SqlError::SqliteFailure(e, msg) if e.code == ErrorCode::ConstraintViolation => {
             let msg = msg.unwrap_or_default();
-            if msg.contains("links.name") || msg.contains("ux_links_name") {
+            if msg.contains("links.name") || msg.contains("ux_links_name_nonempty") {
                 return SymmError::NameConflict {
                     name: name.to_string(),
                 };
             }
-            if msg.contains("links.link_path") || msg.contains("ux_links_link_path") {
-                return SymmError::PathConflict {
-                    path: link_path.to_string(),
-                };
-            }
             SymmError::DbError {
-                message: format!("唯一约束冲突：name={name}, link={link_path}"),
+                message: format!("唯一约束冲突：name={name}"),
             }
         }
         _ => SymmError::DbError {

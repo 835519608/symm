@@ -4,7 +4,7 @@
 
 ## 命令
 
-- `symm add <name> <target> <link>`：创建并登记软链接
+- `symm add <link> <target>`：创建/更新软链接（按 link 幂等）
 - `symm rm <name|link>`：按名称或链接路径删除
 - `symm ls [--status ok|broken|missing] [--json]`：列表查看
 - `symm show <name|link> [--json]`：查看单条详情
@@ -19,6 +19,24 @@
 
 - Linux/macOS：使用系统软链接
 - Windows：优先创建软链接；目录软链接失败时自动降级为 junction
+
+## `add` 行为与冲突处理
+
+当执行 `symm add <link> <target>` 时：
+
+- 以 `link` 为主键：同一 `link` 重复执行会更新原记录（不是新增）
+- 成功后会提示可选填写 `name`：
+  - 新增时默认空
+  - 更新时默认显示原值，回车保持原样
+
+- 若 `target` 不存在且 `link` 为实体（非软链接）：执行接管迁移（将 `link` 实体迁移到 `target`，再在 `link` 创建指向 `target` 的链接）
+- 若 `target` 与 `link` 都存在：进入三选一交互
+  - 保留 `link`（放弃 `target`）
+  - 保留 `target`（放弃 `link`）
+  - 取消
+- 若 `target` 与 `link` 都不存在：返回错误，不自动创建空目标
+
+以上流程均采用 staging + 回滚机制，任一步失败会恢复到操作前状态，避免部分成功导致的数据破坏。
 
 ## 打包与发布（多平台）
 

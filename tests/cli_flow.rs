@@ -19,15 +19,11 @@ fn add_then_ls_then_show_then_rm() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .args([
-            "add",
-            "demo",
-            &target.to_string_lossy(),
-            &link.to_string_lossy(),
-        ])
+        .env("SYMM_ADD_NAME", "demo")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success()
-        .stdout(contains("创建成功：demo"));
+        .stdout(contains("name: demo"));
 
     cmd()
         .env("SYMM_HOME", &symm_home)
@@ -64,12 +60,8 @@ fn ls_json_and_show_json_work() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .args([
-            "add",
-            "demo2",
-            &target.to_string_lossy(),
-            &link.to_string_lossy(),
-        ])
+        .env("SYMM_ADD_NAME", "demo2")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success();
 
@@ -107,12 +99,8 @@ fn add_adopts_existing_link_entity_when_target_missing() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .args([
-            "add",
-            "adopt",
-            &target.to_string_lossy(),
-            &link.to_string_lossy(),
-        ])
+        .env("SYMM_ADD_NAME", "adopt")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success();
 
@@ -120,4 +108,128 @@ fn add_adopts_existing_link_entity_when_target_missing() {
     assert_eq!(fs::read_to_string(&target).expect("read moved"), "payload");
     // link 位置应变成软链接（读取内容应等于 target 内容）
     assert_eq!(fs::read_to_string(&link).expect("read via link"), "payload");
+}
+
+#[test]
+fn add_when_target_and_link_both_exist_keep_link() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_keep_link.txt");
+    let link = data_root.join("link_keep_link.txt");
+    fs::write(&target, "from-target").expect("write target");
+    fs::write(&link, "from-link").expect("write link entity");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "keep-link")
+        .env("SYMM_ADD_CONFLICT_CHOICE", "link")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(&target).expect("read kept link payload"),
+        "from-link"
+    );
+    assert_eq!(
+        fs::read_to_string(&link).expect("read through new symlink"),
+        "from-link"
+    );
+}
+
+#[test]
+fn add_when_target_and_link_both_exist_keep_target() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_keep_target.txt");
+    let link = data_root.join("link_keep_target.txt");
+    fs::write(&target, "stay-target").expect("write target");
+    fs::write(&link, "drop-link-entity").expect("write link entity");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "keep-target")
+        .env("SYMM_ADD_CONFLICT_CHOICE", "target")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(&target).expect("read kept target payload"),
+        "stay-target"
+    );
+    assert_eq!(
+        fs::read_to_string(&link).expect("read through recreated symlink"),
+        "stay-target"
+    );
+}
+
+#[test]
+fn add_when_target_and_link_both_exist_cancel() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_cancel.txt");
+    let link = data_root.join("link_cancel.txt");
+    fs::write(&target, "keep-target").expect("write target");
+    fs::write(&link, "keep-link").expect("write link entity");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "cancel-add")
+        .env("SYMM_ADD_CONFLICT_CHOICE", "cancel")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .failure()
+        .stderr(contains("\"code\":\"invalid_argument\""));
+
+    assert_eq!(
+        fs::read_to_string(&target).expect("read target"),
+        "keep-target"
+    );
+    assert_eq!(fs::read_to_string(&link).expect("read link"), "keep-link");
+}
+
+#[test]
+fn add_same_link_updates_record_instead_of_inserting_new_one() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target_a = data_root.join("target_a.txt");
+    let target_b = data_root.join("target_b.txt");
+    let link = data_root.join("same_link.txt");
+    fs::write(&target_a, "a").expect("write target a");
+    fs::write(&target_b, "b").expect("write target b");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "v1")
+        .args(["add", &link.to_string_lossy(), &target_a.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "v2")
+        .args(["add", &link.to_string_lossy(), &target_b.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"v2\""))
+        .stdout(contains(target_b.to_string_lossy().as_ref()));
 }

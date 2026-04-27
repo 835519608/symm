@@ -1,0 +1,41 @@
+[tools]
+rust = "stable"
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+[tasks.fmt]
+description = "格式化代码"
+run = "mise x rust@stable -- cargo fmt --all"
+
+[tasks.check]
+description = "快速编译检查"
+run = "mise x rust@stable -- cargo check --all-targets"
+
+[tasks.clippy]
+description = "运行 clippy（警告视为错误）"
+run = "mise x rust@stable -- cargo clippy --all-targets --all-features -- -D warnings"
+
+[tasks.test]
+description = "运行全部测试"
+run = "mise x rust@stable -- cargo test --all-targets"
+
+[tasks.test-cli]
+description = "仅运行 CLI 集成测试"
+run = "mise x rust@stable -- cargo test --test cli_flow"
+
+[tasks.build]
+description = "构建 release 产物"
+run = "mise x rust@stable -- cargo build --release"
+
+[tasks.run-help]
+description = "运行并显示帮助"
+run = "mise x rust@stable -- cargo run -- --help"
+
+[tasks.ci]
+description = "本地 CI：fmt + clippy + test"
+run = [
+  "mise x rust@stable -- cargo fmt --all --check",
+  "mise x rust@stable -- cargo clippy --all-targets --all-features -- -D warnings",
+  "mise x rust@stable -- cargo test --all-targets"
+]

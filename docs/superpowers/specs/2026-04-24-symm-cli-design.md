@@ -13,7 +13,7 @@
 
 ## 命令
 
-- `symm add <name> <target> <link>`
+- `symm add <link> <target>`
 - `symm rm <name|link>`
 - `symm ls [--json] [--status ok|broken|missing]`
 - `symm show <name|link> [--json]`
@@ -24,7 +24,7 @@
 - 可通过 `SYMM_HOME` 覆盖
 - 数据库文件：`symm.db`
 - 表：`links(name, link_path, target_path, link_kind, created_at, updated_at)`
-- 唯一索引：`name`、`link_path`
+- 唯一索引：`link_path`，`name` 仅在非空时唯一
 
 ## 状态模型（运行时计算）
 
@@ -38,19 +38,28 @@
 - `rm`：先查受管对象，删除链接，再删除数据库记录
 - 所有写操作通过事务保证一致性
 
-## 默认接管行为（add）
+## `add` 冲突与接管策略
 
-当执行 `symm add <name> <target> <link>` 且满足：
-- `link` 路径已存在且为实体（文件/目录），并且不是软链接
-- `target` 路径不存在
+当执行 `symm add <link> <target>` 时：
 
-工具默认执行“接管迁移”：
-1. 原子重命名 `link -> link.__symm_staging__`（失败通常为占用/权限）
-2. 原子重命名 `staging -> target`
-3. 在原 `link` 位置创建软链接指向 `target`
-4. 写入 SQLite 受管记录
+1. 若 `target` 不存在且 `link` 路径已存在实体（文件/目录，且不是软链接）  
+   执行“接管迁移”：
+   - 原子重命名 `link -> link.__symm_staging__`（失败通常为占用/权限）
+   - 原子重命名 `staging -> target`
+   - 在原 `link` 位置创建软链接指向 `target`
+   - 写入 SQLite 受管记录
 
-任一步失败都会回滚，保证不破坏原始数据。
+2. 若 `target` 与 `link` 都存在  
+   进入交互式三选一：
+   - 保留 `link`（放弃 `target`）
+   - 保留 `target`（放弃 `link`）
+   - 取消（不执行任何修改）
+
+3. 所有分支统一使用 staging + 回滚  
+   任一步失败都会回滚，保证不破坏原始数据，避免“部分成功”状态。
+
+4. 入库按 `link_path` upsert  
+   同一 `link` 再次 add 会更新已有记录（最新 target/name 生效），不新增重复记录。
 
 ### 占用进程处理（可选交互）
 

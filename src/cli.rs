@@ -11,9 +11,8 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     Add {
-        name: String,
-        target: PathBuf,
         link: PathBuf,
+        target: PathBuf,
     },
     Rm {
         selector: String,

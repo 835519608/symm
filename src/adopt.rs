@@ -1,11 +1,122 @@
 use crate::error::SymmError;
 use crate::processes;
-use inquire::MultiSelect;
+use inquire::{MultiSelect, Select};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConflictChoice {
+    KeepLink,
+    KeepTarget,
+    Cancel,
+}
+
+pub struct AddPreparation {
+    adopted_link_to_target: bool,
+    staged_target: Option<PathBuf>,
+    staged_link: Option<PathBuf>,
+}
+
+impl AddPreparation {
+    pub fn prepare(link: &Path, target: &Path) -> Result<Self, SymmError> {
+        let mut plan = AddPreparation {
+            adopted_link_to_target: false,
+            staged_target: None,
+            staged_link: None,
+        };
+
+        let link_exists = link.exists();
+        let target_exists = target.exists();
+
+        match (link_exists, target_exists) {
+            (false, false) | (false, true) => Ok(plan),
+            (true, false) => {
+                adopt_link_to_target(link, target)?;
+                plan.adopted_link_to_target = true;
+                Ok(plan)
+            }
+            (true, true) => {
+                plan.prepare_both_exist(link, target)?;
+                Ok(plan)
+            }
+        }
+    }
+
+    fn prepare_both_exist(&mut self, link: &Path, target: &Path) -> Result<(), SymmError> {
+        match select_conflict_choice()? {
+            ConflictChoice::KeepLink => {
+                let target_staging = staging_path(target);
+                move_path_with_retry(target, &target_staging, "target")?;
+                self.staged_target = Some(target_staging);
+
+                if let Err(e) = adopt_link_to_target(link, target) {
+                    self.rollback(link, target)?;
+                    return Err(e);
+                }
+                self.adopted_link_to_target = true;
+                Ok(())
+            }
+            ConflictChoice::KeepTarget => {
+                let link_staging = staging_path(link);
+                move_path_with_retry(link, &link_staging, "link")?;
+                self.staged_link = Some(link_staging);
+                Ok(())
+            }
+            ConflictChoice::Cancel => Err(SymmError::InvalidArgument {
+                message: "用户取消：未执行 add".to_string(),
+            }),
+        }
+    }
+
+    pub fn commit(&self) -> Result<(), SymmError> {
+        if let Some(path) = &self.staged_target {
+            remove_path_any(path)?;
+        }
+        if let Some(path) = &self.staged_link {
+            remove_path_any(path)?;
+        }
+        Ok(())
+    }
+
+    pub fn rollback(&self, link: &Path, target: &Path) -> Result<(), SymmError> {
+        if self.adopted_link_to_target && target.exists() {
+            // add 失败后，若 link 已被创建，先移除，再把 target 中的内容回滚到 link。
+            if link.exists() {
+                remove_path_any(link)?;
+            }
+            fs::rename(target, link).map_err(|e| SymmError::IoError {
+                message: format!("回滚失败：无法恢复 link：{e}"),
+            })?;
+        }
+
+        if let Some(path) = &self.staged_target
+            && path.exists()
+        {
+            fs::rename(path, target).map_err(|e| SymmError::IoError {
+                message: format!("回滚失败：无法恢复 target：{e}"),
+            })?;
+        }
+
+        if let Some(path) = &self.staged_link
+            && path.exists()
+        {
+            if link.exists() {
+                remove_path_any(link)?;
+            }
+            fs::rename(path, link).map_err(|e| SymmError::IoError {
+                message: format!("回滚失败：无法恢复 link 备份：{e}"),
+            })?;
+        }
+
+        Ok(())
+    }
+}
+
+pub fn resolve_add_conflict(link: &Path, target: &Path) -> Result<AddPreparation, SymmError> {
+    AddPreparation::prepare(link, target)
+}
+
 pub fn adopt_link_to_target(link: &Path, target: &Path) -> Result<(), SymmError> {
-    // 只在 link 存在实体、target 不存在时调用
     if target.exists() {
         return Err(SymmError::InvalidArgument {
             message: "接管失败：目标路径已存在".to_string(),
@@ -22,44 +133,8 @@ pub fn adopt_link_to_target(link: &Path, target: &Path) -> Result<(), SymmError>
     }
 
     let staging = staging_path(link);
+    move_path_with_retry(link, &staging, "link")?;
 
-    // 第一步：原子改名 link -> staging（失败则可能是占用/权限）
-    if let Err(e) = fs::rename(link, &staging) {
-        // 尝试列出占用进程并按 pnpm 风格多选 kill
-        let procs = processes::list_locking_processes(link)?;
-        if procs.is_empty() {
-            return Err(SymmError::IoError {
-                message: format!("无法移动 link（可能被占用）：{e}"),
-            });
-        }
-
-        let selected = MultiSelect::new(
-            "检测到可能占用该路径的进程，请用空格选择要结束的进程，回车确认：",
-            procs,
-        )
-        .with_help_message("↑↓ 移动  空格 选择/取消  Enter 确认  Esc 取消")
-        .prompt()
-        .map_err(|e| SymmError::InvalidArgument {
-            message: format!("已取消：{e}"),
-        })?;
-
-        let mut pids = Vec::new();
-        for p in selected {
-            pids.push(p.pid);
-        }
-        if pids.is_empty() {
-            return Err(SymmError::InvalidArgument {
-                message: "未选择任何进程，已取消".to_string(),
-            });
-        }
-
-        processes::kill_processes(&pids)?;
-        fs::rename(link, &staging).map_err(|e| SymmError::IoError {
-            message: format!("结束进程后仍无法移动 link：{e}"),
-        })?;
-    }
-
-    // 第二步：移动 staging -> target（失败必须回滚 staging -> link）
     if let Err(e) = fs::rename(&staging, target) {
         let _ = fs::rename(&staging, link);
         return Err(SymmError::IoError {
@@ -78,4 +153,100 @@ fn staging_path(link: &Path) -> PathBuf {
         .unwrap_or_else(|| "link".to_string());
     p.set_file_name(format!("{file_name}.__symm_staging__"));
     p
+}
+
+fn select_conflict_choice() -> Result<ConflictChoice, SymmError> {
+    if let Ok(raw) = std::env::var("SYMM_ADD_CONFLICT_CHOICE") {
+        return parse_conflict_choice(&raw);
+    }
+
+    let options = vec![
+        ("保留 link（放弃 target）", ConflictChoice::KeepLink),
+        ("保留 target（放弃 link）", ConflictChoice::KeepTarget),
+        ("取消", ConflictChoice::Cancel),
+    ];
+    let labels: Vec<&str> = options.iter().map(|(label, _)| *label).collect();
+    let selected = Select::new("检测到 target 与 link 都已存在，请选择处理方式：", labels)
+        .with_help_message("↑↓ 移动  Enter 确认  Esc 取消")
+        .prompt()
+        .map_err(|e| SymmError::InvalidArgument {
+            message: format!("已取消：{e}"),
+        })?;
+
+    for (label, choice) in options {
+        if label == selected {
+            return Ok(choice);
+        }
+    }
+    Err(SymmError::InvalidArgument {
+        message: "无效选择".to_string(),
+    })
+}
+
+fn parse_conflict_choice(raw: &str) -> Result<ConflictChoice, SymmError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "link" | "keep_link" => Ok(ConflictChoice::KeepLink),
+        "target" | "keep_target" => Ok(ConflictChoice::KeepTarget),
+        "cancel" | "abort" => Ok(ConflictChoice::Cancel),
+        _ => Err(SymmError::InvalidArgument {
+            message: format!(
+                "环境变量 SYMM_ADD_CONFLICT_CHOICE 值无效：{raw}（可选：link/target/cancel）"
+            ),
+        }),
+    }
+}
+
+fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
+    if let Err(e) = fs::rename(src, dst) {
+        let procs = processes::list_locking_processes(src)?;
+        if procs.is_empty() {
+            return Err(SymmError::IoError {
+                message: format!("无法移动 {role}（可能被占用）：{e}"),
+            });
+        }
+
+        let selected = MultiSelect::new(
+            "检测到可能占用该路径的进程，请用空格选择要结束的进程，回车确认：",
+            procs,
+        )
+        .with_help_message("↑↓ 移动  空格 选择/取消  Enter 确认  Esc 取消")
+        .prompt()
+        .map_err(|err| SymmError::InvalidArgument {
+            message: format!("已取消：{err}"),
+        })?;
+
+        let pids: Vec<u32> = selected.into_iter().map(|p| p.pid).collect();
+        if pids.is_empty() {
+            return Err(SymmError::InvalidArgument {
+                message: "未选择任何进程，已取消".to_string(),
+            });
+        }
+
+        processes::kill_processes(&pids)?;
+        fs::rename(src, dst).map_err(|err| SymmError::IoError {
+            message: format!("结束进程后仍无法移动 {role}：{err}"),
+        })?;
+    }
+    Ok(())
+}
+
+fn remove_path_any(path: &Path) -> Result<(), SymmError> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_dir() {
+                fs::remove_dir_all(path).map_err(|e| SymmError::IoError {
+                    message: e.to_string(),
+                })?;
+            } else {
+                fs::remove_file(path).map_err(|e| SymmError::IoError {
+                    message: e.to_string(),
+                })?;
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(SymmError::IoError {
+            message: e.to_string(),
+        }),
+    }
 }
