@@ -233,3 +233,72 @@ fn add_same_link_updates_record_instead_of_inserting_new_one() {
         .stdout(contains("\"name\":\"v2\""))
         .stdout(contains(target_b.to_string_lossy().as_ref()));
 }
+
+#[test]
+fn add_existing_symlink_pointing_to_same_target_is_managed_without_conflict_prompt() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("same_target.txt");
+    let link = data_root.join("same_target_link.txt");
+    fs::write(&target, "same").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "first")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    // link 已经是指向 target 的软链接，再次 add 应直接纳管/更新，不应进入冲突交互
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "second")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["show", &link.to_string_lossy(), "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\": \"second\""))
+        .stdout(contains(target.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn add_existing_symlink_pointing_elsewhere_can_retarget() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target_a = data_root.join("retarget_a.txt");
+    let target_b = data_root.join("retarget_b.txt");
+    let link = data_root.join("retarget_link.txt");
+    fs::write(&target_a, "a").expect("write target a");
+    fs::write(&target_b, "b").expect("write target b");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "retarget")
+        .args(["add", &link.to_string_lossy(), &target_a.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "retarget")
+        .env("SYMM_ADD_SYMLINK_CONFLICT_CHOICE", "retarget")
+        .args(["add", &link.to_string_lossy(), &target_b.to_string_lossy()])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(&link).expect("read retargeted link"),
+        "b"
+    );
+}

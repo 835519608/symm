@@ -11,6 +11,12 @@ enum ConflictChoice {
     Cancel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SymlinkConflictChoice {
+    Retarget,
+    Cancel,
+}
+
 pub struct AddPreparation {
     adopted_link_to_target: bool,
     staged_target: Option<PathBuf>,
@@ -25,20 +31,54 @@ impl AddPreparation {
             staged_link: None,
         };
 
-        let link_exists = link.exists();
+        let link_meta = fs::symlink_metadata(link).ok();
+        let link_exists = link_meta.is_some();
         let target_exists = target.exists();
 
         match (link_exists, target_exists) {
             (false, false) | (false, true) => Ok(plan),
             (true, false) => {
+                if link_meta
+                    .as_ref()
+                    .is_some_and(|m| m.file_type().is_symlink())
+                {
+                    return Err(SymmError::TargetNotFound {
+                        path: target.to_string_lossy().to_string(),
+                    });
+                }
                 adopt_link_to_target(link, target)?;
                 plan.adopted_link_to_target = true;
                 Ok(plan)
             }
             (true, true) => {
-                plan.prepare_both_exist(link, target)?;
+                let link_is_symlink = link_meta
+                    .as_ref()
+                    .is_some_and(|m| m.file_type().is_symlink());
+                if link_is_symlink {
+                    plan.prepare_symlink_exist(link, target)?;
+                } else {
+                    plan.prepare_both_exist(link, target)?;
+                }
                 Ok(plan)
             }
+        }
+    }
+
+    fn prepare_symlink_exist(&mut self, link: &Path, target: &Path) -> Result<(), SymmError> {
+        if symlink_points_to_target(link, target)? {
+            return Ok(());
+        }
+
+        match select_symlink_conflict_choice()? {
+            SymlinkConflictChoice::Retarget => {
+                let link_staging = staging_path(link);
+                move_path_with_retry(link, &link_staging, "link")?;
+                self.staged_link = Some(link_staging);
+                Ok(())
+            }
+            SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {
+                message: "用户取消：未执行 add".to_string(),
+            }),
         }
     }
 
@@ -194,6 +234,69 @@ fn parse_conflict_choice(raw: &str) -> Result<ConflictChoice, SymmError> {
             ),
         }),
     }
+}
+
+fn select_symlink_conflict_choice() -> Result<SymlinkConflictChoice, SymmError> {
+    if let Ok(raw) = std::env::var("SYMM_ADD_SYMLINK_CONFLICT_CHOICE") {
+        return parse_symlink_conflict_choice(&raw);
+    }
+
+    let options = vec![
+        ("改为指向新的 target", SymlinkConflictChoice::Retarget),
+        ("取消", SymlinkConflictChoice::Cancel),
+    ];
+    let labels: Vec<&str> = options.iter().map(|(label, _)| *label).collect();
+    let selected = Select::new(
+        "检测到 link 已是软链接但当前指向与 target 不一致，请选择处理方式：",
+        labels,
+    )
+    .with_help_message("↑↓ 移动  Enter 确认  Esc 取消")
+    .prompt()
+    .map_err(|e| SymmError::InvalidArgument {
+        message: format!("已取消：{e}"),
+    })?;
+
+    for (label, choice) in options {
+        if label == selected {
+            return Ok(choice);
+        }
+    }
+    Err(SymmError::InvalidArgument {
+        message: "无效选择".to_string(),
+    })
+}
+
+fn parse_symlink_conflict_choice(raw: &str) -> Result<SymlinkConflictChoice, SymmError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "retarget" | "target" | "replace" => Ok(SymlinkConflictChoice::Retarget),
+        "cancel" | "abort" => Ok(SymlinkConflictChoice::Cancel),
+        _ => Err(SymmError::InvalidArgument {
+            message: format!(
+                "环境变量 SYMM_ADD_SYMLINK_CONFLICT_CHOICE 值无效：{raw}（可选：retarget/cancel）"
+            ),
+        }),
+    }
+}
+
+fn symlink_points_to_target(link: &Path, target: &Path) -> Result<bool, SymmError> {
+    let pointed = fs::read_link(link).map_err(|e| SymmError::IoError {
+        message: format!("无法读取 link 指向：{e}"),
+    })?;
+    let resolved = if pointed.is_absolute() {
+        pointed
+    } else {
+        let parent = link.parent().ok_or_else(|| SymmError::InvalidArgument {
+            message: "无法解析 link 父目录".to_string(),
+        })?;
+        parent.join(pointed)
+    };
+    let resolved_canonical = fs::canonicalize(&resolved).map_err(|e| SymmError::IoError {
+        message: format!("无法解析 link 指向路径：{e}"),
+    })?;
+    let target_canonical = fs::canonicalize(target).map_err(|e| SymmError::IoError {
+        message: format!("无法解析 target 路径：{e}"),
+    })?;
+    Ok(resolved_canonical == target_canonical)
 }
 
 fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {

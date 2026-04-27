@@ -7,6 +7,7 @@ use crate::model::LinkStatus;
 use crate::output;
 use crate::paths;
 use inquire::Text;
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 
@@ -19,14 +20,20 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
             let prep = adopt::resolve_add_conflict(Path::new(&link_norm), &target)?;
 
             let target_norm = paths::normalize_target(&target)?;
-            let link_kind =
+            let link_exists_after_prep = fs::symlink_metadata(Path::new(&link_norm)).is_ok();
+            let link_kind = if link_exists_after_prep {
+                existing
+                    .map(|r| r.link_kind)
+                    .unwrap_or(crate::model::LinkKind::Symlink)
+            } else {
                 match link_ops::create_link(Path::new(&target_norm), Path::new(&link_norm)) {
                     Ok(kind) => kind,
                     Err(e) => {
                         let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
                         return Err(e);
                     }
-                };
+                }
+            };
 
             let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
             let name = resolve_add_name(default_name)?;
