@@ -23,6 +23,7 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
             let link_exists_after_prep = fs::symlink_metadata(Path::new(&link_norm)).is_ok();
             let link_kind = if link_exists_after_prep {
                 existing
+                    .as_ref()
                     .map(|r| r.link_kind)
                     .unwrap_or(crate::model::LinkKind::Symlink)
             } else {
