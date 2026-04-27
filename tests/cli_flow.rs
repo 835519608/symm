@@ -189,7 +189,7 @@ fn add_when_target_and_link_both_exist_cancel() {
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .failure()
-        .stderr(contains("\"code\":\"invalid_argument\""));
+        .stderr(contains("\"code\": \"invalid_argument\""));
 
     assert_eq!(
         fs::read_to_string(&target).expect("read target"),
@@ -231,8 +231,13 @@ fn add_same_link_updates_record_instead_of_inserting_new_one() {
         .args(["ls", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"name\":\"v2\""))
-        .stdout(contains(target_b.to_string_lossy().as_ref()));
+        .stdout(contains("\"name\":\"v2\""));
+
+    // Windows 下 JSON 中 target_path 可能是规范化后的 \\?\ 前缀绝对路径，避免直接比字符串。
+    assert_eq!(
+        fs::read_to_string(&link).expect("read updated link target"),
+        "b"
+    );
 }
 
 #[test]
@@ -266,8 +271,10 @@ fn add_existing_symlink_pointing_to_same_target_is_managed_without_conflict_prom
         .args(["show", &link.to_string_lossy(), "--json"])
         .assert()
         .success()
-        .stdout(contains("\"name\": \"second\""))
-        .stdout(contains(target.to_string_lossy().as_ref()));
+        .stdout(contains("\"name\": \"second\""));
+
+    // 避免 Windows 8.3 短路径与 \\?\ 规范路径导致的字符串不一致。
+    assert_eq!(fs::read_to_string(&link).expect("read managed link"), "same");
 }
 
 #[test]
