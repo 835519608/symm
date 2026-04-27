@@ -274,7 +274,10 @@ fn add_existing_symlink_pointing_to_same_target_is_managed_without_conflict_prom
         .stdout(contains("\"name\": \"second\""));
 
     // 避免 Windows 8.3 短路径与 \\?\ 规范路径导致的字符串不一致。
-    assert_eq!(fs::read_to_string(&link).expect("read managed link"), "same");
+    assert_eq!(
+        fs::read_to_string(&link).expect("read managed link"),
+        "same"
+    );
 }
 
 #[test]
