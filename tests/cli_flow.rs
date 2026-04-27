@@ -221,6 +221,7 @@ fn add_same_link_updates_record_instead_of_inserting_new_one() {
     cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "v2")
+        .env("SYMM_ADD_SYMLINK_CONFLICT_CHOICE", "retarget")
         .args(["add", &link.to_string_lossy(), &target_b.to_string_lossy()])
         .assert()
         .success();
