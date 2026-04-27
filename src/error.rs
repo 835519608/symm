@@ -10,8 +10,6 @@ pub enum SymmError {
     TargetNotFound { path: String },
     #[error("名称冲突：{name}")]
     NameConflict { name: String },
-    #[error("路径冲突：{path}")]
-    PathConflict { path: String },
     #[error("未找到记录：{selector}")]
     NotFound { selector: String },
     #[error("数据库错误：{message}")]
@@ -27,7 +25,6 @@ impl SymmError {
             SymmError::PermissionDenied { .. } => "permission_denied",
             SymmError::TargetNotFound { .. } => "target_not_found",
             SymmError::NameConflict { .. } => "name_conflict",
-            SymmError::PathConflict { .. } => "path_conflict",
             SymmError::NotFound { .. } => "not_found",
             SymmError::DbError { .. } => "db_error",
             SymmError::IoError { .. } => "io_error",
