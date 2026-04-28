@@ -61,8 +61,8 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
         }
         return Ok(());
     }
-
-    if quit_processes(pids.to_vec()) {
+    let pids = pids.iter().map(|pid| *pid as usize).collect::<Vec<_>>();
+    if quit_processes(pids) {
         Ok(())
     } else {
         Err(SymmError::PermissionDenied {
@@ -200,11 +200,18 @@ where
     let pids = find_processes_locking_path(&path_string);
     let mut out = Vec::with_capacity(pids.len());
     for pid in pids {
+        let pid_u32 = match u32::try_from(pid) {
+            Ok(pid_u32) => pid_u32,
+            Err(_) => continue,
+        };
         let display = match pid_to_process_path(pid) {
-            Some(proc_path) => format!("PID {pid}  {}", proc_path.display()),
+            Some(proc_path) => format!("PID {pid_u32}  {proc_path}"),
             None => format!("PID {pid}"),
         };
-        out.push(ProcInfo { pid, display });
+        out.push(ProcInfo {
+            pid: pid_u32,
+            display,
+        });
     }
     Ok(out)
 }
