@@ -60,7 +60,7 @@ jobs:
           releases = []
           page = 1
           while True:
-            out = gh_api(["repos/{}/releases".format(repo), "-F", f"per_page=100", "-F", f"page={page}"])
+            out = gh_api([f"repos/{repo}/releases?per_page=100&page={page}"])
             batch = json.loads(out)
             if not batch:
               break
