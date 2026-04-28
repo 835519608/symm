@@ -2,6 +2,8 @@ use crate::domain::error::SymmError;
 use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
+#[cfg(windows)]
+use std::process::Stdio;
 
 #[cfg(windows)]
 pub struct AclSnapshot {
@@ -33,6 +35,8 @@ pub fn snapshot_dir_acl(src_dir: &Path) -> Result<Option<AclSnapshot>, SymmError
         .args(["/save"])
         .arg(&file)
         .args(["/t", "/c", "/q"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|e| SymmError::IoError {
             message: format!("执行 icacls /save 失败：{e}"),
@@ -56,6 +60,8 @@ pub fn restore_dir_acl(dst_dir: &Path, snapshot: &AclSnapshot) -> Result<(), Sym
         .args(["/restore"])
         .arg(&snapshot.file)
         .args(["/c", "/q"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|e| SymmError::IoError {
             message: format!("执行 icacls /restore 失败：{e}"),
