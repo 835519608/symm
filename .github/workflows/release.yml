@@ -46,3 +46,4 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.out }}
+          prerelease: ${{ contains(github.ref_name, '-test') }}

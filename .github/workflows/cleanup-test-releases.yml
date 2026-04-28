@@ -1,0 +1,95 @@
+name: Cleanup Test Releases
+
+on:
+  schedule:
+    # 每周一次清理测试 tag / pre-release（UTC 时间）
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: "保留天数（仅清理测试 tag / pre-release）"
+        required: false
+        default: "14"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: 清理过期测试发布
+    runs-on: ubuntu-latest
+    steps:
+      - name: 计算保留天数
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          RETENTION_DAYS="${{ github.event.inputs.retention_days || '14' }}"
+          echo "retention_days=${RETENTION_DAYS}" >> "$GITHUB_OUTPUT"
+
+      - name: 清理过期测试 Release 与 tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RETENTION_DAYS: ${{ steps.vars.outputs.retention_days }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from datetime import datetime, timedelta, timezone
+          
+          repo = os.environ["REPO"]
+          retention_days = int(os.environ["RETENTION_DAYS"])
+          cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+          
+          tag_re = re.compile(r"^v.+-test\d+$")
+          
+          def gh_api(args):
+            cmd = ["gh", "api"] + args
+            return subprocess.check_output(cmd, text=True)
+          
+          def delete_release(rel_id: int):
+            gh_api(["-X", "DELETE", f"repos/{repo}/releases/{rel_id}"])
+          
+          def delete_tag_ref(tag: str):
+            # delete git ref tags/<tag>
+            gh_api(["-X", "DELETE", f"repos/{repo}/git/refs/tags/{tag}"])
+          
+          # list releases (paginate)
+          releases = []
+          page = 1
+          while True:
+            out = gh_api(["repos/{}/releases".format(repo), "-F", f"per_page=100", "-F", f"page={page}"])
+            batch = json.loads(out)
+            if not batch:
+              break
+            releases.extend(batch)
+            page += 1
+          
+          # delete old test prereleases
+          for r in releases:
+            tag = r.get("tag_name") or ""
+            if not tag_re.match(tag):
+              continue
+            if not r.get("prerelease", False):
+              # safety: only delete prereleases for test tags
+              continue
+            created = r.get("created_at")
+            if not created:
+              continue
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if created_dt >= cutoff:
+              continue
+            rid = r.get("id")
+            print(f"Deleting prerelease id={rid} tag={tag} created={created}")
+            delete_release(rid)
+            # after deleting release, delete tag ref as well
+            try:
+              delete_tag_ref(tag)
+            except subprocess.CalledProcessError as e:
+              # tag may already be gone; continue
+              print(f"Tag delete skipped for {tag}: {e}")
+          
+          PY
+
