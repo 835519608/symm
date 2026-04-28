@@ -27,7 +27,7 @@ jobs:
             out: symm-macos-x64
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
@@ -43,6 +43,6 @@ jobs:
         run: cp "${{ matrix.bin }}" "${{ matrix.out }}"
 
       - name: 上传到 GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.out }}

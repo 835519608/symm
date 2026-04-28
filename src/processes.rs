@@ -1,6 +1,9 @@
 use crate::error::SymmError;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static MOCK_LOCK_RELEASED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
 pub struct ProcInfo {
@@ -16,16 +19,28 @@ impl Display for ProcInfo {
 
 #[cfg(windows)]
 pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+    if let Some(mocked) = mock_locking_processes(path) {
+        return Ok(mocked);
+    }
     windows_list_locking_processes(path)
 }
 
 #[cfg(not(windows))]
 pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+    if let Some(mocked) = mock_locking_processes(path) {
+        return Ok(mocked);
+    }
     unix_list_locking_processes(path)
 }
 
 #[cfg(windows)]
 pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
+    if should_mock_kill_processes() {
+        if mock_locks_clear_on_kill() {
+            MOCK_LOCK_RELEASED.store(true, Ordering::SeqCst);
+        }
+        return Ok(());
+    }
     for pid in pids {
         let status = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
@@ -44,6 +59,12 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
 
 #[cfg(not(windows))]
 pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
+    if should_mock_kill_processes() {
+        if mock_locks_clear_on_kill() {
+            MOCK_LOCK_RELEASED.store(true, Ordering::SeqCst);
+        }
+        return Ok(());
+    }
     for pid in pids {
         let status = std::process::Command::new("kill")
             .args(["-9", &pid.to_string()])
@@ -58,6 +79,44 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
         }
     }
     Ok(())
+}
+
+fn mock_locking_processes(path: &Path) -> Option<Vec<ProcInfo>> {
+    let raw_paths = std::env::var("SYMM_TEST_LOCK_PATHS").ok()?;
+    if mock_locks_clear_on_kill() && MOCK_LOCK_RELEASED.load(Ordering::SeqCst) {
+        return Some(vec![]);
+    }
+    let mocked_paths = raw_paths
+        .split(';')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    let current = path.to_string_lossy().to_string();
+    if !mocked_paths
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(&current))
+    {
+        return Some(vec![]);
+    }
+
+    let display = std::env::var("SYMM_TEST_LOCK_DISPLAY")
+        .unwrap_or_else(|_| "PID 4242  mock-lock-holder".to_string());
+    Some(vec![ProcInfo { pid: 4242, display }])
+}
+
+fn should_mock_kill_processes() -> bool {
+    std::env::var("SYMM_TEST_LOCK_PATHS").is_ok()
+}
+
+fn mock_locks_clear_on_kill() -> bool {
+    std::env::var("SYMM_TEST_LOCK_CLEAR_ON_KILL")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "no"
+            )
+        })
+        .unwrap_or(true)
 }
 
 #[cfg(not(windows))]

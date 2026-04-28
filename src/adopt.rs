@@ -1,7 +1,6 @@
 use crate::error::SymmError;
 use crate::migration::{MigrationEvent, migrate_path, move_path_without_progress};
-use crate::processes;
-use inquire::{MultiSelect, Select};
+use inquire::Select;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -326,36 +325,9 @@ fn symlink_points_to_target(link: &Path, target: &Path) -> Result<bool, SymmErro
 }
 
 fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    if let Err(e) = fs::rename(src, dst) {
-        let procs = processes::list_locking_processes(src)?;
-        if procs.is_empty() {
-            return Err(SymmError::IoError {
-                message: format!("无法移动 {role}（可能被占用）：{e}"),
-            });
-        }
-
-        let selected = MultiSelect::new(
-            "检测到可能占用该路径的进程，请用空格选择要结束的进程，回车确认：",
-            procs,
-        )
-        .with_help_message("↑↓ 移动  空格 选择/取消  Enter 确认  Esc 取消")
-        .prompt()
-        .map_err(|err| SymmError::InvalidArgument {
-            message: format!("已取消：{err}"),
-        })?;
-
-        let pids: Vec<u32> = selected.into_iter().map(|p| p.pid).collect();
-        if pids.is_empty() {
-            return Err(SymmError::InvalidArgument {
-                message: "未选择任何进程，已取消".to_string(),
-            });
-        }
-
-        processes::kill_processes(&pids)?;
-        fs::rename(src, dst).map_err(|err| SymmError::IoError {
-            message: format!("结束进程后仍无法移动 {role}：{err}"),
-        })?;
-    }
+    fs::rename(src, dst).map_err(|e| SymmError::IoError {
+        message: format!("无法移动 {role}：{e}"),
+    })?;
     Ok(())
 }
 

@@ -7,7 +7,8 @@ use crate::migration::MigrationEvent;
 use crate::model::LinkStatus;
 use crate::output;
 use crate::paths;
-use inquire::Text;
+use crate::processes;
+use inquire::{Select, Text};
 use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
@@ -20,6 +21,7 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
             let link_norm = paths::normalize_link(&link);
             let existing = db::get_by_link_path(&conn, &link_norm)?;
             let mut reporter = AddProgressReporter::new(writer);
+            ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
             let prep = adopt::resolve_add_conflict(Path::new(&link_norm), &target, &mut |event| {
                 reporter.handle(event)
             })?;
@@ -158,6 +160,106 @@ fn resolve_add_name(default_name: &str) -> Result<String, SymmError> {
         .map_err(|e| SymmError::InvalidArgument {
             message: format!("已取消：{e}"),
         })
+}
+
+fn ensure_link_not_locked<W: Write>(
+    link: &Path,
+    reporter: &mut AddProgressReporter<'_, W>,
+) -> Result<(), SymmError> {
+    reporter.write_line(&format!("正在检查 link 占用：{}", link.display()))?;
+    let procs = processes::list_locking_processes(link)?;
+    if procs.is_empty() {
+        return Ok(());
+    }
+
+    reporter.write_line("检测到占用进程，等待用户选择“解除占用/取消”")?;
+    let action = select_lock_resolution_action(&procs)?;
+    if action == LockResolutionAction::Cancel {
+        return Err(SymmError::InvalidArgument {
+            message: format!(
+                "link 路径当前被占用，已取消解除占用，未执行 add：{}",
+                link.display()
+            ),
+        });
+    }
+
+    reporter.write_line("正在结束全部占用进程")?;
+    let pids = procs.iter().map(|proc| proc.pid).collect::<Vec<_>>();
+    processes::kill_processes(&pids)?;
+
+    reporter.write_line("正在重新确认占用状态")?;
+    let remaining = processes::list_locking_processes(link)?;
+    if remaining.is_empty() {
+        return Ok(());
+    }
+
+    Err(SymmError::IoError {
+        message: format!(
+            "link 路径仍被占用，未执行 add：{}（剩余 {} 个进程，示例：{}）",
+            link.display(),
+            remaining.len(),
+            remaining[0]
+        ),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LockResolutionAction {
+    UnlockAll,
+    Cancel,
+}
+
+fn select_lock_resolution_action(
+    procs: &[processes::ProcInfo],
+) -> Result<LockResolutionAction, SymmError> {
+    if let Ok(raw) = std::env::var("SYMM_ADD_LOCK_CHOICE") {
+        return parse_lock_resolution_action(&raw);
+    }
+
+    let mut options = vec![
+        (
+            format!("解除占用并继续（结束 {} 个进程）", procs.len()),
+            LockResolutionAction::UnlockAll,
+        ),
+        ("取消".to_string(), LockResolutionAction::Cancel),
+    ];
+
+    let occupied = procs
+        .iter()
+        .map(|proc| format!("  - {}", proc))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let labels = options
+        .iter()
+        .map(|(label, _)| label.as_str())
+        .collect::<Vec<_>>();
+    let prompt = format!("检测到 link 被以下进程占用：\n{occupied}\n请选择后续操作：");
+    let selected = Select::new(&prompt, labels)
+        .with_help_message("↑↓ 移动  Enter 确认  Esc 取消")
+        .prompt()
+        .map_err(|e| SymmError::InvalidArgument {
+            message: format!("已取消：{e}"),
+        })?;
+
+    for (label, action) in options.drain(..) {
+        if label == selected {
+            return Ok(action);
+        }
+    }
+
+    Err(SymmError::InvalidArgument {
+        message: "无效选择".to_string(),
+    })
+}
+
+fn parse_lock_resolution_action(raw: &str) -> Result<LockResolutionAction, SymmError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "unlock" | "unlock_all" | "kill" | "continue" => Ok(LockResolutionAction::UnlockAll),
+        "cancel" | "abort" => Ok(LockResolutionAction::Cancel),
+        _ => Err(SymmError::InvalidArgument {
+            message: format!("环境变量 SYMM_ADD_LOCK_CHOICE 值无效：{raw}（可选：unlock/cancel）"),
+        }),
+    }
 }
 
 struct AddProgressReporter<'a, W: Write> {

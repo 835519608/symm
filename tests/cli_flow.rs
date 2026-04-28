@@ -329,3 +329,104 @@ fn add_existing_symlink_pointing_elsewhere_can_retarget() {
         "b"
     );
 }
+
+#[test]
+fn add_when_link_is_locked_and_user_cancels_fails_before_mutation() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("locked_target.txt");
+    let link = data_root.join("locked_link.txt");
+    fs::write(&link, "payload").expect("write link entity");
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "locked")
+        .env("SYMM_ADD_LOCK_CHOICE", "cancel")
+        .env("SYMM_TEST_LOCK_PATHS", link.to_string_lossy().to_string())
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .output()
+        .expect("run locked add");
+
+    assert!(!output.status.success());
+    let err = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    let json: Value = serde_json::from_str(&err).expect("stderr json");
+    assert_eq!(json["code"], "invalid_argument");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message string")
+            .contains("已取消解除占用")
+    );
+    assert_eq!(fs::read_to_string(&link).expect("read link"), "payload");
+    assert!(!target.exists(), "target should remain absent after cancel");
+}
+
+#[test]
+fn add_when_link_is_locked_and_unlock_succeeds_continues_normally() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("unlock_target.txt");
+    let link = data_root.join("unlock_link.txt");
+    fs::write(&link, "payload").expect("write link entity");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "unlock")
+        .env("SYMM_ADD_LOCK_CHOICE", "unlock")
+        .env("SYMM_TEST_LOCK_PATHS", link.to_string_lossy().to_string())
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success()
+        .stdout(contains("正在检查 link 占用"))
+        .stdout(contains("检测到占用进程"))
+        .stdout(contains("正在结束全部占用进程"))
+        .stdout(contains("正在重新确认占用状态"))
+        .stdout(contains("正在扫描迁移内容"));
+
+    assert_eq!(fs::read_to_string(&target).expect("read target"), "payload");
+    assert_eq!(fs::read_to_string(&link).expect("read link"), "payload");
+}
+
+#[test]
+fn add_when_link_is_locked_and_unlock_still_leaves_locks_fails() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("still_locked_target.txt");
+    let link = data_root.join("still_locked_link.txt");
+    fs::write(&link, "payload").expect("write link entity");
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "still-locked")
+        .env("SYMM_ADD_LOCK_CHOICE", "unlock")
+        .env("SYMM_TEST_LOCK_PATHS", link.to_string_lossy().to_string())
+        .env("SYMM_TEST_LOCK_CLEAR_ON_KILL", "false")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .output()
+        .expect("run locked add");
+
+    assert!(!output.status.success());
+    let err = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    let json: Value = serde_json::from_str(&err).expect("stderr json");
+    assert_eq!(json["code"], "io_error");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message string")
+            .contains("仍被占用")
+    );
+    assert_eq!(fs::read_to_string(&link).expect("read link"), "payload");
+    assert!(
+        !target.exists(),
+        "target should remain absent after failed unlock"
+    );
+}
