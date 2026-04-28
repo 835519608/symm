@@ -118,7 +118,7 @@ fn create_symlink_like(
         use std::os::unix::fs::symlink;
         let _ = src_link;
         symlink(target, dst_link).map_err(ioe)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(windows)]
@@ -136,7 +136,7 @@ fn create_symlink_like(
         } else {
             symlink_file(target, dst_link).map_err(ioe)?;
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(unix, windows)))]
