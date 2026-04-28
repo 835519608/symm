@@ -9,8 +9,35 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
-    name: 发布产物 (${{ matrix.os }})
+  build-and-release-windows:
+    name: 发布产物 (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建 release
+        run: cargo build --release
+
+      - name: 准备发布文件
+        shell: bash
+        run: cp "target/release/symm.exe" "symm-windows-x64.exe"
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: symm-windows-x64.exe
+          prerelease: ${{ contains(github.ref_name, '-test') }}
+
+  build-and-release-unix:
+    name: 发布产物 (unix)
+    if: ${{ !contains(github.ref_name, '-test') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,9 +46,6 @@ jobs:
           - os: ubuntu-latest
             bin: target/release/symm
             out: symm-linux-x64
-          - os: windows-latest
-            bin: target/release/symm.exe
-            out: symm-windows-x64.exe
           - os: macos-latest
             bin: target/release/symm
             out: symm-macos-x64
@@ -46,4 +70,4 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.out }}
-          prerelease: ${{ contains(github.ref_name, '-test') }}
+          prerelease: false
