@@ -1,6 +1,7 @@
 use crate::domain::error::SymmError;
 use crate::infra::fs::migration_service::{MigrationEvent, fs_extra_error};
 use crate::infra::fs::path_ops;
+use crate::infra::fs::tree_copy::copy_dir_tree_with_progress;
 use fs_extra::{dir, file};
 use std::fs;
 use std::path::Path;
@@ -29,37 +30,11 @@ where
             message: format!("无法创建目标目录：{e}"),
         })?;
 
-        let mut options = dir::CopyOptions::new();
-        options.content_only = true;
-        options.copy_inside = true;
-        let mut callback_error: Option<SymmError> = None;
-
-        let copy_result = dir::copy_with_progress(src, dst, &options, |info| {
-            match reporter(MigrationEvent::Copying {
-                copied_bytes: info.copied_bytes,
-                total_bytes: info.total_bytes,
-                current_item: if info.file_name.is_empty() {
-                    None
-                } else {
-                    Some(info.file_name)
-                },
-            }) {
-                Ok(()) => dir::TransitProcessResult::ContinueOrAbort,
-                Err(err) => {
-                    callback_error = Some(err);
-                    dir::TransitProcessResult::Abort
-                }
-            }
-        });
-        if let Some(err) = callback_error {
+        if let Err(err) = copy_dir_tree_with_progress(src, dst, reporter) {
             let _ = path_ops::remove_path_any(dst);
             return Err(err);
         }
-        if let Err(err) = copy_result {
-            let _ = path_ops::remove_path_any(dst);
-            return Err(fs_extra_error(err));
-        }
-        return Ok(());
+        Ok(())
     }
 
     if let Some(parent) = dst.parent() {

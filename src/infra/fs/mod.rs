@@ -7,3 +7,4 @@ pub mod link_status;
 pub mod migration;
 pub mod migration_service;
 pub mod path_ops;
+pub mod tree_copy;
