@@ -35,20 +35,10 @@ jobs:
           files: symm-windows-x64.exe
           prerelease: ${{ contains(github.ref_name, '-test') }}
 
-  build-and-release-unix:
-    name: 发布产物 (unix)
+  build-and-release-linux:
+    name: 发布产物 (ubuntu-latest)
     if: ${{ !contains(github.ref_name, '-test') }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            bin: target/release/symm
-            out: symm-linux-x64
-          - os: macos-latest
-            bin: target/release/symm
-            out: symm-macos-x64
+    runs-on: ubuntu-latest
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -64,10 +54,37 @@ jobs:
 
       - name: 准备发布文件
         shell: bash
-        run: cp "${{ matrix.bin }}" "${{ matrix.out }}"
+        run: cp "target/release/symm" "symm-linux-x64"
 
       - name: 上传到 GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ matrix.out }}
+          files: symm-linux-x64
+          prerelease: false
+
+  build-and-release-macos:
+    name: 发布产物 (macos-latest)
+    if: ${{ !contains(github.ref_name, '-test') }}
+    runs-on: macos-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建 release
+        run: cargo build --release
+
+      - name: 准备发布文件
+        shell: bash
+        run: cp "target/release/symm" "symm-macos-x64"
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: symm-macos-x64
           prerelease: false
