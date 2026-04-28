@@ -1,13 +1,12 @@
 use crate::error::SymmError;
-use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static MOCK_LOCK_RELEASED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum LockProbeProgress {
     Scanning {
         scanned_files: usize,
@@ -31,11 +30,6 @@ impl Display for ProcInfo {
     }
 }
 
-#[cfg(windows)]
-pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
-    list_locking_processes_with_progress(path, |_| {})
-}
-
 pub fn list_locking_processes_with_progress<F>(
     path: &Path,
     mut progress: F,
@@ -55,11 +49,6 @@ where
         let _ = &mut progress;
         unix_list_locking_processes(path)
     }
-}
-
-#[cfg(not(windows))]
-pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
-    list_locking_processes_with_progress(path, |_| {})
 }
 
 #[cfg(windows)]
@@ -205,6 +194,8 @@ fn windows_list_locking_processes<F>(
 where
     F: FnMut(LockProbeProgress),
 {
+    use std::collections::BTreeMap;
+
     let probe_paths = collect_lock_probe_paths(path, progress)?;
     let mut dedup = BTreeMap::<u32, ProcInfo>::new();
     let total_batches = probe_paths.len().div_ceil(256).max(1);
@@ -346,10 +337,13 @@ fn utf16_to_string(buf: &[u16]) -> String {
     String::from_utf16_lossy(&buf[..end])
 }
 
+#[cfg(windows)]
 fn collect_lock_probe_paths<F>(path: &Path, progress: &mut F) -> Result<Vec<PathBuf>, SymmError>
 where
     F: FnMut(LockProbeProgress),
 {
+    use std::fs;
+
     if !path.is_dir() {
         return Ok(vec![path.to_path_buf()]);
     }
@@ -363,6 +357,7 @@ where
     Ok(out)
 }
 
+#[cfg(windows)]
 fn collect_files_recursively<F>(
     root: &Path,
     out: &mut Vec<PathBuf>,
@@ -372,6 +367,8 @@ fn collect_files_recursively<F>(
 where
     F: FnMut(LockProbeProgress),
 {
+    use std::fs;
+
     let entries = fs::read_dir(root).map_err(|e| SymmError::IoError {
         message: format!("无法扫描占用检测路径 {}：{e}", root.display()),
     })?;
@@ -389,7 +386,7 @@ where
         } else {
             out.push(path);
             *scanned_files += 1;
-            if *scanned_files == 1 || *scanned_files % 200 == 0 {
+            if *scanned_files == 1 || (*scanned_files).is_multiple_of(200) {
                 progress(LockProbeProgress::Scanning {
                     scanned_files: *scanned_files,
                     current: out.last().cloned().unwrap_or_else(|| root.to_path_buf()),
@@ -402,6 +399,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg(windows)]
 mod tests {
     use super::*;
     use std::fs;
