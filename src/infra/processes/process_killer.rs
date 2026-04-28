@@ -1,4 +1,5 @@
 use crate::domain::error::SymmError;
+use crate::infra::errors::io_map::io_ctx;
 use crate::infra::processes::lock_probe::{
     mark_mock_released, mock_locks_clear_on_kill, should_mock_kill_processes,
 };
@@ -35,9 +36,7 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
         let status = std::process::Command::new("kill")
             .args(["-9", &pid.to_string()])
             .status()
-            .map_err(|e| SymmError::IoError {
-                message: format!("执行 kill 失败：{e}"),
-            })?;
+            .map_err(|e| io_ctx("执行 kill 失败", e))?;
         if !status.success() {
             return Err(SymmError::PermissionDenied {
                 message: format!("无法结束进程 PID={pid}（可能无权限）"),

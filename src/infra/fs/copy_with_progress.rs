@@ -1,5 +1,6 @@
 use crate::domain::error::SymmError;
-use crate::infra::fs::migration_service::{MigrationEvent, fs_extra_error, remove_path_any};
+use crate::infra::fs::migration_service::{MigrationEvent, fs_extra_error};
+use crate::infra::fs::path_ops;
 use fs_extra::{dir, file};
 use std::fs;
 use std::path::Path;
@@ -51,11 +52,11 @@ where
             }
         });
         if let Some(err) = callback_error {
-            let _ = remove_path_any(dst);
+            let _ = path_ops::remove_path_any(dst);
             return Err(err);
         }
         if let Err(err) = copy_result {
-            let _ = remove_path_any(dst);
+            let _ = path_ops::remove_path_any(dst);
             return Err(fs_extra_error(err));
         }
         return Ok(());
@@ -75,7 +76,7 @@ where
             current_item: src.file_name().map(|s| s.to_string_lossy().to_string()),
         });
     }) {
-        let _ = remove_path_any(dst);
+        let _ = path_ops::remove_path_any(dst);
         return Err(fs_extra_error(err));
     }
     Ok(())

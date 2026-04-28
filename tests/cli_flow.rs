@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::Value;
 use std::fs;
@@ -429,4 +430,172 @@ fn add_when_link_is_locked_and_unlock_still_leaves_locks_fails() {
         !target.exists(),
         "target should remain absent after failed unlock"
     );
+}
+
+#[test]
+fn add_with_invalid_conflict_choice_env_fails_fast() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_invalid_conflict.txt");
+    let link = data_root.join("link_invalid_conflict.txt");
+    fs::write(&target, "t").expect("write target");
+    fs::write(&link, "l").expect("write link");
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "invalid-choice")
+        .env("SYMM_ADD_CONFLICT_CHOICE", "bad_value")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .output()
+        .expect("run add");
+    assert!(!output.status.success());
+
+    let err = String::from_utf8(output.stderr).expect("stderr utf8");
+    let json: Value = serde_json::from_str(&err).expect("stderr json");
+    assert_eq!(json["code"], "invalid_argument");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message string")
+            .contains("SYMM_ADD_CONFLICT_CHOICE")
+    );
+}
+
+#[test]
+fn add_with_invalid_lock_choice_env_fails_fast() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_invalid_lock.txt");
+    let link = data_root.join("link_invalid_lock.txt");
+    fs::write(&link, "payload").expect("write link");
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "invalid-lock")
+        .env("SYMM_ADD_LOCK_CHOICE", "bad_value")
+        .env("SYMM_TEST_LOCK_PATHS", link.to_string_lossy().to_string())
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .output()
+        .expect("run add");
+    assert!(!output.status.success());
+
+    let err = String::from_utf8(output.stderr).expect("stderr utf8");
+    let json: Value = serde_json::from_str(&err).expect("stderr json");
+    assert_eq!(json["code"], "invalid_argument");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message string")
+            .contains("SYMM_ADD_LOCK_CHOICE")
+    );
+}
+
+#[test]
+fn add_name_conflict_rolls_back_created_link() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target1 = data_root.join("target_name_conflict_1.txt");
+    let link1 = data_root.join("link_name_conflict_1.txt");
+    let target2 = data_root.join("target_name_conflict_2.txt");
+    let link2 = data_root.join("link_name_conflict_2.txt");
+    fs::write(&target1, "a").expect("write target1");
+    fs::write(&target2, "b").expect("write target2");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "dup-name")
+        .args(["add", &link1.to_string_lossy(), &target1.to_string_lossy()])
+        .assert()
+        .success();
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "dup-name")
+        .args(["add", &link2.to_string_lossy(), &target2.to_string_lossy()])
+        .output()
+        .expect("run conflicting add");
+    assert!(!output.status.success());
+    assert!(
+        !link2.exists(),
+        "db 冲突后应清理刚创建的 link，避免文件系统与数据库不一致"
+    );
+}
+
+#[test]
+fn ls_status_filters_broken_and_missing() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target_ok = data_root.join("target_ok.txt");
+    let target_broken = data_root.join("target_broken.txt");
+    let link_ok = data_root.join("link_ok.txt");
+    let link_broken = data_root.join("link_broken.txt");
+    let link_missing = data_root.join("link_missing.txt");
+    fs::write(&target_ok, "ok").expect("write target ok");
+    fs::write(&target_broken, "broken").expect("write target broken");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "ok-item")
+        .args([
+            "add",
+            &link_ok.to_string_lossy(),
+            &target_ok.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "broken-item")
+        .args([
+            "add",
+            &link_broken.to_string_lossy(),
+            &target_broken.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "missing-item")
+        .args([
+            "add",
+            &link_missing.to_string_lossy(),
+            &target_ok.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    fs::remove_file(&target_broken).expect("remove broken target");
+    fs::remove_file(&link_missing).expect("remove missing link");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--status", "broken"])
+        .assert()
+        .success()
+        .stdout(contains("broken-item"))
+        .stdout(predicates::str::contains("ok-item").not())
+        .stdout(predicates::str::contains("missing-item").not());
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--status", "missing"])
+        .assert()
+        .success()
+        .stdout(contains("missing-item"))
+        .stdout(predicates::str::contains("ok-item").not())
+        .stdout(predicates::str::contains("broken-item").not());
 }

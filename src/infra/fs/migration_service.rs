@@ -1,5 +1,7 @@
 use crate::domain::error::SymmError;
+use crate::infra::errors::io_map::ioe;
 use crate::infra::fs::acl;
+use crate::infra::fs::path_ops;
 use std::fs;
 use std::path::Path;
 
@@ -47,7 +49,7 @@ where
             source: src.display().to_string(),
             target: dst.display().to_string(),
         })?;
-        fs::rename(src, dst).map_err(io_error)?;
+        fs::rename(src, dst).map_err(ioe)?;
         return Ok(());
     }
 
@@ -59,8 +61,8 @@ where
     reporter(MigrationEvent::RemovingSource {
         source: src.display().to_string(),
     })?;
-    if let Err(remove_err) = remove_path_any(src) {
-        let _ = remove_path_any(dst);
+    if let Err(remove_err) = path_ops::remove_path_any(src) {
+        let _ = path_ops::remove_path_any(dst);
         return Err(SymmError::IoError {
             message: format!("跨磁盘复制完成后无法删除源路径：{remove_err}"),
         });
@@ -71,21 +73,6 @@ where
 pub fn move_path_without_progress(src: &Path, dst: &Path) -> Result<(), SymmError> {
     let mut noop = |_event: MigrationEvent| Ok(());
     migrate_path(src, dst, &mut noop)
-}
-
-pub fn remove_path_any(path: &Path) -> Result<(), SymmError> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) => {
-            if meta.file_type().is_dir() {
-                fs::remove_dir_all(path).map_err(io_error)?;
-            } else {
-                fs::remove_file(path).map_err(io_error)?;
-            }
-            Ok(())
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(io_error(e)),
-    }
 }
 
 pub fn can_use_fast_move(src: &Path, dst: &Path) -> Result<bool, SymmError> {
@@ -106,8 +93,8 @@ pub fn can_use_fast_move(src: &Path, dst: &Path) -> Result<bool, SymmError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let src_meta = fs::metadata(src).map_err(io_error)?;
-        let dst_meta = fs::metadata(dst_parent).map_err(io_error)?;
+        let src_meta = fs::metadata(src).map_err(ioe)?;
+        let dst_meta = fs::metadata(dst_parent).map_err(ioe)?;
         Ok(src_meta.dev() == dst_meta.dev())
     }
 
@@ -127,12 +114,6 @@ fn path_prefix(path: &Path) -> Option<String> {
         Component::Prefix(prefix) => Some(prefix.as_os_str().to_string_lossy().to_string()),
         _ => None,
     })
-}
-
-pub fn io_error(e: std::io::Error) -> SymmError {
-    SymmError::IoError {
-        message: e.to_string(),
-    }
 }
 
 pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {

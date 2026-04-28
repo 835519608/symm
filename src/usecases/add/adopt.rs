@@ -1,6 +1,8 @@
 use crate::domain::error::SymmError;
-use crate::infra::fs::migration::{MigrationEvent, migrate_path, move_path_without_progress};
-use inquire::Select;
+use crate::infra::fs::migration::MigrationEvent;
+use crate::infra::fs::path_ops;
+use crate::interface::interaction::choice;
+use crate::usecases::add::ports::PathMigrator;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -24,8 +26,14 @@ pub struct AddPreparation {
 }
 
 impl AddPreparation {
-    pub fn prepare<F>(link: &Path, target: &Path, reporter: &mut F) -> Result<Self, SymmError>
+    pub fn prepare<M, F>(
+        migrator: &M,
+        link: &Path,
+        target: &Path,
+        reporter: &mut F,
+    ) -> Result<Self, SymmError>
     where
+        M: PathMigrator,
         F: FnMut(MigrationEvent) -> Result<(), SymmError>,
     {
         let mut plan = AddPreparation {
@@ -48,7 +56,7 @@ impl AddPreparation {
                         path: target.to_string_lossy().to_string(),
                     });
                 }
-                adopt_link_to_target(link, target, reporter)?;
+                adopt_link_to_target(migrator, link, target, reporter)?;
                 plan.adopted_link_to_target = true;
                 Ok(plan)
             }
@@ -59,7 +67,7 @@ impl AddPreparation {
                 if link_is_symlink {
                     plan.prepare_symlink_exist(link, target)?;
                 } else {
-                    plan.prepare_both_exist(link, target, reporter)?;
+                    plan.prepare_both_exist(migrator, link, target, reporter)?;
                 }
                 Ok(plan)
             }
@@ -83,13 +91,15 @@ impl AddPreparation {
         }
     }
 
-    fn prepare_both_exist<F>(
+    fn prepare_both_exist<M, F>(
         &mut self,
+        migrator: &M,
         link: &Path,
         target: &Path,
         reporter: &mut F,
     ) -> Result<(), SymmError>
     where
+        M: PathMigrator,
         F: FnMut(MigrationEvent) -> Result<(), SymmError>,
     {
         match select_conflict_choice()? {
@@ -97,8 +107,8 @@ impl AddPreparation {
                 let target_staging = staging_path(target);
                 move_path_with_retry(target, &target_staging, "target")?;
                 self.staged_target = Some(target_staging);
-                if let Err(e) = adopt_link_to_target(link, target, reporter) {
-                    self.rollback(link, target)?;
+                if let Err(e) = adopt_link_to_target(migrator, link, target, reporter) {
+                    self.rollback(migrator, link, target)?;
                     return Err(e);
                 }
                 self.adopted_link_to_target = true;
@@ -118,22 +128,27 @@ impl AddPreparation {
 
     pub fn commit(&self) -> Result<(), SymmError> {
         if let Some(path) = &self.staged_target {
-            remove_path_any(path)?;
+            path_ops::remove_path_any(path)?;
         }
         if let Some(path) = &self.staged_link {
-            remove_path_any(path)?;
+            path_ops::remove_path_any(path)?;
         }
         Ok(())
     }
 
-    pub fn rollback(&self, link: &Path, target: &Path) -> Result<(), SymmError> {
+    pub fn rollback<M>(&self, migrator: &M, link: &Path, target: &Path) -> Result<(), SymmError>
+    where
+        M: PathMigrator,
+    {
         if self.adopted_link_to_target && target.exists() {
             if link.exists() {
-                remove_path_any(link)?;
+                path_ops::remove_path_any(link)?;
             }
-            move_path_without_progress(target, link).map_err(|e| SymmError::IoError {
-                message: format!("回滚失败：无法恢复 link：{e}"),
-            })?;
+            migrator
+                .move_path_without_progress(target, link)
+                .map_err(|e| SymmError::IoError {
+                    message: format!("回滚失败：无法恢复 link：{e}"),
+                })?;
         }
         if let Some(path) = &self.staged_target
             && path.exists()
@@ -146,7 +161,7 @@ impl AddPreparation {
             && path.exists()
         {
             if link.exists() {
-                remove_path_any(link)?;
+                path_ops::remove_path_any(link)?;
             }
             fs::rename(path, link).map_err(|e| SymmError::IoError {
                 message: format!("回滚失败：无法恢复 link 备份：{e}"),
@@ -156,23 +171,27 @@ impl AddPreparation {
     }
 }
 
-pub fn resolve_add_conflict<F>(
+pub fn resolve_add_conflict<M, F>(
+    migrator: &M,
     link: &Path,
     target: &Path,
     reporter: &mut F,
 ) -> Result<AddPreparation, SymmError>
 where
+    M: PathMigrator,
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
-    AddPreparation::prepare(link, target, reporter)
+    AddPreparation::prepare(migrator, link, target, reporter)
 }
 
-pub fn adopt_link_to_target<F>(
+pub fn adopt_link_to_target<M, F>(
+    migrator: &M,
     link: &Path,
     target: &Path,
     reporter: &mut F,
 ) -> Result<(), SymmError>
 where
+    M: PathMigrator,
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
     if target.exists() {
@@ -190,7 +209,7 @@ where
     }
     let staging = staging_path(link);
     move_path_with_retry(link, &staging, "link")?;
-    if let Err(e) = migrate_path(&staging, target, reporter) {
+    if let Err(e) = migrator.migrate_path(&staging, target, reporter) {
         let _ = fs::rename(&staging, link);
         return Err(SymmError::IoError {
             message: format!("接管失败：无法移动到 target（已回滚）：{e}"),
@@ -210,29 +229,23 @@ fn staging_path(link: &Path) -> PathBuf {
 }
 
 fn select_conflict_choice() -> Result<ConflictChoice, SymmError> {
-    if let Ok(raw) = std::env::var("SYMM_ADD_CONFLICT_CHOICE") {
-        return parse_conflict_choice(&raw);
-    }
-    let options = vec![
-        ("保留 link（放弃 target）", ConflictChoice::KeepLink),
-        ("保留 target（放弃 link）", ConflictChoice::KeepTarget),
-        ("取消", ConflictChoice::Cancel),
-    ];
-    let labels: Vec<&str> = options.iter().map(|(label, _)| *label).collect();
-    let selected = Select::new("检测到 target 与 link 都已存在，请选择处理方式：", labels)
-        .with_help_message("↑↓ 移动  Enter 确认  Esc 取消")
-        .prompt()
-        .map_err(|e| SymmError::InvalidArgument {
-            message: format!("已取消：{e}"),
-        })?;
-    for (label, choice) in options {
-        if label == selected {
-            return Ok(choice);
-        }
-    }
-    Err(SymmError::InvalidArgument {
-        message: "无效选择".to_string(),
-    })
+    choice::choose_with_env(
+        "SYMM_ADD_CONFLICT_CHOICE",
+        parse_conflict_choice,
+        "检测到 target 与 link 都已存在，请选择处理方式：",
+        "↑↓ 移动  Enter 确认  Esc 取消",
+        vec![
+            (
+                "保留 link（放弃 target）".to_string(),
+                ConflictChoice::KeepLink,
+            ),
+            (
+                "保留 target（放弃 link）".to_string(),
+                ConflictChoice::KeepTarget,
+            ),
+            ("取消".to_string(), ConflictChoice::Cancel),
+        ],
+    )
 }
 
 fn parse_conflict_choice(raw: &str) -> Result<ConflictChoice, SymmError> {
@@ -249,31 +262,19 @@ fn parse_conflict_choice(raw: &str) -> Result<ConflictChoice, SymmError> {
 }
 
 fn select_symlink_conflict_choice() -> Result<SymlinkConflictChoice, SymmError> {
-    if let Ok(raw) = std::env::var("SYMM_ADD_SYMLINK_CONFLICT_CHOICE") {
-        return parse_symlink_conflict_choice(&raw);
-    }
-    let options = vec![
-        ("改为指向新的 target", SymlinkConflictChoice::Retarget),
-        ("取消", SymlinkConflictChoice::Cancel),
-    ];
-    let labels: Vec<&str> = options.iter().map(|(label, _)| *label).collect();
-    let selected = Select::new(
+    choice::choose_with_env(
+        "SYMM_ADD_SYMLINK_CONFLICT_CHOICE",
+        parse_symlink_conflict_choice,
         "检测到 link 已是软链接但当前指向与 target 不一致，请选择处理方式：",
-        labels,
+        "↑↓ 移动  Enter 确认  Esc 取消",
+        vec![
+            (
+                "改为指向新的 target".to_string(),
+                SymlinkConflictChoice::Retarget,
+            ),
+            ("取消".to_string(), SymlinkConflictChoice::Cancel),
+        ],
     )
-    .with_help_message("↑↓ 移动  Enter 确认  Esc 取消")
-    .prompt()
-    .map_err(|e| SymmError::InvalidArgument {
-        message: format!("已取消：{e}"),
-    })?;
-    for (label, choice) in options {
-        if label == selected {
-            return Ok(choice);
-        }
-    }
-    Err(SymmError::InvalidArgument {
-        message: "无效选择".to_string(),
-    })
 }
 
 fn parse_symlink_conflict_choice(raw: &str) -> Result<SymlinkConflictChoice, SymmError> {
@@ -320,25 +321,4 @@ fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmEr
         SymmError::IoError { message }
     })?;
     Ok(())
-}
-
-fn remove_path_any(path: &Path) -> Result<(), SymmError> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) => {
-            if meta.file_type().is_dir() {
-                fs::remove_dir_all(path).map_err(|e| SymmError::IoError {
-                    message: e.to_string(),
-                })?;
-            } else {
-                fs::remove_file(path).map_err(|e| SymmError::IoError {
-                    message: e.to_string(),
-                })?;
-            }
-            Ok(())
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(SymmError::IoError {
-            message: e.to_string(),
-        }),
-    }
 }
