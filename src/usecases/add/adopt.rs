@@ -199,6 +199,7 @@ where
             message: "接管失败：目标路径已存在".to_string(),
         });
     }
+    ensure_target_parent_dir(target)?;
     let meta = fs::symlink_metadata(link).map_err(|e| SymmError::IoError {
         message: format!("接管失败：无法读取 link 元数据：{e}"),
     })?;
@@ -216,6 +217,18 @@ where
         });
     }
     Ok(())
+}
+
+fn ensure_target_parent_dir(target: &Path) -> Result<(), SymmError> {
+    let parent = target.parent().ok_or_else(|| SymmError::InvalidArgument {
+        message: format!("无法解析 target 父目录：{}", target.display()),
+    })?;
+    if parent.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
+        message: format!("接管失败：无法创建 target 父目录 {}：{e}", parent.display()),
+    })
 }
 
 fn staging_path(link: &Path) -> PathBuf {

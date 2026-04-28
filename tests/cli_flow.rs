@@ -117,6 +117,36 @@ fn add_adopts_existing_link_entity_when_target_missing() {
 }
 
 #[test]
+fn add_adopts_existing_link_entity_and_creates_nested_target_parent_dirs() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let link = data_root.join("nested_original.txt");
+    let target = data_root
+        .join("deep")
+        .join("level")
+        .join("nested_moved.txt");
+    fs::write(&link, "payload").expect("write original");
+    assert!(!target.exists());
+    assert!(
+        !target.parent().expect("target has parent").exists(),
+        "nested parent should not pre-exist"
+    );
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "adopt-nested")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&target).expect("read moved"), "payload");
+    assert_eq!(fs::read_to_string(&link).expect("read via link"), "payload");
+}
+
+#[test]
 fn add_when_target_and_link_both_exist_keep_link() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");

@@ -2,7 +2,44 @@
 
 高性能、跨平台的软链接管理命令行工具。
 
-## 命令
+## 项目介绍
+
+- 管理软链接生命周期：创建、更新、查看、删除
+- `add` 支持冲突分支处理、占用探测、回滚保护
+- 跨平台支持 Linux / macOS / Windows（Windows 目录支持 junction 回退）
+- 持久化使用 SQLite，按 `link_path` 幂等 upsert
+
+## 快速开始
+
+### 1) 前置依赖
+
+- Rust stable（建议通过 `rustup` 安装，含 `cargo`）
+- Git
+- 平台：
+  - Windows 11
+  - Linux
+  - macOS
+- Windows 本地构建额外需要：
+  - Visual Studio Build Tools（或 Visual Studio）中的 C++ 构建工具链（提供 `link.exe`）
+
+### 2) 构建
+
+- `cargo build --release`
+
+### 3) 常用命令
+
+- 添加或纳管链接：`symm add <link> <target>`
+- 查看全部：`symm ls`
+- 查看单条：`symm show <name|link>`
+- 删除记录与链接：`symm rm <name|link>`
+
+### 4) 测试与质量检查
+
+- 格式检查：`cargo fmt --all -- --check`
+- Clippy：`cargo clippy --all-targets --all-features -- -D warnings`
+- 测试：`cargo test --all-targets`
+
+## 命令说明
 
 - `symm add <link> <target>`：创建/更新软链接（按 link 幂等）
 - `symm rm <name|link>`：按名称或链接路径删除
@@ -15,10 +52,76 @@
 - 可通过 `SYMM_HOME` 覆盖
 - 注册库文件：`symm.db`
 
+## 当前架构（分层 + 单一职责）
+
+```text
+src/
+  bin/
+    symm.rs                     # CLI 入口
+  app/
+    service.rs                  # 命令分发
+    commands/
+      add.rs                    # add 编排
+      rm.rs
+      ls.rs
+      show.rs
+  domain/
+    error.rs                    # 领域错误
+    model.rs                    # 领域模型
+  usecases/
+    add/
+      adopt.rs                  # add 冲突策略与回滚
+      ports.rs                  # 用例层端口（trait）
+  infra/
+    db/repository.rs            # SQLite 读写
+    fs/                         # 链接/迁移/ACL/路径操作
+    paths/                      # 目录与路径规范化
+    platform/admin.rs           # 平台权限能力
+    processes/                  # 占用探测与进程终止
+    errors/io_map.rs            # IO 错误映射
+  interface/
+    cli.rs                      # 参数模型
+    output.rs                   # 输出渲染
+    interaction/choice.rs       # 交互与 env 选择
+    progress/migration_reporter.rs
+```
+
+### 依赖方向
+
+```mermaid
+flowchart LR
+binSymm[bin/symm.rs] --> interfaceLayer[interface]
+binSymm --> appLayer[app]
+appLayer --> usecasesLayer[usecases]
+appLayer --> infraLayer[infra]
+appLayer --> domainLayer[domain]
+usecasesLayer --> domainLayer
+usecasesLayer --> infraLayer
+infraLayer --> domainLayer
+```
+
+### 运行主流程
+
+```mermaid
+flowchart LR
+cli[CLI Parse] --> guard[Windows Admin Guard]
+guard --> dispatch[app/service Dispatch]
+dispatch --> addCmd[commands/add]
+dispatch --> lsCmd[commands/ls]
+dispatch --> showCmd[commands/show]
+dispatch --> rmCmd[commands/rm]
+addCmd --> adoptFlow[usecases/add/adopt]
+addCmd --> infraOps[infra fs/db/processes]
+lsCmd --> dbRead[infra db]
+showCmd --> dbRead
+rmCmd --> infraOps
+```
+
 ## 平台行为
 
 - Linux/macOS：使用系统软链接
 - Windows：优先创建软链接；目录软链接失败时自动降级为 junction
+- Windows：程序要求管理员权限运行（UAC），用于稳定处理链接与占用场景
 
 ## `add` 行为与冲突处理
 
@@ -44,11 +147,27 @@
 
 以上流程均采用 staging + 回滚机制，任一步失败会恢复到操作前状态，避免部分成功导致的数据破坏。
 
+### `add` 执行流程图
+
+```mermaid
+flowchart TD
+start[add link target] --> lockGate[检测 link 占用]
+lockGate -->|占用| lockChoice[解除占用或取消]
+lockGate -->|未占用| conflict[冲突解析 adopt]
+lockChoice -->|取消| failCancel[返回错误]
+lockChoice -->|解除成功| conflict
+conflict --> migrate[同盘 rename 或跨盘 copy+delete]
+migrate --> createLink[创建 symlink/junction]
+createLink --> upsert[按 link_path upsert DB]
+upsert --> done[完成]
+upsert -->|失败| rollback[回滚 staging 与 link]
+```
+
 ## 打包与发布（多平台）
 
 ### Windows
 
-- 构建：`mise exec -- cargo build --release`
+- 构建：`cargo build --release`
 - 产物：`target/release/symm.exe`
 - 分发：复制 `symm.exe` 到任意目录
 - 建议：将该目录加入 `PATH`，可在任意终端直接执行 `symm`
@@ -67,7 +186,7 @@
 - 产物：`target/release/symm`
 - 可选安装：
   - `install -m 755 target/release/symm /usr/local/bin/symm`
-  - Apple Silicon 常见路径也可用 `/opt/homebrew/bin`
+  - 或复制到 `~/.local/bin` 并确保该目录在 `PATH`
 
 ### 跨平台交叉编译示例（可选）
 
@@ -94,10 +213,11 @@
 ## GitHub Actions
 
 - `CI`（`.github/workflows/ci.yml`）
+  - 触发：`push` 与 `pull_request`
   - 在 Linux / Windows / macOS 执行：
     - `cargo fmt --all -- --check`
     - `cargo clippy --all-targets --all-features -- -D warnings`
     - `cargo test --all-targets`
-  - 同时构建三平台 release 并上传构建产物
 - `Release`（`.github/workflows/release.yml`）
-  - 推送 tag（如 `v0.1.0`）时自动构建三平台二进制并上传到 GitHub Release
+  - 触发：推送 tag（如 `v0.2.0-test7` 或 `v1.0.0`）
+  - 自动构建三平台 release 二进制并上传到 GitHub Release
