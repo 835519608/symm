@@ -1,6 +1,8 @@
 use crate::domain::error::SymmError;
 use crate::infra::fs::migration::MigrationEvent;
 use crate::infra::fs::path_ops;
+#[cfg(windows)]
+use crate::infra::fs::tree_copy::recreate_symlink_at;
 use crate::interface::interaction::choice;
 use crate::usecases::add::ports::PathMigrator;
 use std::fs;
@@ -348,25 +350,6 @@ fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmEr
 
 #[cfg(windows)]
 fn move_symlink_by_recreate(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    use std::os::windows::fs::{symlink_dir, symlink_file};
-
-    let link_target = fs::read_link(src).map_err(|e| SymmError::IoError {
-        message: format!("无法读取 {role} 软链接目标：{e}"),
-    })?;
-
-    let resolved = if link_target.is_absolute() {
-        link_target.clone()
-    } else {
-        src.parent().unwrap_or(src).join(&link_target)
-    };
-
-    let is_dir_link = fs::metadata(&resolved)
-        .map(|m| m.is_dir())
-        .unwrap_or_else(|_| {
-            // 无法解析目标时，按目录链接回退；与现有 tree_copy 行为保持一致。
-            true
-        });
-
     if dst.exists() {
         path_ops::remove_path_any(dst)?;
     }
@@ -376,15 +359,9 @@ fn move_symlink_by_recreate(src: &Path, dst: &Path, role: &str) -> Result<(), Sy
         })?;
     }
 
-    if is_dir_link {
-        symlink_dir(&link_target, dst).map_err(|e| SymmError::IoError {
-            message: format!("重建目录软链接失败（{role}）：{e}"),
-        })?;
-    } else {
-        symlink_file(&link_target, dst).map_err(|e| SymmError::IoError {
-            message: format!("重建文件软链接失败（{role}）：{e}"),
-        })?;
-    }
+    recreate_symlink_at(src, dst, None).map_err(|e| SymmError::IoError {
+        message: format!("重建软链接失败（{role}）：{e}"),
+    })?;
 
     path_ops::remove_path_any(src)?;
     Ok(())

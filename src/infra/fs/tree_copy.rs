@@ -46,9 +46,8 @@ where
         let file_type = meta.file_type();
 
         if file_type.is_symlink() {
-            let target = fs::read_link(src_path).map_err(ioe)?;
             ensure_parent_dir(&dst_path)?;
-            create_symlink_like(src, dst, src_path, &target, &dst_path)?;
+            recreate_symlink_at(src_path, &dst_path, Some((src, dst)))?;
             continue;
         }
 
@@ -108,14 +107,18 @@ where
     Ok(copied_bytes)
 }
 
-fn create_symlink_like(
-    src_root: &Path,
-    dst_root: &Path,
+pub fn recreate_symlink_at(
     src_link: &Path,
-    target: &Path,
     dst_link: &Path,
+    rebase: Option<(&Path, &Path)>,
 ) -> Result<(), SymmError> {
-    let rebased_target = rebase_internal_target(src_root, dst_root, src_link, target);
+    let link_target = fs::read_link(src_link).map_err(ioe)?;
+    let rebased_target = match rebase {
+        Some((src_root, dst_root)) => {
+            rebase_internal_target(src_root, dst_root, src_link, &link_target)
+        }
+        None => link_target.clone(),
+    };
 
     #[cfg(unix)]
     {
@@ -145,7 +148,7 @@ fn create_symlink_like(
 
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (src_link, target, dst_link);
+        let _ = (src_link, dst_link);
         Err(SymmError::InvalidArgument {
             message: "当前平台不支持复制符号链接".to_string(),
         })
