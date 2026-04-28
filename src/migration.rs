@@ -1,3 +1,4 @@
+use crate::acl;
 use crate::error::SymmError;
 use fs_extra::{dir, file};
 use std::fs;
@@ -51,7 +52,11 @@ where
         return Ok(());
     }
 
+    let acl_snapshot = acl::snapshot_dir_acl(src)?;
     copy_path_with_progress(src, dst, reporter)?;
+    if let Some(snapshot) = acl_snapshot {
+        let _ = acl::restore_dir_acl(dst, &snapshot);
+    }
     reporter(MigrationEvent::RemovingSource {
         source: src.display().to_string(),
     })?;

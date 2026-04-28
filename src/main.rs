@@ -1,3 +1,5 @@
+mod acl;
+mod admin;
 mod adopt;
 mod cli;
 mod db;
@@ -28,6 +30,12 @@ fn run() -> Result<(), error::SymmError> {
         .ok_or_else(|| error::SymmError::InvalidArgument {
             message: "未提供命令，请使用 --help 查看帮助".to_string(),
         })?;
+    #[cfg(windows)]
+    if !admin::is_elevated() {
+        return Err(error::SymmError::PermissionDenied {
+            message: "需要管理员权限运行（将通过 UAC 请求授权）".to_string(),
+        });
+    }
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     service::execute(command, &mut lock)?;

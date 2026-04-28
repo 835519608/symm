@@ -325,8 +325,14 @@ fn symlink_points_to_target(link: &Path, target: &Path) -> Result<bool, SymmErro
 }
 
 fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    fs::rename(src, dst).map_err(|e| SymmError::IoError {
-        message: format!("无法移动 {role}：{e}"),
+    fs::rename(src, dst).map_err(|e| {
+        let mut message = format!("无法移动 {role}：{e}");
+        if e.raw_os_error() == Some(5) {
+            message.push_str(
+                "。系统拒绝访问（os error 5），可能仍有占用未被识别，或当前进程权限不足（可尝试以管理员身份运行）",
+            );
+        }
+        SymmError::IoError { message }
     })?;
     Ok(())
 }

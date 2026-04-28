@@ -190,12 +190,14 @@ fn windows_list_locking_processes<F>(
 where
     F: FnMut(LockProbeProgress),
 {
-    use filelocksmith::{find_processes_locking_path, pid_to_process_path};
+    use filelocksmith::{find_processes_locking_path, pid_to_process_path, set_debug_privilege};
 
     progress(LockProbeProgress::Querying {
         batch: 1,
         total_batches: 1,
     });
+    // 提升 SeDebugPrivilege 可提高跨进程句柄枚举的可见性（在有权限时生效）。
+    let _ = set_debug_privilege();
     let path_string = path.to_string_lossy().to_string();
     let pids = find_processes_locking_path(&path_string);
     let mut out = Vec::with_capacity(pids.len());
