@@ -47,7 +47,7 @@ where
 
         if file_type.is_symlink() {
             ensure_parent_dir(&dst_path)?;
-            recreate_symlink_at(src_path, &dst_path, Some((src, dst)))?;
+            recreate_symlink(src_path, &dst_path, Some((src, dst)))?;
             continue;
         }
 
@@ -107,7 +107,7 @@ where
     Ok(copied_bytes)
 }
 
-pub fn recreate_symlink_at(
+pub fn recreate_symlink(
     src_link: &Path,
     dst_link: &Path,
     rebase: Option<(&Path, &Path)>,

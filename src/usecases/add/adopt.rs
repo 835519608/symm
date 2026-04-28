@@ -2,7 +2,7 @@ use crate::domain::error::SymmError;
 use crate::infra::fs::migration::MigrationEvent;
 use crate::infra::fs::path_ops;
 #[cfg(windows)]
-use crate::infra::fs::tree_copy::recreate_symlink_at;
+use crate::infra::fs::tree_copy::recreate_symlink;
 use crate::interface::interaction::choice;
 use crate::usecases::add::ports::PathMigrator;
 use std::fs;
@@ -330,12 +330,11 @@ fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmEr
         Ok(()) => Ok(()),
         Err(e) => {
             #[cfg(windows)]
-            if e.raw_os_error() == Some(5) {
-                if let Ok(meta) = fs::symlink_metadata(src) {
-                    if meta.file_type().is_symlink() {
-                        return move_symlink_by_recreate(src, dst, role);
-                    }
-                }
+            if e.raw_os_error() == Some(5)
+                && let Ok(meta) = fs::symlink_metadata(src)
+                && meta.file_type().is_symlink()
+            {
+                return move_symlink_by_recreate(src, dst, role);
             }
             let mut message = format!("无法移动 {role}：{e}");
             if e.raw_os_error() == Some(5) {
@@ -359,7 +358,7 @@ fn move_symlink_by_recreate(src: &Path, dst: &Path, role: &str) -> Result<(), Sy
         })?;
     }
 
-    recreate_symlink_at(src, dst, None).map_err(|e| SymmError::IoError {
+    recreate_symlink(src, dst, None).map_err(|e| SymmError::IoError {
         message: format!("重建软链接失败（{role}）：{e}"),
     })?;
 
