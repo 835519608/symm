@@ -112,7 +112,7 @@ fn create_symlink_like(
     src_root: &Path,
     dst_root: &Path,
     src_link: &Path,
-    target: &PathBuf,
+    target: &Path,
     dst_link: &Path,
 ) -> Result<(), SymmError> {
     let rebased_target = rebase_internal_target(src_root, dst_root, src_link, target);
