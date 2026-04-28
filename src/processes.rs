@@ -342,8 +342,6 @@ fn collect_lock_probe_paths<F>(path: &Path, progress: &mut F) -> Result<Vec<Path
 where
     F: FnMut(LockProbeProgress),
 {
-    use std::fs;
-
     if !path.is_dir() {
         return Ok(vec![path.to_path_buf()]);
     }
