@@ -14,8 +14,6 @@ pub enum MigrationEvent {
         target: String,
     },
     Copying {
-        source: String,
-        target: String,
         copied_bytes: u64,
         total_bytes: u64,
         current_item: Option<String>,
@@ -102,8 +100,6 @@ where
 
         let copy_result = dir::copy_with_progress(src, dst, &options, |info| {
             match reporter(MigrationEvent::Copying {
-                source: src.display().to_string(),
-                target: dst.display().to_string(),
                 copied_bytes: info.copied_bytes,
                 total_bytes: info.total_bytes,
                 current_item: if info.file_name.is_empty() {
@@ -139,8 +135,6 @@ where
     let options = file::CopyOptions::new();
     if let Err(err) = file::copy_with_progress(src, dst, &options, |info| {
         let _ = reporter(MigrationEvent::Copying {
-            source: src.display().to_string(),
-            target: dst.display().to_string(),
             copied_bytes: info.copied_bytes,
             total_bytes: info.total_bytes,
             current_item: src.file_name().map(|s| s.to_string_lossy().to_string()),
@@ -301,7 +295,7 @@ mod tests {
         .expect_err("reporter abort should stop copy");
 
         assert!(
-            matches!(err, SymmError::IoError { message } if message == "stop"),
+            matches!(err, SymmError::IoError { ref message } if message == "stop"),
             "unexpected error: {err:?}"
         );
         assert!(src.exists(), "source should stay in place on abort");

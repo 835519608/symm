@@ -189,7 +189,6 @@ impl<'a, W: Write> AddProgressReporter<'a, W> {
                 copied_bytes,
                 total_bytes,
                 current_item,
-                ..
             } => self.write_copy_progress(copied_bytes, total_bytes, current_item.as_deref()),
             MigrationEvent::RemovingSource { source } => {
                 self.write_line(&format!("正在删除源路径：{source}"))
