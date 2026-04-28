@@ -1,4 +1,5 @@
 use crate::error::SymmError;
+use crate::migration::{MigrationEvent, migrate_path, move_path_without_progress};
 use crate::processes;
 use inquire::{MultiSelect, Select};
 use std::fs;
@@ -24,7 +25,10 @@ pub struct AddPreparation {
 }
 
 impl AddPreparation {
-    pub fn prepare(link: &Path, target: &Path) -> Result<Self, SymmError> {
+    pub fn prepare<F>(link: &Path, target: &Path, reporter: &mut F) -> Result<Self, SymmError>
+    where
+        F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+    {
         let mut plan = AddPreparation {
             adopted_link_to_target: false,
             staged_target: None,
@@ -46,7 +50,7 @@ impl AddPreparation {
                         path: target.to_string_lossy().to_string(),
                     });
                 }
-                adopt_link_to_target(link, target)?;
+                adopt_link_to_target(link, target, reporter)?;
                 plan.adopted_link_to_target = true;
                 Ok(plan)
             }
@@ -57,7 +61,7 @@ impl AddPreparation {
                 if link_is_symlink {
                     plan.prepare_symlink_exist(link, target)?;
                 } else {
-                    plan.prepare_both_exist(link, target)?;
+                    plan.prepare_both_exist(link, target, reporter)?;
                 }
                 Ok(plan)
             }
@@ -82,14 +86,22 @@ impl AddPreparation {
         }
     }
 
-    fn prepare_both_exist(&mut self, link: &Path, target: &Path) -> Result<(), SymmError> {
+    fn prepare_both_exist<F>(
+        &mut self,
+        link: &Path,
+        target: &Path,
+        reporter: &mut F,
+    ) -> Result<(), SymmError>
+    where
+        F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+    {
         match select_conflict_choice()? {
             ConflictChoice::KeepLink => {
                 let target_staging = staging_path(target);
                 move_path_with_retry(target, &target_staging, "target")?;
                 self.staged_target = Some(target_staging);
 
-                if let Err(e) = adopt_link_to_target(link, target) {
+                if let Err(e) = adopt_link_to_target(link, target, reporter) {
                     self.rollback(link, target)?;
                     return Err(e);
                 }
@@ -124,7 +136,7 @@ impl AddPreparation {
             if link.exists() {
                 remove_path_any(link)?;
             }
-            fs::rename(target, link).map_err(|e| SymmError::IoError {
+            move_path_without_progress(target, link).map_err(|e| SymmError::IoError {
                 message: format!("回滚失败：无法恢复 link：{e}"),
             })?;
         }
@@ -152,11 +164,25 @@ impl AddPreparation {
     }
 }
 
-pub fn resolve_add_conflict(link: &Path, target: &Path) -> Result<AddPreparation, SymmError> {
-    AddPreparation::prepare(link, target)
+pub fn resolve_add_conflict<F>(
+    link: &Path,
+    target: &Path,
+    reporter: &mut F,
+) -> Result<AddPreparation, SymmError>
+where
+    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+{
+    AddPreparation::prepare(link, target, reporter)
 }
 
-pub fn adopt_link_to_target(link: &Path, target: &Path) -> Result<(), SymmError> {
+pub fn adopt_link_to_target<F>(
+    link: &Path,
+    target: &Path,
+    reporter: &mut F,
+) -> Result<(), SymmError>
+where
+    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+{
     if target.exists() {
         return Err(SymmError::InvalidArgument {
             message: "接管失败：目标路径已存在".to_string(),
@@ -175,7 +201,7 @@ pub fn adopt_link_to_target(link: &Path, target: &Path) -> Result<(), SymmError>
     let staging = staging_path(link);
     move_path_with_retry(link, &staging, "link")?;
 
-    if let Err(e) = fs::rename(&staging, target) {
+    if let Err(e) = migrate_path(&staging, target, reporter) {
         let _ = fs::rename(&staging, link);
         return Err(SymmError::IoError {
             message: format!("接管失败：无法移动到 target（已回滚）：{e}"),

@@ -103,7 +103,11 @@ fn add_adopts_existing_link_entity_when_target_missing() {
         .env("SYMM_ADD_NAME", "adopt")
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
-        .success();
+        .success()
+        .stdout(contains("正在扫描迁移内容"))
+        .stdout(contains("正在快速移动（同盘）"))
+        .stdout(contains("正在创建链接"))
+        .stdout(contains("正在写入数据库"));
 
     // 原实体应被移动到 target
     assert_eq!(fs::read_to_string(&target).expect("read moved"), "payload");

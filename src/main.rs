@@ -3,6 +3,7 @@ mod cli;
 mod db;
 mod error;
 mod link_ops;
+mod migration;
 mod model;
 mod output;
 mod paths;
