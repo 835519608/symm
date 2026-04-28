@@ -167,7 +167,24 @@ fn ensure_link_not_locked<W: Write>(
     reporter: &mut AddProgressReporter<'_, W>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查 link 占用：{}", link.display()))?;
-    let procs = processes::list_locking_processes(link)?;
+    let procs = processes::list_locking_processes_with_progress(link, |event| match event {
+        processes::LockProbeProgress::Scanning {
+            scanned_files,
+            current,
+        } => {
+            let _ = reporter.write_line(&format!(
+                "正在扫描占用检测文件：已扫描 {scanned_files} 个（示例：{}）",
+                current.display()
+            ));
+        }
+        processes::LockProbeProgress::Querying {
+            batch,
+            total_batches,
+        } => {
+            let _ =
+                reporter.write_line(&format!("正在查询占用进程：第 {batch}/{total_batches} 批"));
+        }
+    })?;
     if procs.is_empty() {
         return Ok(());
     }
@@ -188,7 +205,24 @@ fn ensure_link_not_locked<W: Write>(
     processes::kill_processes(&pids)?;
 
     reporter.write_line("正在重新确认占用状态")?;
-    let remaining = processes::list_locking_processes(link)?;
+    let remaining = processes::list_locking_processes_with_progress(link, |event| match event {
+        processes::LockProbeProgress::Scanning {
+            scanned_files,
+            current,
+        } => {
+            let _ = reporter.write_line(&format!(
+                "正在扫描占用检测文件：已扫描 {scanned_files} 个（示例：{}）",
+                current.display()
+            ));
+        }
+        processes::LockProbeProgress::Querying {
+            batch,
+            total_batches,
+        } => {
+            let _ =
+                reporter.write_line(&format!("正在查询占用进程：第 {batch}/{total_batches} 批"));
+        }
+    })?;
     if remaining.is_empty() {
         return Ok(());
     }

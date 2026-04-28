@@ -1,9 +1,23 @@
 use crate::error::SymmError;
+use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static MOCK_LOCK_RELEASED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone)]
+pub enum LockProbeProgress {
+    Scanning {
+        scanned_files: usize,
+        current: PathBuf,
+    },
+    Querying {
+        batch: usize,
+        total_batches: usize,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub struct ProcInfo {
@@ -19,18 +33,33 @@ impl Display for ProcInfo {
 
 #[cfg(windows)]
 pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+    list_locking_processes_with_progress(path, |_| {})
+}
+
+pub fn list_locking_processes_with_progress<F>(
+    path: &Path,
+    mut progress: F,
+) -> Result<Vec<ProcInfo>, SymmError>
+where
+    F: FnMut(LockProbeProgress),
+{
     if let Some(mocked) = mock_locking_processes(path) {
         return Ok(mocked);
     }
-    windows_list_locking_processes(path)
+    #[cfg(windows)]
+    {
+        windows_list_locking_processes(path, &mut progress)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = &mut progress;
+        unix_list_locking_processes(path)
+    }
 }
 
 #[cfg(not(windows))]
 pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
-    if let Some(mocked) = mock_locking_processes(path) {
-        return Ok(mocked);
-    }
-    unix_list_locking_processes(path)
+    list_locking_processes_with_progress(path, |_| {})
 }
 
 #[cfg(windows)]
@@ -169,7 +198,30 @@ fn unix_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> 
 }
 
 #[cfg(windows)]
-fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+fn windows_list_locking_processes<F>(
+    path: &Path,
+    progress: &mut F,
+) -> Result<Vec<ProcInfo>, SymmError>
+where
+    F: FnMut(LockProbeProgress),
+{
+    let probe_paths = collect_lock_probe_paths(path, progress)?;
+    let mut dedup = BTreeMap::<u32, ProcInfo>::new();
+    let total_batches = probe_paths.len().div_ceil(256).max(1);
+    for (index, chunk) in probe_paths.chunks(256).enumerate() {
+        progress(LockProbeProgress::Querying {
+            batch: index + 1,
+            total_batches,
+        });
+        for proc in windows_list_locking_process_batch(chunk)? {
+            dedup.entry(proc.pid).or_insert(proc);
+        }
+    }
+    Ok(dedup.into_values().collect())
+}
+
+#[cfg(windows)]
+fn windows_list_locking_process_batch(paths: &[PathBuf]) -> Result<Vec<ProcInfo>, SymmError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::ERROR_MORE_DATA;
     use windows_sys::Win32::Foundation::FILETIME;
@@ -187,17 +239,24 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
     }
 
     let res = (|| {
-        let wide: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let resources = [wide.as_ptr()];
+        let wide_paths = paths
+            .iter()
+            .map(|path| {
+                path.as_os_str()
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect::<Vec<u16>>()
+            })
+            .collect::<Vec<_>>();
+        let resources = wide_paths
+            .iter()
+            .map(|path| path.as_ptr())
+            .collect::<Vec<_>>();
 
         let reg = unsafe {
             RmRegisterResources(
                 session,
-                1,
+                resources.len() as u32,
                 resources.as_ptr(),
                 0,
                 std::ptr::null(),
@@ -285,4 +344,91 @@ fn windows_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmErro
 fn utf16_to_string(buf: &[u16]) -> String {
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..end])
+}
+
+fn collect_lock_probe_paths<F>(path: &Path, progress: &mut F) -> Result<Vec<PathBuf>, SymmError>
+where
+    F: FnMut(LockProbeProgress),
+{
+    if !path.is_dir() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    let mut out = Vec::new();
+    let mut scanned_files = 0usize;
+    collect_files_recursively(path, &mut out, &mut scanned_files, progress)?;
+    if out.is_empty() {
+        out.push(path.to_path_buf());
+    }
+    Ok(out)
+}
+
+fn collect_files_recursively<F>(
+    root: &Path,
+    out: &mut Vec<PathBuf>,
+    scanned_files: &mut usize,
+    progress: &mut F,
+) -> Result<(), SymmError>
+where
+    F: FnMut(LockProbeProgress),
+{
+    let entries = fs::read_dir(root).map_err(|e| SymmError::IoError {
+        message: format!("无法扫描占用检测路径 {}：{e}", root.display()),
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| SymmError::IoError {
+            message: format!("无法读取占用检测目录项 {}：{e}", root.display()),
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|e| SymmError::IoError {
+            message: format!("无法读取占用检测目录项类型 {}：{e}", path.display()),
+        })?;
+        if file_type.is_dir() {
+            collect_files_recursively(&path, out, scanned_files, progress)?;
+        } else {
+            out.push(path);
+            *scanned_files += 1;
+            if *scanned_files == 1 || *scanned_files % 200 == 0 {
+                progress(LockProbeProgress::Scanning {
+                    scanned_files: *scanned_files,
+                    current: out.last().cloned().unwrap_or_else(|| root.to_path_buf()),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn collect_lock_probe_paths_includes_files_inside_directory() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("root");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let file = nested.join("config.json");
+        fs::write(&file, "{}").expect("write file");
+
+        let mut events = Vec::new();
+        let paths =
+            collect_lock_probe_paths(&root, &mut |e| events.push(e)).expect("collect probe paths");
+
+        assert!(
+            paths.iter().any(|path| path == &file),
+            "directory lock probing should include nested files"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, LockProbeProgress::Scanning { .. })),
+            "directory lock probing should emit scanning progress"
+        );
+    }
 }
