@@ -88,9 +88,7 @@ where
     let mut reader = fs::File::open(src).map_err(ioe)?;
     let mut writer = fs::File::create(dst).map_err(ioe)?;
 
-    let current_item = Some(display_relish(
-        src.file_name().map(|s| s.to_string_lossy().to_string()),
-    ));
+    let current_item = src.file_name().map(|s| s.to_string_lossy().to_string());
 
     let mut buf = vec![0u8; 8 * 1024 * 1024];
     loop {
@@ -108,10 +106,6 @@ where
     }
     writer.flush().map_err(ioe)?;
     Ok(copied_bytes)
-}
-
-fn display_relish(s: Option<String>) -> Option<String> {
-    s
 }
 
 fn create_symlink_like(
