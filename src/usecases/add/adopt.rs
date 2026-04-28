@@ -324,14 +324,68 @@ fn symlink_points_to_target(link: &Path, target: &Path) -> Result<bool, SymmErro
 }
 
 fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    fs::rename(src, dst).map_err(|e| {
-        let mut message = format!("无法移动 {role}：{e}");
-        if e.raw_os_error() == Some(5) {
-            message.push_str(
-                "。系统拒绝访问（os error 5），可能仍有占用未被识别，或当前进程权限不足（可尝试以管理员身份运行）",
-            );
+    match fs::rename(src, dst) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            #[cfg(windows)]
+            if e.raw_os_error() == Some(5) {
+                if let Ok(meta) = fs::symlink_metadata(src) {
+                    if meta.file_type().is_symlink() {
+                        return move_symlink_by_recreate(src, dst, role);
+                    }
+                }
+            }
+            let mut message = format!("无法移动 {role}：{e}");
+            if e.raw_os_error() == Some(5) {
+                message.push_str(
+                    "。系统拒绝访问（os error 5），可能仍有占用未被识别，或当前进程权限不足（可尝试以管理员身份运行）",
+                );
+            }
+            Err(SymmError::IoError { message })
         }
-        SymmError::IoError { message }
+    }
+}
+
+#[cfg(windows)]
+fn move_symlink_by_recreate(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    let link_target = fs::read_link(src).map_err(|e| SymmError::IoError {
+        message: format!("无法读取 {role} 软链接目标：{e}"),
     })?;
+
+    let resolved = if link_target.is_absolute() {
+        link_target.clone()
+    } else {
+        src.parent().unwrap_or(src).join(&link_target)
+    };
+
+    let is_dir_link = fs::metadata(&resolved)
+        .map(|m| m.is_dir())
+        .unwrap_or_else(|_| {
+            // 无法解析目标时，按目录链接回退；与现有 tree_copy 行为保持一致。
+            true
+        });
+
+    if dst.exists() {
+        path_ops::remove_path_any(dst)?;
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
+            message: format!("无法创建 {role} 目标父目录：{e}"),
+        })?;
+    }
+
+    if is_dir_link {
+        symlink_dir(&link_target, dst).map_err(|e| SymmError::IoError {
+            message: format!("重建目录软链接失败（{role}）：{e}"),
+        })?;
+    } else {
+        symlink_file(&link_target, dst).map_err(|e| SymmError::IoError {
+            message: format!("重建文件软链接失败（{role}）：{e}"),
+        })?;
+    }
+
+    path_ops::remove_path_any(src)?;
     Ok(())
 }
