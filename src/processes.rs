@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static MOCK_LOCK_RELEASED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
-#[cfg_attr(not(windows), allow(dead_code))]
+#[allow(dead_code)]
 pub enum LockProbeProgress {
     Scanning {
         scanned_files: usize,
