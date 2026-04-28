@@ -1,5 +1,7 @@
 use crate::domain::error::SymmError;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 
 #[cfg(windows)]
 pub struct AclSnapshot {
