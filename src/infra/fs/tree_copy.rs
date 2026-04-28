@@ -48,7 +48,7 @@ where
         if file_type.is_symlink() {
             let target = fs::read_link(src_path).map_err(ioe)?;
             ensure_parent_dir(&dst_path)?;
-            create_symlink_like(src_path, &target, &dst_path)?;
+            create_symlink_like(src, dst, src_path, &target, &dst_path)?;
             continue;
         }
 
@@ -109,15 +109,19 @@ where
 }
 
 fn create_symlink_like(
+    src_root: &Path,
+    dst_root: &Path,
     src_link: &Path,
     target: &PathBuf,
     dst_link: &Path,
 ) -> Result<(), SymmError> {
+    let rebased_target = rebase_internal_target(src_root, dst_root, src_link, target);
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
         let _ = src_link;
-        symlink(target, dst_link).map_err(ioe)?;
+        symlink(&rebased_target, dst_link).map_err(ioe)?;
         Ok(())
     }
 
@@ -132,9 +136,9 @@ fn create_symlink_like(
         };
 
         if is_dir_link {
-            symlink_dir(target, dst_link).map_err(ioe)?;
+            symlink_dir(&rebased_target, dst_link).map_err(ioe)?;
         } else {
-            symlink_file(target, dst_link).map_err(ioe)?;
+            symlink_file(&rebased_target, dst_link).map_err(ioe)?;
         }
         Ok(())
     }
@@ -146,4 +150,23 @@ fn create_symlink_like(
             message: "当前平台不支持复制符号链接".to_string(),
         })
     }
+}
+
+fn rebase_internal_target(
+    src_root: &Path,
+    dst_root: &Path,
+    src_link: &Path,
+    raw_target: &Path,
+) -> PathBuf {
+    let resolved = if raw_target.is_absolute() {
+        raw_target.to_path_buf()
+    } else {
+        src_link.parent().unwrap_or(src_root).join(raw_target)
+    };
+
+    if let Ok(rel) = resolved.strip_prefix(src_root) {
+        return dst_root.join(rel);
+    }
+
+    raw_target.to_path_buf()
 }
