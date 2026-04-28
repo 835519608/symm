@@ -2,8 +2,8 @@ name: Cleanup Test Releases
 
 on:
   schedule:
-    # 每周一次清理测试 tag / pre-release（UTC 时间）
-    - cron: "0 3 * * *"
+    # 每天一次清理测试 tag / pre-release（UTC 17:00 = 北京时间 01:00）
+    - cron: "0 17 * * *"
   workflow_dispatch:
     inputs:
       keep_latest:
