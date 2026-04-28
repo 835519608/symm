@@ -231,7 +231,7 @@ fn select_lock_resolution_action(
         .join("\n");
     let labels = options
         .iter()
-        .map(|(label, _)| label.as_str())
+        .map(|(label, _)| label.clone())
         .collect::<Vec<_>>();
     let prompt = format!("检测到 link 被以下进程占用：\n{occupied}\n请选择后续操作：");
     let selected = Select::new(&prompt, labels)
