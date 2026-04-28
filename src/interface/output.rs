@@ -1,5 +1,5 @@
-use crate::error::SymmError;
-use crate::model::LinkView;
+use crate::domain::error::SymmError;
+use crate::domain::model::LinkView;
 use serde::Serialize;
 use std::io::Write;
 

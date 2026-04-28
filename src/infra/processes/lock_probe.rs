@@ -1,4 +1,4 @@
-use crate::error::SymmError;
+use crate::domain::error::SymmError;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,50 +51,6 @@ where
     }
 }
 
-#[cfg(windows)]
-pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
-    use filelocksmith::quit_processes;
-
-    if should_mock_kill_processes() {
-        if mock_locks_clear_on_kill() {
-            MOCK_LOCK_RELEASED.store(true, Ordering::SeqCst);
-        }
-        return Ok(());
-    }
-    let pids = pids.iter().map(|pid| *pid as usize).collect::<Vec<_>>();
-    if quit_processes(pids) {
-        Ok(())
-    } else {
-        Err(SymmError::PermissionDenied {
-            message: "无法结束占用进程（可能无权限）".to_string(),
-        })
-    }
-}
-
-#[cfg(not(windows))]
-pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
-    if should_mock_kill_processes() {
-        if mock_locks_clear_on_kill() {
-            MOCK_LOCK_RELEASED.store(true, Ordering::SeqCst);
-        }
-        return Ok(());
-    }
-    for pid in pids {
-        let status = std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .status()
-            .map_err(|e| SymmError::IoError {
-                message: format!("执行 kill 失败：{e}"),
-            })?;
-        if !status.success() {
-            return Err(SymmError::PermissionDenied {
-                message: format!("无法结束进程 PID={pid}（可能无权限）"),
-            });
-        }
-    }
-    Ok(())
-}
-
 fn mock_locking_processes(path: &Path) -> Option<Vec<ProcInfo>> {
     let raw_paths = std::env::var("SYMM_TEST_LOCK_PATHS").ok()?;
     if mock_locks_clear_on_kill() && MOCK_LOCK_RELEASED.load(Ordering::SeqCst) {
@@ -118,11 +74,15 @@ fn mock_locking_processes(path: &Path) -> Option<Vec<ProcInfo>> {
     Some(vec![ProcInfo { pid: 4242, display }])
 }
 
-fn should_mock_kill_processes() -> bool {
+pub fn should_mock_kill_processes() -> bool {
     std::env::var("SYMM_TEST_LOCK_PATHS").is_ok()
 }
 
-fn mock_locks_clear_on_kill() -> bool {
+pub fn mark_mock_released() {
+    MOCK_LOCK_RELEASED.store(true, Ordering::SeqCst);
+}
+
+pub fn mock_locks_clear_on_kill() -> bool {
     std::env::var("SYMM_TEST_LOCK_CLEAR_ON_KILL")
         .map(|value| {
             !matches!(
@@ -135,7 +95,6 @@ fn mock_locks_clear_on_kill() -> bool {
 
 #[cfg(not(windows))]
 fn unix_list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
-    // 尽量使用系统常见自带工具：优先 fuser，其次 lsof；若都不可用则返回空列表。
     let p = path.to_string_lossy().to_string();
 
     let out = std::process::Command::new("fuser")
@@ -191,12 +150,10 @@ where
     F: FnMut(LockProbeProgress),
 {
     use filelocksmith::{find_processes_locking_path, pid_to_process_path, set_debug_privilege};
-
     progress(LockProbeProgress::Querying {
         batch: 1,
         total_batches: 1,
     });
-    // 提升 SeDebugPrivilege 可提高跨进程句柄枚举的可见性（在有权限时生效）。
     let _ = set_debug_privilege();
     let path_string = path.to_string_lossy().to_string();
     let pids = find_processes_locking_path(&path_string);

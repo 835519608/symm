@@ -1,4 +1,4 @@
-use crate::error::SymmError;
+use crate::domain::error::SymmError;
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
@@ -36,7 +36,6 @@ pub fn snapshot_dir_acl(src_dir: &Path) -> Result<Option<AclSnapshot>, SymmError
             message: format!("执行 icacls /save 失败：{e}"),
         })?;
     if !status.success() {
-        // 不阻塞迁移：ACL 快照失败时仍继续，但无法做到还原。
         return Ok(None);
     }
 

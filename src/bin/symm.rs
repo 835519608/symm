@@ -1,43 +1,29 @@
-mod acl;
-mod admin;
-mod adopt;
-mod cli;
-mod db;
-mod error;
-mod link_ops;
-mod migration;
-mod model;
-mod output;
-mod paths;
-mod processes;
-mod service;
-
 use anyhow::Result;
 use clap::Parser;
 
 fn main() -> Result<()> {
     if let Err(err) = run() {
-        eprintln!("{}", output::render_error_json(&err));
+        eprintln!("{}", symm::interface::output::render_error_json(&err));
         std::process::exit(1);
     }
     Ok(())
 }
 
-fn run() -> Result<(), error::SymmError> {
-    let cli = cli::Cli::parse();
+fn run() -> Result<(), symm::domain::error::SymmError> {
+    let cli = symm::interface::cli::Cli::parse();
     let command = cli
         .command
-        .ok_or_else(|| error::SymmError::InvalidArgument {
+        .ok_or_else(|| symm::domain::error::SymmError::InvalidArgument {
             message: "未提供命令，请使用 --help 查看帮助".to_string(),
         })?;
     #[cfg(windows)]
-    if !admin::is_elevated() {
-        return Err(error::SymmError::PermissionDenied {
+    if !symm::infra::platform::admin::is_elevated() {
+        return Err(symm::domain::error::SymmError::PermissionDenied {
             message: "需要管理员权限运行（将通过 UAC 请求授权）".to_string(),
         });
     }
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
-    service::execute(command, &mut lock)?;
+    symm::app::service::execute(command, &mut lock)?;
     Ok(())
 }

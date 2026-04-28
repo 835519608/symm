@@ -1,6 +1,6 @@
-use crate::error::SymmError;
-use crate::model::{LinkKind, LinkRecord};
-use crate::paths;
+use crate::domain::error::SymmError;
+use crate::domain::model::{LinkKind, LinkRecord};
+use crate::infra::paths::runtime_paths;
 use rusqlite::{Connection, Error as SqlError, ErrorCode, params};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,7 +12,7 @@ fn now_ts() -> i64 {
 }
 
 pub fn open_db() -> Result<Connection, SymmError> {
-    let path = paths::db_path()?;
+    let path = runtime_paths::db_path()?;
     let conn = Connection::open(path).map_err(|e| SymmError::DbError {
         message: e.to_string(),
     })?;

@@ -1,5 +1,5 @@
-use crate::error::SymmError;
-use crate::migration::{MigrationEvent, migrate_path, move_path_without_progress};
+use crate::domain::error::SymmError;
+use crate::infra::fs::migration::{MigrationEvent, migrate_path, move_path_without_progress};
 use inquire::Select;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,7 +33,6 @@ impl AddPreparation {
             staged_target: None,
             staged_link: None,
         };
-
         let link_meta = fs::symlink_metadata(link).ok();
         let link_exists = link_meta.is_some();
         let target_exists = target.exists();
@@ -71,7 +70,6 @@ impl AddPreparation {
         if symlink_points_to_target(link, target)? {
             return Ok(());
         }
-
         match select_symlink_conflict_choice()? {
             SymlinkConflictChoice::Retarget => {
                 let link_staging = staging_path(link);
@@ -99,7 +97,6 @@ impl AddPreparation {
                 let target_staging = staging_path(target);
                 move_path_with_retry(target, &target_staging, "target")?;
                 self.staged_target = Some(target_staging);
-
                 if let Err(e) = adopt_link_to_target(link, target, reporter) {
                     self.rollback(link, target)?;
                     return Err(e);
@@ -131,7 +128,6 @@ impl AddPreparation {
 
     pub fn rollback(&self, link: &Path, target: &Path) -> Result<(), SymmError> {
         if self.adopted_link_to_target && target.exists() {
-            // add 失败后，若 link 已被创建，先移除，再把 target 中的内容回滚到 link。
             if link.exists() {
                 remove_path_any(link)?;
             }
@@ -139,7 +135,6 @@ impl AddPreparation {
                 message: format!("回滚失败：无法恢复 link：{e}"),
             })?;
         }
-
         if let Some(path) = &self.staged_target
             && path.exists()
         {
@@ -147,7 +142,6 @@ impl AddPreparation {
                 message: format!("回滚失败：无法恢复 target：{e}"),
             })?;
         }
-
         if let Some(path) = &self.staged_link
             && path.exists()
         {
@@ -158,7 +152,6 @@ impl AddPreparation {
                 message: format!("回滚失败：无法恢复 link 备份：{e}"),
             })?;
         }
-
         Ok(())
     }
 }
@@ -187,7 +180,6 @@ where
             message: "接管失败：目标路径已存在".to_string(),
         });
     }
-
     let meta = fs::symlink_metadata(link).map_err(|e| SymmError::IoError {
         message: format!("接管失败：无法读取 link 元数据：{e}"),
     })?;
@@ -196,17 +188,14 @@ where
             message: "接管失败：link 已经是软链接".to_string(),
         });
     }
-
     let staging = staging_path(link);
     move_path_with_retry(link, &staging, "link")?;
-
     if let Err(e) = migrate_path(&staging, target, reporter) {
         let _ = fs::rename(&staging, link);
         return Err(SymmError::IoError {
             message: format!("接管失败：无法移动到 target（已回滚）：{e}"),
         });
     }
-
     Ok(())
 }
 
@@ -224,7 +213,6 @@ fn select_conflict_choice() -> Result<ConflictChoice, SymmError> {
     if let Ok(raw) = std::env::var("SYMM_ADD_CONFLICT_CHOICE") {
         return parse_conflict_choice(&raw);
     }
-
     let options = vec![
         ("保留 link（放弃 target）", ConflictChoice::KeepLink),
         ("保留 target（放弃 link）", ConflictChoice::KeepTarget),
@@ -237,7 +225,6 @@ fn select_conflict_choice() -> Result<ConflictChoice, SymmError> {
         .map_err(|e| SymmError::InvalidArgument {
             message: format!("已取消：{e}"),
         })?;
-
     for (label, choice) in options {
         if label == selected {
             return Ok(choice);
@@ -265,7 +252,6 @@ fn select_symlink_conflict_choice() -> Result<SymlinkConflictChoice, SymmError> 
     if let Ok(raw) = std::env::var("SYMM_ADD_SYMLINK_CONFLICT_CHOICE") {
         return parse_symlink_conflict_choice(&raw);
     }
-
     let options = vec![
         ("改为指向新的 target", SymlinkConflictChoice::Retarget),
         ("取消", SymlinkConflictChoice::Cancel),
@@ -280,7 +266,6 @@ fn select_symlink_conflict_choice() -> Result<SymlinkConflictChoice, SymmError> 
     .map_err(|e| SymmError::InvalidArgument {
         message: format!("已取消：{e}"),
     })?;
-
     for (label, choice) in options {
         if label == selected {
             return Ok(choice);
