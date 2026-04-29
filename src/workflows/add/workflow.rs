@@ -70,11 +70,12 @@ pub fn run<W: Write>(
         "写入 links 表",
         "写库失败",
         || {
-            repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind).map_err(|e| {
-                let _ = link_remover::remove_link(Path::new(&link_norm));
-                let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
-                e
-            })
+            repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind).inspect_err(
+                |_e| {
+                    let _ = link_remover::remove_link(Path::new(&link_norm));
+                    let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
+                },
+            )
         },
     )?;
     prep.commit()?;

@@ -35,9 +35,8 @@ pub fn run<W: Write>(
         "删除 links 记录",
         "删除记录失败",
         || {
-            repository::delete_by_selector(conn, selector).map_err(|e| {
+            repository::delete_by_selector(conn, selector).inspect_err(|_e| {
                 let _ = prep.rollback();
-                e
             })
         },
     )?;
