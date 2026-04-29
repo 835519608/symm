@@ -6,14 +6,17 @@ use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::lifecycle::operation_tracker::OperationTracker;
+use crate::workflows::perf;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
     selector: &str,
     writer: &mut W,
 ) -> Result<(), SymmError> {
+    let started = Instant::now();
     let record = repository::get_by_selector(conn, selector)?;
     let payload = serde_json::json!({
         "selector": selector,
@@ -51,6 +54,14 @@ pub fn run<W: Write>(
     writeln!(writer, "{success_message}").map_err(|e| SymmError::IoError {
         message: e.to_string(),
     })?;
+    perf::log_perf(
+        "rm",
+        started.elapsed(),
+        &[
+            ("selector", selector.to_string()),
+            ("action", format!("{action:?}")),
+        ],
+    );
     Ok(())
 }
 

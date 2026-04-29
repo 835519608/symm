@@ -260,7 +260,7 @@ commit --> done[完成]
 
 - `ls` 与 `show` 走 SQLite 索引查询，不做目录递归扫描
 - `ls`（表格与 `--json`）采用流式输出，并支持 `--limit/--offset` 分页查询，降低大结果集扫描成本
-- 可通过 `SYMM_PERF_LOG=1` 开启 `ls/show` 时延日志（输出到 stderr，前缀 `[symm-perf]`）
+- 可通过 `SYMM_PERF_LOG=1` 开启 `add/rm/ls/show` 时延日志（输出到 stderr，前缀 `[symm-perf]`）
 - 状态计算基于 `symlink_metadata` 与目标存在性判定，避免断链误判
 - `add` 接管迁移时：
   - 同盘路径优先 `rename`，保留最快路径

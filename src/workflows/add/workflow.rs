@@ -11,10 +11,12 @@ use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::add::adopt;
 use crate::workflows::lifecycle::operation_tracker::OperationTracker;
+use crate::workflows::perf;
 use inquire::Text;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::time::Instant;
 
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
@@ -22,6 +24,7 @@ pub fn run<W: Write>(
     target: &Path,
     writer: &mut W,
 ) -> Result<(), SymmError> {
+    let started = Instant::now();
     let link_norm = runtime_paths::normalize_link(link);
     let existing = repository::get_by_link_path(conn, &link_norm)?;
     let payload = serde_json::json!({
@@ -89,6 +92,15 @@ pub fn run<W: Write>(
         name.as_str()
     };
     reporter.write_line(&format!("创建成功：{link_norm}（name: {display_name}）"))?;
+    perf::log_perf(
+        "add",
+        started.elapsed(),
+        &[
+            ("link_path", link_norm),
+            ("target_path", target_norm),
+            ("name", name),
+        ],
+    );
     Ok(())
 }
 
