@@ -294,3 +294,6 @@ commit --> done[完成]
 - `Rollback Metrics`（`.github/workflows/rollback-metrics.yml`）
   - 触发：手动触发 + 每日北京时间 01:20 定时触发
   - 作用：在 CI 环境执行回滚场景测试并生成成功率报告（`rollback-metrics.md/json` artifact）
+- `Baseline Trend`（`.github/workflows/baseline-trend.yml`）
+  - 触发：手动触发（可传 `lookback`）+ 每日北京时间 01:40 定时触发
+  - 作用：聚合最近 N 次 `Perf Baseline` / `Rollback Metrics` artifact，生成趋势报告（`baseline-trend.md/json` artifact）

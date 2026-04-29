@@ -1,0 +1,46 @@
+name: Baseline Trend
+
+on:
+  workflow_dispatch:
+    inputs:
+      lookback:
+        description: "最近 N 次运行用于对比"
+        required: false
+        default: "7"
+  schedule:
+    # 北京时间每日 01:40（UTC 17:40）
+    - cron: "40 17 * * *"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  trend:
+    name: 生成基线趋势报告 (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 生成趋势报告
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LOOKBACK: ${{ inputs.lookback || '7' }}
+          LS_THRESHOLD_MS: "1000"
+          SHOW_P95_THRESHOLD_MS: "200"
+          ROLLBACK_THRESHOLD_PCT: "100"
+        run: |
+          set -euo pipefail
+          python3 scripts/baseline-trend.py
+          cat artifacts/baseline-trend.md
+
+      - name: 上传趋势报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-trend-${{ github.run_id }}
+          path: |
+            artifacts/baseline-trend.md
+            artifacts/baseline-trend.json
