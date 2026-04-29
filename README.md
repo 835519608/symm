@@ -36,15 +36,14 @@
 
 ### 4) 测试与质量检查
 
-- 格式检查：`cargo fmt --all -- --check`
-- Clippy：`cargo clippy --all-targets --all-features -- -D warnings`
-- 测试：`cargo test --all-targets`
+- 本地最小检查：`cargo fmt --all -- --check`
+- 本项目以 GitHub Actions CI 作为最终验证门禁（本机缺少 `link.exe` 时不要求本地 `clippy/test`）
 
 ## 命令说明
 
 - `symm add <link> <target>`：创建/更新软链接（按 link 幂等）
 - `symm rm <name|link>`：删除记录；支持可选恢复 `target -> link`
-- `symm ls [--status ok|broken|missing] [--json]`：列表查看
+- `symm ls [--status ok|broken|missing] [--json] [--limit N] [--offset N]`：列表查看（支持分页）
 - `symm show <name|link> [--json]`：查看单条详情
 
 ## 数据目录
@@ -68,8 +67,12 @@ src/
     add/
       workflow.rs               # add 业务编排
       adopt.rs                  # add 冲突策略与回滚准备
+    lifecycle/
+      operation_tracker.rs      # add/rm 共享操作日志跟踪
     ls/
       workflow.rs               # ls 业务编排
+    recovery/
+      workflow.rs               # 启动恢复扫描与分级恢复
     rm/
       workflow.rs               # rm 业务编排
     show/
@@ -114,10 +117,12 @@ workflowsLayer --> uiLayer[ui]
 flowchart LR
 cli[CLI 解析] --> guard[Windows 权限检查]
 guard --> dispatch[app/service.rs 分发]
-dispatch --> addFlow[workflows/add/workflow.rs]
-dispatch --> rmFlow[workflows/rm/workflow.rs]
-dispatch --> lsFlow[workflows/ls/workflow.rs]
-dispatch --> showFlow[workflows/show/workflow.rs]
+dispatch --> recoverFlow[workflows/recovery/workflow.rs]
+recoverFlow --> commandDispatch[命令分发]
+commandDispatch --> addFlow[workflows/add/workflow.rs]
+commandDispatch --> rmFlow[workflows/rm/workflow.rs]
+commandDispatch --> lsFlow[workflows/ls/workflow.rs]
+commandDispatch --> showFlow[workflows/show/workflow.rs]
 
 addFlow --> addInfra[adopt + migration_service + repository]
 rmFlow --> rmInfra[migration_service + repository]
@@ -162,6 +167,13 @@ bin/symm.rs
 - 若 `target` 与 `link` 都不存在：返回错误，不自动创建空目标
 
 以上流程采用 staging + 回滚机制，任一步失败会恢复到操作前状态，避免部分成功导致的数据破坏。
+
+## 启动恢复与分级策略
+
+- 每次命令执行前会先扫描 `operations` 中的 pending 操作
+- 低风险步骤（`db_write/finalize`）自动标记为 failed，并提示直接重试命令
+- 高风险步骤（`staging/migrate/link_change`）要求用户确认（或通过 `SYMM_RECOVERY_HIGH_RISK=confirm|skip` 控制）
+- 当前版本高风险恢复不自动执行文件级破坏性动作，确认后会标记为 failed 并提示人工恢复步骤
 
 ### `add` 执行流程图
 
@@ -247,7 +259,7 @@ commit --> done[完成]
 ## 性能说明（当前实现）
 
 - `ls` 与 `show` 走 SQLite 索引查询，不做目录递归扫描
-- `ls`（表格与 `--json`）采用流式输出，避免大结果集一次性占用内存
+- `ls`（表格与 `--json`）采用流式输出，并支持 `--limit/--offset` 分页查询，降低大结果集扫描成本
 - 状态计算基于 `symlink_metadata` 与目标存在性判定，避免断链误判
 - `add` 接管迁移时：
   - 同盘路径优先 `rename`，保留最快路径
