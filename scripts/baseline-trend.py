@@ -29,7 +29,7 @@ def download_zip(url: str, token: str) -> bytes:
         url,
         headers={
             "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
+            "Accept": "application/octet-stream",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "symm-baseline-trend",
         },
