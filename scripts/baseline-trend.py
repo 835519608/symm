@@ -93,7 +93,10 @@ def run():
         target = next((a for a in artifacts if a["name"].startswith("perf-baseline-")), None)
         if not target:
             continue
-        data = download_zip(target["archive_download_url"], token)
+        data = download_zip(
+            f"https://api.github.com/repos/{owner}/{name}/actions/artifacts/{target['id']}/zip",
+            token,
+        )
         with zipfile.ZipFile(BytesIO(data), "r") as zf:
             file_name = next((n for n in zf.namelist() if n.endswith("perf-baseline.log")), None)
             if not file_name:
@@ -120,7 +123,10 @@ def run():
         target = next((a for a in artifacts if a["name"].startswith("rollback-metrics-")), None)
         if not target:
             continue
-        data = download_zip(target["archive_download_url"], token)
+        data = download_zip(
+            f"https://api.github.com/repos/{owner}/{name}/actions/artifacts/{target['id']}/zip",
+            token,
+        )
         with zipfile.ZipFile(BytesIO(data), "r") as zf:
             file_name = next((n for n in zf.namelist() if n.endswith("rollback-metrics.json")), None)
             if not file_name:
