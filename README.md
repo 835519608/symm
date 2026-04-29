@@ -291,3 +291,6 @@ commit --> done[完成]
 - `Perf Baseline`（`.github/workflows/perf-baseline.yml`）
   - 触发：手动触发（可传 `selector/limit/offset`）+ 每日北京时间 01:00 定时触发
   - 作用：在 CI 环境执行 `add/rm/ls/show` 的 perf 采样并上传 `perf-baseline.log` artifact
+- `Rollback Metrics`（`.github/workflows/rollback-metrics.yml`）
+  - 触发：手动触发 + 每日北京时间 01:20 定时触发
+  - 作用：在 CI 环境执行回滚场景测试并生成成功率报告（`rollback-metrics.md/json` artifact）
