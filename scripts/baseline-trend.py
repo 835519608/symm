@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import urllib.request
+import urllib.error
 import zipfile
 from datetime import datetime, timezone
 from io import BytesIO
@@ -29,13 +30,27 @@ def download_zip(url: str, token: str) -> bytes:
         url,
         headers={
             "Authorization": f"Bearer {token}",
-            "Accept": "application/octet-stream",
+            "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "symm-baseline-trend",
         },
     )
-    with urllib.request.urlopen(req) as resp:
-        return resp.read()
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(req) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code in (301, 302, 303, 307, 308):
+            redirect = e.headers.get("Location")
+            if not redirect:
+                raise
+            with urllib.request.urlopen(urllib.request.Request(redirect)) as resp:
+                return resp.read()
+        raise
 
 
 def percentile(values, p):
@@ -93,10 +108,7 @@ def run():
         target = next((a for a in artifacts if a["name"].startswith("perf-baseline-")), None)
         if not target:
             continue
-        data = download_zip(
-            f"https://api.github.com/repos/{owner}/{name}/actions/artifacts/{target['id']}/zip",
-            token,
-        )
+        data = download_zip(target["archive_download_url"], token)
         with zipfile.ZipFile(BytesIO(data), "r") as zf:
             file_name = next((n for n in zf.namelist() if n.endswith("perf-baseline.log")), None)
             if not file_name:
@@ -123,10 +135,7 @@ def run():
         target = next((a for a in artifacts if a["name"].startswith("rollback-metrics-")), None)
         if not target:
             continue
-        data = download_zip(
-            f"https://api.github.com/repos/{owner}/{name}/actions/artifacts/{target['id']}/zip",
-            token,
-        )
+        data = download_zip(target["archive_download_url"], token)
         with zipfile.ZipFile(BytesIO(data), "r") as zf:
             file_name = next((n for n in zf.namelist() if n.endswith("rollback-metrics.json")), None)
             if not file_name:
