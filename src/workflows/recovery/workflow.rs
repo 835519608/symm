@@ -1,6 +1,7 @@
 use crate::adapters::db::repository;
 use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::io::Write;
 
@@ -68,10 +69,13 @@ pub fn recover_pending_operations<W: Write>(
                 let decision = select_high_risk_decision(&operation_id, &latest.command)?;
                 match decision {
                     HighRiskDecision::ConfirmAndMarkManual => {
+                        let manual_steps =
+                            build_manual_recovery_steps(&latest.command, &latest.payload);
+                        write_manual_steps(writer, &manual_steps)?;
                         repository::mark_operation_failed(
                             conn,
                             &operation_id,
-                            "高风险恢复已确认，当前版本仅标记为失败，请按提示人工恢复后重试",
+                            &format!("高风险恢复已确认，需人工恢复：{}", manual_steps.join("；")),
                         )?;
                         writeln!(
                             writer,
@@ -134,6 +138,74 @@ fn parse_high_risk_decision(raw: &str) -> Result<HighRiskDecision, SymmError> {
             ),
         }),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct AddPayload {
+    link_path: String,
+    target_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RmPayload {
+    selector: Option<String>,
+    link_path: String,
+    target_path: String,
+}
+
+fn build_manual_recovery_steps(command: &str, payload: &str) -> Vec<String> {
+    match command {
+        "add" => {
+            if let Ok(add) = serde_json::from_str::<AddPayload>(payload) {
+                return vec![
+                    format!(
+                        "检查 link 路径状态：确认 `{}` 是否存在且指向预期目标",
+                        add.link_path
+                    ),
+                    format!(
+                        "检查 target 路径状态：确认 `{}` 数据完整，必要时先备份",
+                        add.target_path
+                    ),
+                    format!(
+                        "状态确认后重试命令：symm add \"{}\" \"{}\"",
+                        add.link_path, add.target_path
+                    ),
+                ];
+            }
+        }
+        "rm" => {
+            if let Ok(rm) = serde_json::from_str::<RmPayload>(payload) {
+                let selector = rm.selector.unwrap_or(rm.link_path.clone());
+                return vec![
+                    format!(
+                        "检查 link/target 状态：`{}` 与 `{}` 是否符合预期",
+                        rm.link_path, rm.target_path
+                    ),
+                    format!(
+                        "如需恢复 target 到 link，请先手工确认路径占用后执行：symm rm \"{}\" 并选择恢复",
+                        selector
+                    ),
+                    format!(
+                        "如仅删除记录与链接，执行：symm rm \"{}\" 并选择仅删除",
+                        selector
+                    ),
+                ];
+            }
+        }
+        _ => {}
+    }
+    vec![
+        format!("无法解析 payload：{payload}"),
+        "请先核对文件系统状态后，重试原命令。".to_string(),
+    ]
+}
+
+fn write_manual_steps<W: Write>(writer: &mut W, steps: &[String]) -> Result<(), SymmError> {
+    writeln!(writer, "  -> 人工恢复建议：").map_err(io_err)?;
+    for (idx, step) in steps.iter().enumerate() {
+        writeln!(writer, "     {}. {}", idx + 1, step).map_err(io_err)?;
+    }
+    Ok(())
 }
 
 fn io_err(err: std::io::Error) -> SymmError {
@@ -212,6 +284,32 @@ mod tests {
         assert!(
             pending_after.iter().all(|record| record.operation_id != op),
             "low risk operation should be auto-resolved from pending"
+        );
+    }
+
+    #[test]
+    fn build_manual_recovery_steps_for_add_contains_retry_command() {
+        let steps =
+            build_manual_recovery_steps("add", r#"{"link_path":"C:\\a","target_path":"D:\\b"}"#);
+        assert!(
+            steps.iter().any(|s| s.contains("symm add")),
+            "manual steps should include add retry command"
+        );
+    }
+
+    #[test]
+    fn build_manual_recovery_steps_for_rm_contains_two_branches() {
+        let steps = build_manual_recovery_steps(
+            "rm",
+            r#"{"selector":"demo","link_path":"C:\\a","target_path":"D:\\b"}"#,
+        );
+        assert!(
+            steps.iter().any(|s| s.contains("选择恢复")),
+            "manual steps should include restore branch"
+        );
+        assert!(
+            steps.iter().any(|s| s.contains("选择仅删除")),
+            "manual steps should include delete-only branch"
         );
     }
 }
