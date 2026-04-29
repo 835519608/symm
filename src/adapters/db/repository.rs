@@ -205,6 +205,20 @@ pub fn mark_operation_done(conn: &Connection, operation_id: &str) -> Result<(), 
     )
 }
 
+pub fn mark_operation_failed(
+    conn: &Connection,
+    operation_id: &str,
+    detail: &str,
+) -> Result<(), SymmError> {
+    advance_operation_step(
+        conn,
+        operation_id,
+        OperationStep::Finalize,
+        OperationStatus::Failed,
+        detail,
+    )
+}
+
 pub fn list_pending_operations(conn: &Connection) -> Result<Vec<OperationRecord>, SymmError> {
     let mut stmt = conn
         .prepare(

@@ -10,6 +10,7 @@ use crate::domain::model::LinkKind;
 use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::add::adopt;
+use crate::workflows::lifecycle::operation_tracker::OperationTracker;
 use inquire::Text;
 use std::fs;
 use std::io::Write;
@@ -28,28 +29,16 @@ pub fn run<W: Write>(
         "target_path": target.display().to_string(),
     })
     .to_string();
-    let operation_id = repository::begin_operation(conn, "add", &payload)?;
+    let tracker = OperationTracker::begin(conn, "add", &payload)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
-    let _ = repository::advance_operation_step(
-        conn,
-        &operation_id,
-        repository::OperationStep::Staging,
-        repository::OperationStatus::Pending,
-        "冲突解析与暂存准备",
-    );
+    tracker.pending(repository::OperationStep::Staging, "冲突解析与暂存准备");
     let prep = adopt::resolve_add_conflict(Path::new(&link_norm), target, &mut |event| {
         reporter.handle_migration_event(event)
     })?;
 
     let target_norm = runtime_paths::normalize_target(target)?;
-    let _ = repository::advance_operation_step(
-        conn,
-        &operation_id,
-        repository::OperationStep::Migrate,
-        repository::OperationStatus::Pending,
-        "完成迁移预处理",
-    );
+    tracker.pending(repository::OperationStep::Migrate, "完成迁移预处理");
     let link_exists_after_prep = fs::symlink_metadata(Path::new(&link_norm)).is_ok();
     let link_kind = if link_exists_after_prep {
         existing
@@ -57,13 +46,7 @@ pub fn run<W: Write>(
             .map(|r| r.link_kind)
             .unwrap_or(LinkKind::Symlink)
     } else {
-        let _ = repository::advance_operation_step(
-            conn,
-            &operation_id,
-            repository::OperationStep::LinkChange,
-            repository::OperationStatus::Pending,
-            "创建 link",
-        );
+        tracker.pending(repository::OperationStep::LinkChange, "创建 link");
         reporter.handle_migration_event(MigrationEvent::CreatingLink {
             link: link_norm.clone(),
             target: target_norm.clone(),
@@ -79,30 +62,21 @@ pub fn run<W: Write>(
 
     let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
     let name = resolve_add_name(default_name)?;
-    let _ = repository::advance_operation_step(
-        conn,
-        &operation_id,
-        repository::OperationStep::DbWrite,
-        repository::OperationStatus::Pending,
-        "写入 links 表",
-    );
+    tracker.pending(repository::OperationStep::DbWrite, "写入 links 表");
     reporter.handle_migration_event(MigrationEvent::PersistingDb {
         link: link_norm.clone(),
     })?;
     if let Err(e) = repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind) {
         let _ = link_remover::remove_link(Path::new(&link_norm));
         let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
-        let _ = repository::advance_operation_step(
-            conn,
-            &operation_id,
+        tracker.failed(
             repository::OperationStep::DbWrite,
-            repository::OperationStatus::Failed,
             &format!("写库失败：{e}"),
         );
         return Err(e);
     }
     prep.commit()?;
-    let _ = repository::mark_operation_done(conn, &operation_id);
+    tracker.done();
     reporter.handle_migration_event(MigrationEvent::Done {
         link: link_norm.clone(),
     })?;
