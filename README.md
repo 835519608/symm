@@ -5,7 +5,8 @@
 ## 项目介绍
 
 - 管理软链接生命周期：创建、更新、查看、删除
-- `add` 支持冲突分支处理、占用探测、回滚保护
+- `add` 支持冲突分支处理、占用探测、事务回滚
+- `rm` 支持“仅删除”或“恢复 target 到 link”两种模式
 - 跨平台支持 Linux / macOS / Windows（Windows 目录支持 junction 回退）
 - 持久化使用 SQLite，按 `link_path` 幂等 upsert
 
@@ -42,7 +43,7 @@
 ## 命令说明
 
 - `symm add <link> <target>`：创建/更新软链接（按 link 幂等）
-- `symm rm <name|link>`：按名称或链接路径删除
+- `symm rm <name|link>`：删除记录；支持可选恢复 `target -> link`
 - `symm ls [--status ok|broken|missing] [--json]`：列表查看
 - `symm show <name|link> [--json]`：查看单条详情
 
@@ -60,26 +61,27 @@ src/
     symm.rs                     # CLI 入口
   app/
     service.rs                  # 命令分发
-    commands/
-      add.rs                    # add 编排
-      rm.rs
-      ls.rs
-      show.rs
   domain/
     error.rs                    # 领域错误
     model.rs                    # 领域模型
-  usecases/
+  workflows/
     add/
-      adopt.rs                  # add 冲突策略与回滚
-      ports.rs                  # 用例层端口（trait）
-  infra/
+      workflow.rs               # add 业务编排
+      adopt.rs                  # add 冲突策略与回滚准备
+    ls/
+      workflow.rs               # ls 业务编排
+    rm/
+      workflow.rs               # rm 业务编排
+    show/
+      workflow.rs               # show 业务编排
+  adapters/
     db/repository.rs            # SQLite 读写
     fs/                         # 链接/迁移/ACL/路径操作
     paths/                      # 目录与路径规范化
     platform/admin.rs           # 平台权限能力
     processes/                  # 占用探测与进程终止
     errors/io_map.rs            # IO 错误映射
-  interface/
+  ui/
     cli.rs                      # 参数模型
     output.rs                   # 输出渲染
     interaction/choice.rs       # 交互与 env 选择
@@ -88,33 +90,48 @@ src/
 
 ### 依赖方向
 
+先区分两种关系：
+
+- 编译期依赖：代码 `use` 的方向
+- 运行期调用：一次命令执行时的调用链
+
+下面这张图仅表示“编译期依赖”。
+
 ```mermaid
 flowchart LR
-binSymm[bin/symm.rs] --> interfaceLayer[interface]
-binSymm --> appLayer[app]
-appLayer --> usecasesLayer[usecases]
-appLayer --> infraLayer[infra]
-appLayer --> domainLayer[domain]
-usecasesLayer --> domainLayer
-usecasesLayer --> infraLayer
-infraLayer --> domainLayer
+binSymm[bin/symm.rs] --> appLayer[app]
+appLayer --> workflowsLayer[workflows]
+workflowsLayer --> adaptersLayer[adapters]
+adaptersLayer --> domainLayer[domain]
+workflowsLayer --> uiLayer[ui]
 ```
 
 ### 运行主流程
 
+下面这张图仅表示“运行期调用链”（不是模块依赖图）。
+
 ```mermaid
 flowchart LR
-cli[CLI Parse] --> guard[Windows Admin Guard]
-guard --> dispatch[app/service Dispatch]
-dispatch --> addCmd[commands/add]
-dispatch --> lsCmd[commands/ls]
-dispatch --> showCmd[commands/show]
-dispatch --> rmCmd[commands/rm]
-addCmd --> adoptFlow[usecases/add/adopt]
-addCmd --> infraOps[infra fs/db/processes]
-lsCmd --> dbRead[infra db]
-showCmd --> dbRead
-rmCmd --> infraOps
+cli[CLI 解析] --> guard[Windows 权限检查]
+guard --> dispatch[app/service.rs 分发]
+dispatch --> addFlow[workflows/add/workflow.rs]
+dispatch --> rmFlow[workflows/rm/workflow.rs]
+dispatch --> lsFlow[workflows/ls/workflow.rs]
+dispatch --> showFlow[workflows/show/workflow.rs]
+
+addFlow --> addInfra[adopt + migration_service + repository]
+rmFlow --> rmInfra[migration_service + repository]
+lsFlow --> lsInfra[repository + link_status]
+showFlow --> showInfra[repository + link_status]
+```
+
+如果只看最简主链，可以按下面理解：
+
+```text
+bin/symm.rs
+  -> app/service.rs
+    -> workflows/*/workflow.rs
+      -> adapters/* + ui/*
 ```
 
 ## 平台行为
@@ -131,7 +148,6 @@ rmCmd --> infraOps
 - 成功后会提示可选填写 `name`：
   - 新增时默认空
   - 更新时默认显示原值，回车保持原样
-
 - 若 `target` 不存在且 `link` 为实体（非软链接）：执行接管迁移（将 `link` 实体迁移到 `target`，再在 `link` 创建指向 `target` 的链接）
   - 同盘时优先快速移动（`rename`），通常几乎瞬时完成
   - 跨盘时自动改为复制到 `target` 后删除源路径
@@ -145,22 +161,54 @@ rmCmd --> infraOps
   - 若指向其他位置：可选择改为指向新的 `target` 或取消
 - 若 `target` 与 `link` 都不存在：返回错误，不自动创建空目标
 
-以上流程均采用 staging + 回滚机制，任一步失败会恢复到操作前状态，避免部分成功导致的数据破坏。
+以上流程采用 staging + 回滚机制，任一步失败会恢复到操作前状态，避免部分成功导致的数据破坏。
 
 ### `add` 执行流程图
 
 ```mermaid
-flowchart TD
-start[add link target] --> lockGate[检测 link 占用]
-lockGate -->|占用| lockChoice[解除占用或取消]
-lockGate -->|未占用| conflict[冲突解析 adopt]
-lockChoice -->|取消| failCancel[返回错误]
-lockChoice -->|解除成功| conflict
-conflict --> migrate[同盘 rename 或跨盘 copy+delete]
-migrate --> createLink[创建 symlink/junction]
-createLink --> upsert[按 link_path upsert DB]
-upsert --> done[完成]
-upsert -->|失败| rollback[回滚 staging 与 link]
+flowchart TB
+start[add link target] --> lockCheck[占用检测]
+lockCheck --> hasLock{检测到占用?}
+hasLock -->|否| conflict[冲突解析 adopt]
+hasLock -->|是| unlockChoice{解除占用?}
+unlockChoice -->|取消| failCancel[返回错误]
+unlockChoice -->|继续| conflict
+conflict --> prep[staging 备份]
+prep --> migrate2[迁移 rename/copy]
+migrate2 --> createLink[创建链接]
+createLink --> upsert[upsert DB]
+upsert --> ok{写库成功?}
+ok -->|是| commit[提交清理 staging]
+ok -->|否| rollback[回滚恢复]
+commit --> done[完成]
+```
+
+## `rm` 行为与恢复分支
+
+当执行 `symm rm <name|link>` 时：
+
+- 先按 `name` 或 `link_path` 读取记录
+- 交互选择后续动作（支持环境变量 `SYMM_RM_ACTION`）：
+  - `no/delete`：仅删除软链接并删除数据库记录
+  - `yes/restore`：将 `target` 恢复回 `link` 路径后，再删除数据库记录
+- 与 `add` 一样使用 staging + 回滚：DB 删除失败或迁移失败会恢复文件系统状态
+
+### `rm` 执行流程图
+
+```mermaid
+flowchart TB
+start[rm selector] --> fetch[查记录]
+fetch --> choose{动作}
+choose -->|仅删除| stageDel[备份 link 到 staging]
+choose -->|恢复| stageRestore[备份 link 到 staging]
+stageDel --> dbDelete1[删除 DB]
+stageRestore --> restore[target -> link 迁移]
+restore --> dbDelete[删除 DB]
+dbDelete1 --> ok{成功?}
+dbDelete --> ok
+ok -->|是| commit[提交清理 staging]
+ok -->|否| rollback[回滚恢复]
+commit --> done[完成]
 ```
 
 ## 打包与发布（多平台）
@@ -198,12 +246,13 @@ upsert -->|失败| rollback[回滚 staging 与 link]
 
 ## 性能说明（当前实现）
 
-- `ls` 与 `show` 走 SQLite 索引查询，不做目录递归扫描。
-- `ls`（表格与 `--json`）采用流式输出，避免大结果集一次性占用内存。
-- 状态计算基于 `symlink_metadata` 与目标存在性判定，避免断链误判。
+- `ls` 与 `show` 走 SQLite 索引查询，不做目录递归扫描
+- `ls`（表格与 `--json`）采用流式输出，避免大结果集一次性占用内存
+- 状态计算基于 `symlink_metadata` 与目标存在性判定，避免断链误判
 - `add` 接管迁移时：
   - 同盘路径优先 `rename`，保留最快路径
   - 跨盘路径使用带进度回调的复制流程，避免终端长时间无反馈
+- `rm` 恢复分支复用同一迁移能力（同盘 rename / 跨盘 copy+delete），并沿用 staging 回滚
 - SQLite 连接默认启用：
   - `busy_timeout=5000`
   - `journal_mode=WAL`
@@ -219,5 +268,5 @@ upsert -->|失败| rollback[回滚 staging 与 link]
     - `cargo clippy --all-targets --all-features -- -D warnings`
     - `cargo test --all-targets`
 - `Release`（`.github/workflows/release.yml`）
-  - 触发：推送 tag（如 `v0.2.0-test7` 或 `v1.0.0`）
-  - 自动构建三平台 release 二进制并上传到 GitHub Release
+  - 触发：推送 tag（如 `v0.2.0-test13` 或 `v1.0.0`）
+  - 自动构建并上传 release 二进制（测试 tag 仅发布 Windows 产物，稳定 tag 发布多平台产物）

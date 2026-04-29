@@ -1,10 +1,9 @@
+use crate::adapters::fs::migration_service::{
+    self as migration, MigrationEvent, move_path_with_retry, staging_path,
+};
+use crate::adapters::fs::path_ops;
 use crate::domain::error::SymmError;
-use crate::infra::fs::migration::MigrationEvent;
-use crate::infra::fs::path_ops;
-#[cfg(windows)]
-use crate::infra::fs::tree_copy::recreate_symlink;
-use crate::interface::interaction::choice;
-use crate::usecases::add::ports::PathMigrator;
+use crate::ui::interaction::choice;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -28,14 +27,8 @@ pub struct AddPreparation {
 }
 
 impl AddPreparation {
-    pub fn prepare<M, F>(
-        migrator: &M,
-        link: &Path,
-        target: &Path,
-        reporter: &mut F,
-    ) -> Result<Self, SymmError>
+    pub fn prepare<F>(link: &Path, target: &Path, reporter: &mut F) -> Result<Self, SymmError>
     where
-        M: PathMigrator,
         F: FnMut(MigrationEvent) -> Result<(), SymmError>,
     {
         let mut plan = AddPreparation {
@@ -58,7 +51,7 @@ impl AddPreparation {
                         path: target.to_string_lossy().to_string(),
                     });
                 }
-                adopt_link_to_target(migrator, link, target, reporter)?;
+                adopt_link_to_target(link, target, reporter)?;
                 plan.adopted_link_to_target = true;
                 Ok(plan)
             }
@@ -69,7 +62,7 @@ impl AddPreparation {
                 if link_is_symlink {
                     plan.prepare_symlink_exist(link, target)?;
                 } else {
-                    plan.prepare_both_exist(migrator, link, target, reporter)?;
+                    plan.prepare_both_exist(link, target, reporter)?;
                 }
                 Ok(plan)
             }
@@ -82,7 +75,7 @@ impl AddPreparation {
         }
         match select_symlink_conflict_choice()? {
             SymlinkConflictChoice::Retarget => {
-                let link_staging = staging_path(link);
+                let link_staging = staging_path(link, ".__symm_staging__");
                 move_path_with_retry(link, &link_staging, "link")?;
                 self.staged_link = Some(link_staging);
                 Ok(())
@@ -93,31 +86,29 @@ impl AddPreparation {
         }
     }
 
-    fn prepare_both_exist<M, F>(
+    fn prepare_both_exist<F>(
         &mut self,
-        migrator: &M,
         link: &Path,
         target: &Path,
         reporter: &mut F,
     ) -> Result<(), SymmError>
     where
-        M: PathMigrator,
         F: FnMut(MigrationEvent) -> Result<(), SymmError>,
     {
         match select_conflict_choice()? {
             ConflictChoice::KeepLink => {
-                let target_staging = staging_path(target);
+                let target_staging = staging_path(target, ".__symm_staging__");
                 move_path_with_retry(target, &target_staging, "target")?;
                 self.staged_target = Some(target_staging);
-                if let Err(e) = adopt_link_to_target(migrator, link, target, reporter) {
-                    self.rollback(migrator, link, target)?;
+                if let Err(e) = adopt_link_to_target(link, target, reporter) {
+                    self.rollback(link, target)?;
                     return Err(e);
                 }
                 self.adopted_link_to_target = true;
                 Ok(())
             }
             ConflictChoice::KeepTarget => {
-                let link_staging = staging_path(link);
+                let link_staging = staging_path(link, ".__symm_staging__");
                 move_path_with_retry(link, &link_staging, "link")?;
                 self.staged_link = Some(link_staging);
                 Ok(())
@@ -138,26 +129,21 @@ impl AddPreparation {
         Ok(())
     }
 
-    pub fn rollback<M>(&self, migrator: &M, link: &Path, target: &Path) -> Result<(), SymmError>
-    where
-        M: PathMigrator,
-    {
+    pub fn rollback(&self, link: &Path, target: &Path) -> Result<(), SymmError> {
         if self.adopted_link_to_target && target.exists() {
             if link.exists() {
                 path_ops::remove_path_any(link)?;
             }
-            migrator
-                .move_path_without_progress(target, link)
-                .map_err(|e| SymmError::IoError {
+            migration::move_path_without_progress(target, link).map_err(|e| {
+                SymmError::IoError {
                     message: format!("回滚失败：无法恢复 link：{e}"),
-                })?;
+                }
+            })?;
         }
         if let Some(path) = &self.staged_target
             && path.exists()
         {
-            fs::rename(path, target).map_err(|e| SymmError::IoError {
-                message: format!("回滚失败：无法恢复 target：{e}"),
-            })?;
+            move_path_with_retry(path, target, "target")?;
         }
         if let Some(path) = &self.staged_link
             && path.exists()
@@ -165,35 +151,29 @@ impl AddPreparation {
             if link.exists() {
                 path_ops::remove_path_any(link)?;
             }
-            fs::rename(path, link).map_err(|e| SymmError::IoError {
-                message: format!("回滚失败：无法恢复 link 备份：{e}"),
-            })?;
+            move_path_with_retry(path, link, "link")?;
         }
         Ok(())
     }
 }
 
-pub fn resolve_add_conflict<M, F>(
-    migrator: &M,
+pub fn resolve_add_conflict<F>(
     link: &Path,
     target: &Path,
     reporter: &mut F,
 ) -> Result<AddPreparation, SymmError>
 where
-    M: PathMigrator,
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
-    AddPreparation::prepare(migrator, link, target, reporter)
+    AddPreparation::prepare(link, target, reporter)
 }
 
-pub fn adopt_link_to_target<M, F>(
-    migrator: &M,
+pub fn adopt_link_to_target<F>(
     link: &Path,
     target: &Path,
     reporter: &mut F,
 ) -> Result<(), SymmError>
 where
-    M: PathMigrator,
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
     if target.exists() {
@@ -210,9 +190,9 @@ where
             message: "接管失败：link 已经是软链接".to_string(),
         });
     }
-    let staging = staging_path(link);
+    let staging = staging_path(link, ".__symm_staging__");
     move_path_with_retry(link, &staging, "link")?;
-    if let Err(e) = migrator.migrate_path(&staging, target, reporter) {
+    if let Err(e) = migration::migrate_path(&staging, target, reporter) {
         let _ = fs::rename(&staging, link);
         return Err(SymmError::IoError {
             message: format!("接管失败：无法移动到 target（已回滚）：{e}"),
@@ -231,16 +211,6 @@ fn ensure_target_parent_dir(target: &Path) -> Result<(), SymmError> {
     fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
         message: format!("接管失败：无法创建 target 父目录 {}：{e}", parent.display()),
     })
-}
-
-fn staging_path(link: &Path) -> PathBuf {
-    let mut p = link.to_path_buf();
-    let file_name = link
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "link".to_string());
-    p.set_file_name(format!("{file_name}.__symm_staging__"));
-    p
 }
 
 fn select_conflict_choice() -> Result<ConflictChoice, SymmError> {
@@ -323,45 +293,4 @@ fn symlink_points_to_target(link: &Path, target: &Path) -> Result<bool, SymmErro
         message: format!("无法解析 target 路径：{e}"),
     })?;
     Ok(resolved_canonical == target_canonical)
-}
-
-fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    match fs::rename(src, dst) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            #[cfg(windows)]
-            if e.raw_os_error() == Some(5)
-                && let Ok(meta) = fs::symlink_metadata(src)
-                && meta.file_type().is_symlink()
-            {
-                return move_symlink_by_recreate(src, dst, role);
-            }
-            let mut message = format!("无法移动 {role}：{e}");
-            if e.raw_os_error() == Some(5) {
-                message.push_str(
-                    "。系统拒绝访问（os error 5），可能仍有占用未被识别，或当前进程权限不足（可尝试以管理员身份运行）",
-                );
-            }
-            Err(SymmError::IoError { message })
-        }
-    }
-}
-
-#[cfg(windows)]
-fn move_symlink_by_recreate(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    if dst.exists() {
-        path_ops::remove_path_any(dst)?;
-    }
-    if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
-            message: format!("无法创建 {role} 目标父目录：{e}"),
-        })?;
-    }
-
-    recreate_symlink(src, dst, None).map_err(|e| SymmError::IoError {
-        message: format!("重建软链接失败（{role}）：{e}"),
-    })?;
-
-    path_ops::remove_path_any(src)?;
-    Ok(())
 }

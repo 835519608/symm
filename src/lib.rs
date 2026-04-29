@@ -1,5 +1,5 @@
+pub mod adapters;
 pub mod app;
 pub mod domain;
-pub mod infra;
-pub mod interface;
-pub mod usecases;
+pub mod ui;
+pub mod workflows;

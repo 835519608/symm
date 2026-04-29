@@ -1,5 +1,5 @@
+use crate::adapters::errors::io_map::ioe;
 use crate::domain::error::SymmError;
-use crate::infra::errors::io_map::ioe;
 use std::fs;
 use std::path::Path;
 

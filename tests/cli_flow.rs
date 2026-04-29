@@ -44,10 +44,59 @@ fn add_then_ls_then_show_then_rm() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "delete")
         .args(["rm", "demo"])
         .assert()
         .success()
         .stdout(contains("删除成功：demo"));
+}
+
+#[test]
+fn rm_with_restore_moves_target_back_to_link_path() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+    let target = data_root.join("target_restore.txt");
+    let link = data_root.join("link_restore.txt");
+    fs::write(&target, "hello-restore").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "restore-demo")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "restore")
+        .args(["rm", "restore-demo"])
+        .assert()
+        .success()
+        .stdout(contains("删除成功并已恢复 target 到 link：restore-demo"));
+
+    assert!(
+        !target.exists(),
+        "restore 分支应将 target 实体迁移回 link 位置"
+    );
+    assert_eq!(
+        fs::read_to_string(&link).expect("read restored link path entity"),
+        "hello-restore"
+    );
+
+    let ls_output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let ls_text = String::from_utf8(ls_output).expect("ls stdout should be valid utf-8 json");
+    let ls_json: Value = serde_json::from_str(&ls_text).expect("ls output should be json");
+    let items = ls_json.as_array().expect("ls json should be an array");
+    assert!(items.is_empty(), "rm 完成后应删除数据库记录，ls 结果应为空");
 }
 
 #[test]

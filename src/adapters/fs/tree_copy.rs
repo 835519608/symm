@@ -1,6 +1,6 @@
+use crate::adapters::errors::io_map::ioe;
+use crate::adapters::fs::migration_service::MigrationEvent;
 use crate::domain::error::SymmError;
-use crate::infra::errors::io_map::ioe;
-use crate::infra::fs::migration_service::MigrationEvent;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -167,9 +167,25 @@ fn rebase_internal_target(
         src_link.parent().unwrap_or(src_root).join(raw_target)
     };
 
-    if let Ok(rel) = resolved.strip_prefix(src_root) {
-        return dst_root.join(rel);
+    for base in rebase_source_roots(src_root) {
+        if let Ok(rel) = resolved.strip_prefix(base) {
+            return dst_root.join(rel);
+        }
     }
 
     raw_target.to_path_buf()
+}
+
+fn rebase_source_roots(src_root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![src_root.to_path_buf()];
+    let Some(name) = src_root.file_name().and_then(|n| n.to_str()) else {
+        return roots;
+    };
+    const STAGING_SUFFIX: &str = ".__symm_staging__";
+    if let Some(original_name) = name.strip_suffix(STAGING_SUFFIX) {
+        let mut original = src_root.to_path_buf();
+        original.set_file_name(original_name);
+        roots.push(original);
+    }
+    roots
 }

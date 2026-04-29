@@ -1,9 +1,9 @@
-use crate::domain::error::SymmError;
 #[cfg(not(windows))]
-use crate::infra::errors::io_map::io_ctx;
-use crate::infra::processes::lock_probe::{
+use crate::adapters::errors::io_map::io_ctx;
+use crate::adapters::processes::lock_probe::{
     mark_mock_released, mock_locks_clear_on_kill, should_mock_kill_processes,
 };
+use crate::domain::error::SymmError;
 
 #[cfg(windows)]
 pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {

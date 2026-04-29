@@ -1,33 +1,19 @@
+use crate::adapters::db::repository;
+use crate::adapters::fs::link_creator;
+use crate::adapters::fs::link_remover;
+use crate::adapters::fs::migration_service::{self as migration, MigrationEvent};
+use crate::adapters::paths::runtime_paths;
+use crate::adapters::processes::lock_probe;
+use crate::adapters::processes::process_killer;
 use crate::domain::error::SymmError;
-use crate::domain::model::{LinkKind, LinkStatus};
-use crate::infra::db::repository;
-use crate::infra::fs::link_ops;
-use crate::infra::fs::migration::{self, MigrationEvent};
-use crate::infra::paths::runtime_paths;
-use crate::infra::processes::locker;
-use crate::interface::interaction::choice;
-use crate::interface::progress::migration_reporter::MigrationProgressReporter;
-use crate::usecases::add::adopt;
-use crate::usecases::add::ports::PathMigrator;
+use crate::domain::model::LinkKind;
+use crate::ui::interaction::choice;
+use crate::ui::progress::migration_reporter::MigrationProgressReporter;
+use crate::workflows::add::adopt;
 use inquire::Text;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-
-struct FsPathMigrator;
-
-impl PathMigrator for FsPathMigrator {
-    fn migrate_path<F>(&self, src: &Path, dst: &Path, reporter: &mut F) -> Result<(), SymmError>
-    where
-        F: FnMut(MigrationEvent) -> Result<(), SymmError>,
-    {
-        migration::migrate_path(src, dst, reporter)
-    }
-
-    fn move_path_without_progress(&self, src: &Path, dst: &Path) -> Result<(), SymmError> {
-        migration::move_path_without_progress(src, dst)
-    }
-}
 
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
@@ -35,15 +21,13 @@ pub fn run<W: Write>(
     target: &Path,
     writer: &mut W,
 ) -> Result<(), SymmError> {
-    let migrator = FsPathMigrator;
     let link_norm = runtime_paths::normalize_link(link);
     let existing = repository::get_by_link_path(conn, &link_norm)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
-    let prep =
-        adopt::resolve_add_conflict(&migrator, Path::new(&link_norm), target, &mut |event| {
-            reporter.handle_migration_event(event)
-        })?;
+    let prep = adopt::resolve_add_conflict(Path::new(&link_norm), target, &mut |event| {
+        reporter.handle_migration_event(event)
+    })?;
 
     let target_norm = runtime_paths::normalize_target(target)?;
     let link_exists_after_prep = fs::symlink_metadata(Path::new(&link_norm)).is_ok();
@@ -57,10 +41,10 @@ pub fn run<W: Write>(
             link: link_norm.clone(),
             target: target_norm.clone(),
         })?;
-        match link_ops::create_link(Path::new(&target_norm), Path::new(&link_norm)) {
+        match link_creator::create_link(Path::new(&target_norm), Path::new(&link_norm)) {
             Ok(kind) => kind,
             Err(e) => {
-                let _ = prep.rollback(&migrator, Path::new(&link_norm), Path::new(&target_norm));
+                let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
                 return Err(e);
             }
         }
@@ -72,8 +56,8 @@ pub fn run<W: Write>(
         link: link_norm.clone(),
     })?;
     if let Err(e) = repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind) {
-        let _ = link_ops::remove_link(Path::new(&link_norm));
-        let _ = prep.rollback(&migrator, Path::new(&link_norm), Path::new(&target_norm));
+        let _ = link_remover::remove_link(Path::new(&link_norm));
+        let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
         return Err(e);
     }
     prep.commit()?;
@@ -87,14 +71,6 @@ pub fn run<W: Write>(
     };
     reporter.write_line(&format!("创建成功：{link_norm}（name: {display_name}）"))?;
     Ok(())
-}
-
-pub fn status_to_model(arg: crate::interface::cli::StatusArg) -> LinkStatus {
-    match arg {
-        crate::interface::cli::StatusArg::Ok => LinkStatus::Ok,
-        crate::interface::cli::StatusArg::Broken => LinkStatus::Broken,
-        crate::interface::cli::StatusArg::Missing => LinkStatus::Missing,
-    }
 }
 
 fn resolve_add_name(default_name: &str) -> Result<String, SymmError> {
@@ -115,7 +91,7 @@ fn ensure_link_not_locked<W: Write>(
     reporter: &mut MigrationProgressReporter<'_, W>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查 link 占用：{}", link.display()))?;
-    let procs = locker::list_locking_processes_with_progress(link, |event| {
+    let procs = lock_probe::list_locking_processes_with_progress(link, |event| {
         reporter.handle_lock_probe_event(event)
     })?;
     if procs.is_empty() {
@@ -133,9 +109,9 @@ fn ensure_link_not_locked<W: Write>(
     }
     reporter.write_line("正在结束全部占用进程")?;
     let pids = procs.iter().map(|proc| proc.pid).collect::<Vec<_>>();
-    locker::kill_processes(&pids)?;
+    process_killer::kill_processes(&pids)?;
     reporter.write_line("正在重新确认占用状态")?;
-    let remaining = locker::list_locking_processes_with_progress(link, |_event| {})?;
+    let remaining = lock_probe::list_locking_processes_with_progress(link, |_event| {})?;
     if remaining.is_empty() {
         return Ok(());
     }
@@ -156,7 +132,7 @@ enum LockResolutionAction {
 }
 
 fn select_lock_resolution_action(
-    procs: &[locker::ProcInfo],
+    procs: &[lock_probe::ProcInfo],
 ) -> Result<LockResolutionAction, SymmError> {
     let occupied = procs
         .iter()

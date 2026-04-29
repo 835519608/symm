@@ -1,3 +1,4 @@
+use crate::domain::model::LinkStatus;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -35,4 +36,14 @@ pub enum StatusArg {
     Ok,
     Broken,
     Missing,
+}
+
+impl StatusArg {
+    pub fn to_model(self) -> LinkStatus {
+        match self {
+            StatusArg::Ok => LinkStatus::Ok,
+            StatusArg::Broken => LinkStatus::Broken,
+            StatusArg::Missing => LinkStatus::Missing,
+        }
+    }
 }

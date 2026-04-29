@@ -1,6 +1,6 @@
+use crate::adapters::fs::migration_service::MigrationEvent;
+use crate::adapters::processes::lock_probe;
 use crate::domain::error::SymmError;
-use crate::infra::fs::migration::MigrationEvent;
-use crate::infra::processes::locker;
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
 
@@ -53,9 +53,9 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
         }
     }
 
-    pub fn handle_lock_probe_event(&mut self, event: locker::LockProbeProgress) {
+    pub fn handle_lock_probe_event(&mut self, event: lock_probe::LockProbeProgress) {
         match event {
-            locker::LockProbeProgress::Scanning {
+            lock_probe::LockProbeProgress::Scanning {
                 scanned_files,
                 current,
             } => {
@@ -64,7 +64,7 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
                     current.display()
                 ));
             }
-            locker::LockProbeProgress::Querying {
+            lock_probe::LockProbeProgress::Querying {
                 batch,
                 total_batches,
             } => {

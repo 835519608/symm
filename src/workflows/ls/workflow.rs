@@ -1,8 +1,8 @@
+use crate::adapters::db::repository;
+use crate::adapters::fs::link_status;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkStatus;
-use crate::infra::db::repository;
-use crate::infra::fs::link_ops;
-use crate::interface::output;
+use crate::ui::output;
 use std::io::Write;
 
 pub fn run<W: Write>(
@@ -26,7 +26,7 @@ fn stream_ls_table<W: Write>(
     let records = repository::list_links(conn)?;
     output::write_list_header(writer)?;
     for record in records {
-        let view = link_ops::as_view(record);
+        let view = link_status::as_view(record);
         if wanted.is_none_or(|s| view.status == s) {
             output::write_list_row(writer, &view)?;
         }
@@ -43,7 +43,7 @@ fn stream_ls_json<W: Write>(
     output::write_json_array_start(writer)?;
     let mut first = true;
     for record in records {
-        let view = link_ops::as_view(record);
+        let view = link_status::as_view(record);
         if wanted.is_none_or(|s| view.status == s) {
             output::write_json_item(writer, &view, first)?;
             first = false;

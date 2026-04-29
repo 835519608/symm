@@ -1,6 +1,6 @@
+use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkKind, LinkRecord};
-use crate::infra::paths::runtime_paths;
 use rusqlite::{Connection, Error as SqlError, ErrorCode, params};
 use std::time::{SystemTime, UNIX_EPOCH};
 

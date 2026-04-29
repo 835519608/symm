@@ -1,7 +1,7 @@
+use crate::adapters::fs::migration_service::{MigrationEvent, fs_extra_error};
+use crate::adapters::fs::path_ops;
+use crate::adapters::fs::tree_copy::copy_dir_tree_with_progress;
 use crate::domain::error::SymmError;
-use crate::infra::fs::migration_service::{MigrationEvent, fs_extra_error};
-use crate::infra::fs::path_ops;
-use crate::infra::fs::tree_copy::copy_dir_tree_with_progress;
 use fs_extra::file;
 use std::fs;
 use std::path::Path;
