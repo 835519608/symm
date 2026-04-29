@@ -38,11 +38,13 @@ jobs:
 
       - name: 生成最小样本数据
         shell: bash
+        env:
+          SYMM_ADD_NAME: baseline-sample
         run: |
           set -euo pipefail
           mkdir -p .perf-sample
           printf "baseline-sample\n" > .perf-sample/target.txt
-          cargo run --quiet --bin symm -- add ".perf-sample/link.txt" ".perf-sample/target.txt" <<< ""
+          cargo run --quiet --bin symm -- add ".perf-sample/link.txt" ".perf-sample/target.txt"
 
       - name: 执行基线采样并收集日志
         shell: bash
