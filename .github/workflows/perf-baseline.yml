@@ -1,0 +1,72 @@
+name: Perf Baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      selector:
+        description: "show 查询用 selector（可选）"
+        required: false
+        default: ""
+      limit:
+        description: "ls 采样 limit"
+        required: false
+        default: "1000"
+      offset:
+        description: "ls 采样 offset"
+        required: false
+        default: "0"
+  schedule:
+    # 北京时间每日凌晨 01:00（UTC 17:00）
+    - cron: "0 17 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: 采样 (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 生成最小样本数据
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .perf-sample
+          printf "baseline-sample\n" > .perf-sample/target.txt
+          cargo run --quiet --bin symm -- add ".perf-sample/link.txt" ".perf-sample/target.txt" <<< ""
+
+      - name: 执行基线采样并收集日志
+        shell: bash
+        env:
+          SYMM_PERF_LOG: "1"
+          SELECTOR: ${{ inputs.selector }}
+          LIMIT: ${{ inputs.limit || '1000' }}
+          OFFSET: ${{ inputs.offset || '0' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          : > artifacts/perf-baseline.log
+          cargo run --quiet --bin symm -- ls --limit "${LIMIT}" --offset "${OFFSET}" >/dev/null 2>> artifacts/perf-baseline.log
+          cargo run --quiet --bin symm -- ls --json --limit "${LIMIT}" --offset "${OFFSET}" >/dev/null 2>> artifacts/perf-baseline.log
+          if [ -n "${SELECTOR}" ]; then
+            cargo run --quiet --bin symm -- show "${SELECTOR}" >/dev/null 2>> artifacts/perf-baseline.log
+            cargo run --quiet --bin symm -- show "${SELECTOR}" --json >/dev/null 2>> artifacts/perf-baseline.log
+          else
+            cargo run --quiet --bin symm -- show ".perf-sample/link.txt" >/dev/null 2>> artifacts/perf-baseline.log
+            cargo run --quiet --bin symm -- show ".perf-sample/link.txt" --json >/dev/null 2>> artifacts/perf-baseline.log
+          fi
+
+      - name: 上传 perf 日志
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline-${{ github.run_id }}
+          path: artifacts/perf-baseline.log

@@ -288,3 +288,6 @@ commit --> done[完成]
 - `Release`（`.github/workflows/release.yml`）
   - 触发：推送 tag（如 `v0.2.0-test13` 或 `v1.0.0`）
   - 自动构建并上传 release 二进制（测试 tag 仅发布 Windows 产物，稳定 tag 发布多平台产物）
+- `Perf Baseline`（`.github/workflows/perf-baseline.yml`）
+  - 触发：手动触发（可传 `selector/limit/offset`）+ 每日北京时间 01:00 定时触发
+  - 作用：在 CI 环境执行 `add/rm/ls/show` 的 perf 采样并上传 `perf-baseline.log` artifact
