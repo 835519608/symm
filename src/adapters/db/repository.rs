@@ -336,17 +336,28 @@ pub fn get_by_selector(conn: &Connection, selector: &str) -> Result<LinkRecord, 
 }
 
 pub fn list_links(conn: &Connection) -> Result<Vec<LinkRecord>, SymmError> {
+    list_links_paginated(conn, None, 0)
+}
+
+pub fn list_links_paginated(
+    conn: &Connection,
+    limit: Option<u32>,
+    offset: u32,
+) -> Result<Vec<LinkRecord>, SymmError> {
     let mut stmt = conn
         .prepare(
             "SELECT name, link_path, target_path, link_kind, created_at, updated_at
-             FROM links ORDER BY name ASC",
+             FROM links
+             ORDER BY name ASC
+             LIMIT ?1 OFFSET ?2",
         )
         .map_err(|e| SymmError::DbError {
             message: e.to_string(),
         })?;
+    let limit = limit.unwrap_or(u32::MAX);
 
     let mapped = stmt
-        .query_map([], map_link_row)
+        .query_map(params![limit as i64, offset as i64], map_link_row)
         .map_err(|e| SymmError::DbError {
             message: e.to_string(),
         })?;

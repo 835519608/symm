@@ -23,6 +23,10 @@ pub enum Commands {
         json: bool,
         #[arg(long)]
         status: Option<StatusArg>,
+        #[arg(long)]
+        limit: Option<u32>,
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
     },
     Show {
         selector: String,

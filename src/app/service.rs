@@ -17,9 +17,14 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
             workflows::add::workflow::run(&conn, &link, &target, writer)
         }
         Commands::Rm { selector } => workflows::rm::workflow::run(&conn, &selector, writer),
-        Commands::Ls { json, status } => {
+        Commands::Ls {
+            json,
+            status,
+            limit,
+            offset,
+        } => {
             let wanted = status.map(|value| value.to_model());
-            workflows::ls::workflow::run(&conn, json, wanted, writer)
+            workflows::ls::workflow::run(&conn, json, wanted, limit, offset, writer)
         }
         Commands::Show { selector, json } => {
             workflows::show::workflow::run(&conn, &selector, json, writer)
