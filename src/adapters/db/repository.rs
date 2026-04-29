@@ -374,6 +374,25 @@ fn to_sql_from_domain(err: SymmError) -> SqlError {
     SqlError::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
 }
 
+fn map_sql_error(err: SqlError, name: &str) -> SymmError {
+    match err {
+        SqlError::SqliteFailure(e, msg) if e.code == ErrorCode::ConstraintViolation => {
+            let msg = msg.unwrap_or_default();
+            if msg.contains("links.name") || msg.contains("ux_links_name_nonempty") {
+                return SymmError::NameConflict {
+                    name: name.to_string(),
+                };
+            }
+            SymmError::DbError {
+                message: format!("唯一约束冲突：name={name}"),
+            }
+        }
+        _ => SymmError::DbError {
+            message: err.to_string(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,24 +439,5 @@ mod tests {
                 .all(|record| record.operation_id != operation_id),
             "done operation should not remain pending"
         );
-    }
-}
-
-fn map_sql_error(err: SqlError, name: &str) -> SymmError {
-    match err {
-        SqlError::SqliteFailure(e, msg) if e.code == ErrorCode::ConstraintViolation => {
-            let msg = msg.unwrap_or_default();
-            if msg.contains("links.name") || msg.contains("ux_links_name_nonempty") {
-                return SymmError::NameConflict {
-                    name: name.to_string(),
-                };
-            }
-            SymmError::DbError {
-                message: format!("唯一约束冲突：name={name}"),
-            }
-        }
-        _ => SymmError::DbError {
-            message: err.to_string(),
-        },
     }
 }
