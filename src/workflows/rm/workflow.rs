@@ -14,18 +14,47 @@ pub fn run<W: Write>(
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let record = repository::get_by_selector(conn, selector)?;
+    let payload = serde_json::json!({
+        "selector": selector,
+        "link_path": record.link_path.clone(),
+        "target_path": record.target_path.clone(),
+    })
+    .to_string();
+    let operation_id = repository::begin_operation(conn, "rm", &payload)?;
     let action = select_rm_action()?;
+    let _ = repository::advance_operation_step(
+        conn,
+        &operation_id,
+        repository::OperationStep::Staging,
+        repository::OperationStatus::Pending,
+        "rm 预处理与暂存",
+    );
     let mut prep = RmPreparation::prepare(
         action,
         writer,
         Path::new(&record.link_path),
         Path::new(&record.target_path),
     )?;
+    let _ = repository::advance_operation_step(
+        conn,
+        &operation_id,
+        repository::OperationStep::DbWrite,
+        repository::OperationStatus::Pending,
+        "删除 links 记录",
+    );
     if let Err(e) = repository::delete_by_selector(conn, selector) {
         prep.rollback()?;
+        let _ = repository::advance_operation_step(
+            conn,
+            &operation_id,
+            repository::OperationStep::DbWrite,
+            repository::OperationStatus::Failed,
+            &format!("删除记录失败：{e}"),
+        );
         return Err(e);
     }
     prep.commit()?;
+    let _ = repository::mark_operation_done(conn, &operation_id);
     let success_message = match action {
         RmAction::DeleteLinkOnly => format!("删除成功：{}", record.name),
         RmAction::RestoreTargetToLink => {
