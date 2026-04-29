@@ -1,9 +1,13 @@
 use crate::adapters::db::repository;
+use crate::adapters::fs::link_creator;
+use crate::adapters::fs::link_remover;
 use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::Write;
+use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RiskLevel {
@@ -69,19 +73,24 @@ pub fn recover_pending_operations<W: Write>(
                 let decision = select_high_risk_decision(&operation_id, &latest.command)?;
                 match decision {
                     HighRiskDecision::ConfirmAndMarkManual => {
+                        let auto_result = try_execute_high_risk_action(latest);
                         let manual_steps =
                             build_manual_recovery_steps(&latest.command, &latest.payload);
                         write_manual_steps(writer, &manual_steps)?;
                         repository::mark_operation_failed(
                             conn,
                             &operation_id,
-                            &format!("高风险恢复已确认，需人工恢复：{}", manual_steps.join("；")),
+                            &format!(
+                                "高风险恢复已确认；自动动作结果：{auto_result}；人工恢复建议：{}",
+                                manual_steps.join("；")
+                            ),
                         )?;
                         writeln!(
                             writer,
-                            "  -> 高风险已确认：已标记为 failed，请执行人工恢复步骤后重试"
+                            "  -> 高风险已确认：已执行受控自动动作并标记为 failed，请按人工步骤校验后重试"
                         )
                         .map_err(io_err)?;
+                        writeln!(writer, "  -> 自动动作结果：{auto_result}").map_err(io_err)?;
                     }
                     HighRiskDecision::SkipKeepPending => {
                         writeln!(writer, "  -> 高风险已跳过：保留 pending，不做自动处理")
@@ -93,6 +102,44 @@ pub fn recover_pending_operations<W: Write>(
     }
 
     Ok(())
+}
+
+fn try_execute_high_risk_action(record: &repository::OperationRecord) -> String {
+    match (record.command.as_str(), record.step) {
+        ("add", repository::OperationStep::LinkChange) => {
+            try_recover_add_link_change(&record.payload)
+        }
+        _ => "当前步骤暂无自动执行器，保持人工恢复模式".to_string(),
+    }
+}
+
+fn try_recover_add_link_change(payload: &str) -> String {
+    let Ok(add) = serde_json::from_str::<AddPayload>(payload) else {
+        return format!("payload 解析失败：{payload}");
+    };
+    let link = Path::new(&add.link_path);
+    let target = Path::new(&add.target_path);
+    if !target.exists() {
+        return format!("跳过自动重建 link：target 不存在（{}）", target.display());
+    }
+
+    if fs::symlink_metadata(link).is_ok() {
+        if let Err(err) = link_remover::remove_link(link) {
+            return format!(
+                "自动重建 link 失败：无法清理旧 link（{}）：{err}",
+                link.display()
+            );
+        }
+    }
+
+    match link_creator::create_link(target, link) {
+        Ok(kind) => format!(
+            "已自动重建 link（{} -> {}，kind={kind}）",
+            link.display(),
+            target.display()
+        ),
+        Err(err) => format!("自动重建 link 失败：{err}"),
+    }
 }
 
 fn classify_risk(step: repository::OperationStep) -> RiskLevel {
@@ -310,6 +357,24 @@ mod tests {
         assert!(
             steps.iter().any(|s| s.contains("选择仅删除")),
             "manual steps should include delete-only branch"
+        );
+    }
+
+    #[test]
+    fn high_risk_auto_executor_reports_manual_mode_for_unsupported_step() {
+        let record = repository::OperationRecord {
+            operation_id: "op-1".to_string(),
+            command: "rm".to_string(),
+            step: repository::OperationStep::Migrate,
+            status: repository::OperationStatus::Pending,
+            payload: "{}".to_string(),
+            detail: String::new(),
+            updated_at: 0,
+        };
+        let result = try_execute_high_risk_action(&record);
+        assert!(
+            result.contains("暂无自动执行器"),
+            "unsupported steps should remain in manual mode"
         );
     }
 }
