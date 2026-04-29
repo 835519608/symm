@@ -30,15 +30,17 @@ pub fn run<W: Write>(
         Path::new(&record.link_path),
         Path::new(&record.target_path),
     )?;
-    tracker.pending(repository::OperationStep::DbWrite, "删除 links 记录");
-    if let Err(e) = repository::delete_by_selector(conn, selector) {
-        prep.rollback()?;
-        tracker.failed(
-            repository::OperationStep::DbWrite,
-            &format!("删除记录失败：{e}"),
-        );
-        return Err(e);
-    }
+    tracker.run_pending(
+        repository::OperationStep::DbWrite,
+        "删除 links 记录",
+        "删除记录失败",
+        || {
+            repository::delete_by_selector(conn, selector).map_err(|e| {
+                let _ = prep.rollback();
+                e
+            })
+        },
+    )?;
     prep.commit()?;
     tracker.done();
     let success_message = match action {

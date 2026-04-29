@@ -39,4 +39,24 @@ impl<'a> OperationTracker<'a> {
     pub fn done(&self) {
         let _ = repository::mark_operation_done(self.conn, &self.operation_id);
     }
+
+    pub fn run_pending<T, F>(
+        &self,
+        step: repository::OperationStep,
+        pending_detail: &str,
+        failed_prefix: &str,
+        op: F,
+    ) -> Result<T, SymmError>
+    where
+        F: FnOnce() -> Result<T, SymmError>,
+    {
+        self.pending(step, pending_detail);
+        match op() {
+            Ok(value) => Ok(value),
+            Err(err) => {
+                self.failed(step, &format!("{failed_prefix}：{err}"));
+                Err(err)
+            }
+        }
+    }
 }

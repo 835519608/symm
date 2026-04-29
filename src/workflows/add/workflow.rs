@@ -62,19 +62,21 @@ pub fn run<W: Write>(
 
     let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
     let name = resolve_add_name(default_name)?;
-    tracker.pending(repository::OperationStep::DbWrite, "写入 links 表");
     reporter.handle_migration_event(MigrationEvent::PersistingDb {
         link: link_norm.clone(),
     })?;
-    if let Err(e) = repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind) {
-        let _ = link_remover::remove_link(Path::new(&link_norm));
-        let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
-        tracker.failed(
-            repository::OperationStep::DbWrite,
-            &format!("写库失败：{e}"),
-        );
-        return Err(e);
-    }
+    tracker.run_pending(
+        repository::OperationStep::DbWrite,
+        "写入 links 表",
+        "写库失败",
+        || {
+            repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind).map_err(|e| {
+                let _ = link_remover::remove_link(Path::new(&link_norm));
+                let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
+                e
+            })
+        },
+    )?;
     prep.commit()?;
     tracker.done();
     reporter.handle_migration_event(MigrationEvent::Done {
