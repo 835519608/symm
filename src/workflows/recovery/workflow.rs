@@ -123,13 +123,13 @@ fn try_recover_add_link_change(payload: &str) -> String {
         return format!("跳过自动重建 link：target 不存在（{}）", target.display());
     }
 
-    if fs::symlink_metadata(link).is_ok() {
-        if let Err(err) = link_remover::remove_link(link) {
-            return format!(
-                "自动重建 link 失败：无法清理旧 link（{}）：{err}",
-                link.display()
-            );
-        }
+    if fs::symlink_metadata(link).is_ok()
+        && let Err(err) = link_remover::remove_link(link)
+    {
+        return format!(
+            "自动重建 link 失败：无法清理旧 link（{}）：{err}",
+            link.display()
+        );
     }
 
     match link_creator::create_link(target, link) {
