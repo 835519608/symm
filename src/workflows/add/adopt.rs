@@ -1,3 +1,5 @@
+//! `add` 冲突与接管：通过 [`migration_service`] 的 staging / `move_path_with_retry` /
+//! `migrate_path` 完成文件迁移，失败时由本模块 `rollback` 恢复（与 `rm` 共用同一套 staging 约定）。
 use crate::adapters::fs::migration_service::{
     self as migration, MigrationEvent, move_path_with_retry, staging_path,
 };

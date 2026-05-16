@@ -52,44 +52,33 @@
 - 可通过 `SYMM_HOME` 覆盖
 - 注册库文件：`symm.db`
 
-## 当前架构（分层 + 单一职责）
+## 当前架构（分层 + 平台边界）
 
 ```text
 src/
-  bin/
-    symm.rs                     # CLI 入口
-  app/
-    service.rs                  # 命令分发
-  domain/
-    error.rs                    # 领域错误
-    model.rs                    # 领域模型
-  workflows/
-    add/
-      workflow.rs               # add 业务编排
-      adopt.rs                  # add 冲突策略与回滚准备
-    lifecycle/
-      operation_tracker.rs      # add/rm 共享操作日志跟踪
-    ls/
-      workflow.rs               # ls 业务编排
-    recovery/
-      workflow.rs               # 启动恢复扫描与分级恢复
-    rm/
-      workflow.rs               # rm 业务编排
-    show/
-      workflow.rs               # show 业务编排
+  bin/symm.rs                   # CLI 入口（Windows 启动前检查管理员权限）
+  app/service.rs                # 命令分发
+  domain/                       # 模型与错误（无平台分支）
+  workflows/                    # add / rm / ls / show / recovery 编排
   adapters/
-    db/repository.rs            # SQLite 读写
-    fs/                         # 链接/迁移/ACL/路径操作
-    paths/                      # 目录与路径规范化
-    platform/admin.rs           # 平台权限能力
-    processes/                  # 占用探测与进程终止
-    errors/io_map.rs            # IO 错误映射
-  ui/
-    cli.rs                      # 参数模型
-    output.rs                   # 输出渲染
-    interaction/choice.rs       # 交互与 env 选择
-    progress/migration_reporter.rs
+    platform/                   # 唯一平台差异入口（静态分发，无 dyn）
+      admin.rs                  # 是否已提升权限（Windows）
+      fs/                       # PlatformFs（链接、同卷、迁移、ACL）
+      process/                  # 占用检测、结束进程
+    fs/                         # 通用迁移 / rebase / 复制（无 #[cfg]）
+      migration_service.rs      # migrate、staging、同卷判断
+      rebase.rs                 # 软链接路径 rebase
+      tree_copy.rs              # 跨盘目录复制 + 进度
+    db/ paths/ errors/
+  ui/                           # CLI、进度、交互
 ```
+
+### 平台层约定
+
+- 业务与 workflow **不**写 `#[cfg(windows)]`；平台差异只在 `adapters/platform/**`。
+- 文件系统入口：`adapters::platform::fs_platform()`（`PlatformFs` trait）。
+- 进程占用入口：`adapters::platform::{list_locking_processes_with_progress, kill_processes}`。
+- Linux / macOS / Windows 共用同一套 `add` / `rm` 流程，仅底层钩子不同。
 
 ### 依赖方向
 
@@ -141,9 +130,17 @@ bin/symm.rs
 
 ## 平台行为
 
-- Linux/macOS：使用系统软链接
-- Windows：优先创建软链接；目录软链接失败时自动降级为 junction
-- Windows：程序要求管理员权限运行（UAC），用于稳定处理链接与占用场景
+- Linux/macOS：使用系统软链接；同卷用 `dev` 判断是否可 `rename` 快速迁移
+- Windows：优先创建软链接；目录软链接失败时自动降级为 junction；同卷用盘符判断
+- Windows：程序要求**管理员权限**（UAC），用于稳定创建链接、占用检测与迁移
+- Windows：跨盘复制目录时可保存/恢复 ACL（`icacls`，失败时降级为不恢复）
+- Windows：`rename` 软链接若遇拒绝访问（os error 5），会重建链接完成迁移
+
+### 迁移与软链接 rebase
+
+- **同盘目录/文件**：`rename` 到 `target`，再对 `target` 树做单遍 rebase（树内绝对路径软链接改指向新根）
+- **跨盘**：先统计文件总大小，再复制并显示 `已复制 / 总量`；复制时对树内软链接做 rebase
+- **相对路径**软链接：通常无需改写；**指向树外**的链接保持原目标不变
 
 ## `add` 行为与冲突处理
 
@@ -155,8 +152,8 @@ bin/symm.rs
   - 更新时默认显示原值，回车保持原样
 - 若 `target` 不存在且 `link` 为实体（非软链接）：执行接管迁移（将 `link` 实体迁移到 `target`，再在 `link` 创建指向 `target` 的链接）
   - 同盘时优先快速移动（`rename`），通常几乎瞬时完成
-  - 跨盘时自动改为复制到 `target` 后删除源路径
-  - 迁移期间会持续输出阶段状态；跨盘复制时会显示已复制大小进度
+  - 跨盘时自动改为复制到 `target` 后删除源路径（复制前统计总大小，进度为「已复制 / 总量」）
+  - 迁移期间会持续输出阶段状态
 - 若 `target` 与 `link` 都存在：进入三选一交互
   - 保留 `link`（放弃 `target`）
   - 保留 `target`（放弃 `link`）
@@ -272,28 +269,16 @@ commit --> done[完成]
   - `synchronous=NORMAL`
   - `temp_store=MEMORY`
 
-### 基线采样（可复现）
-
-- PowerShell：`./scripts/perf-baseline.ps1 -Limit 1000 -Offset 0 -Selector "<name|link>"`
-- 输出位置：stderr（`[symm-perf] event=... elapsed_ms=...`）
+本地调试时延日志：设置 `SYMM_PERF_LOG=1`，stderr 输出 `[symm-perf] event=... elapsed_ms=...`。
 
 ## GitHub Actions
 
-- `CI`（`.github/workflows/ci.yml`）
-  - 触发：`push` 与 `pull_request`
-  - 在 Linux / Windows / macOS 执行：
-    - `cargo fmt --all -- --check`
-    - `cargo clippy --all-targets --all-features -- -D warnings`
-    - `cargo test --all-targets`
-- `Release`（`.github/workflows/release.yml`）
-  - 触发：推送 tag（如 `v0.2.0-test13` 或 `v1.0.0`）
-  - 自动构建并上传 release 二进制（测试 tag 仅发布 Windows 产物，稳定 tag 发布多平台产物）
-- `Perf Baseline`（`.github/workflows/perf-baseline.yml`）
-  - 触发：手动触发（可传 `selector/limit/offset`）+ 每日北京时间 01:00 定时触发
-  - 作用：在 CI 环境执行 `add/rm/ls/show` 的 perf 采样并上传 `perf-baseline.log` artifact
-- `Rollback Metrics`（`.github/workflows/rollback-metrics.yml`）
-  - 触发：手动触发 + 每日北京时间 01:20 定时触发
-  - 作用：在 CI 环境执行回滚场景测试并生成成功率报告（`rollback-metrics.md/json` artifact）
-- `Baseline Trend`（`.github/workflows/baseline-trend.yml`）
-  - 触发：手动触发（可传 `lookback`）+ 每日北京时间 01:40 定时触发
-  - 作用：聚合最近 N 次 `Perf Baseline` / `Rollback Metrics` artifact，生成趋势报告（`baseline-trend.md/json` artifact）
+仅保留两条流水线，作为测试与发布的唯一门禁：
+
+- **CI**（`.github/workflows/ci.yml`）
+  - 触发：`push` / `pull_request`（`src/`、`tests/`、`Cargo.*`、本 workflow）
+  - 矩阵：ubuntu / windows / macos
+  - 步骤：`cargo fmt --check` → `clippy -D warnings` → `cargo test --all-targets`
+- **Release**（`.github/workflows/release.yml`）
+  - 触发：推送 `v*` tag
+  - 构建 release 二进制并上传到 GitHub Release（`-test` tag 仅 Windows 预发布；正式 tag 三平台）

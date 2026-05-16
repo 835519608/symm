@@ -1,10 +1,10 @@
 use crate::adapters::db::repository;
-use crate::adapters::fs::link_creator;
 use crate::adapters::fs::link_remover;
 use crate::adapters::fs::migration_service::MigrationEvent;
 use crate::adapters::paths::runtime_paths;
-use crate::adapters::processes::lock_probe;
-use crate::adapters::processes::process_killer;
+use crate::adapters::platform::{
+    PlatformFs, ProcInfo, fs_platform, kill_processes, list_locking_processes_with_progress,
+};
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use crate::ui::interaction::choice;
@@ -54,7 +54,7 @@ pub fn run<W: Write>(
             link: link_norm.clone(),
             target: target_norm.clone(),
         })?;
-        match link_creator::create_link(Path::new(&target_norm), Path::new(&link_norm)) {
+        match fs_platform().create_link(Path::new(&target_norm), Path::new(&link_norm)) {
             Ok(kind) => kind,
             Err(e) => {
                 let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
@@ -122,7 +122,7 @@ fn ensure_link_not_locked<W: Write>(
     reporter: &mut MigrationProgressReporter<'_, W>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查 link 占用：{}", link.display()))?;
-    let procs = lock_probe::list_locking_processes_with_progress(link, |event| {
+    let procs = list_locking_processes_with_progress(link, |event| {
         reporter.handle_lock_probe_event(event)
     })?;
     if procs.is_empty() {
@@ -140,9 +140,9 @@ fn ensure_link_not_locked<W: Write>(
     }
     reporter.write_line("正在结束全部占用进程")?;
     let pids = procs.iter().map(|proc| proc.pid).collect::<Vec<_>>();
-    process_killer::kill_processes(&pids)?;
+    kill_processes(&pids)?;
     reporter.write_line("正在重新确认占用状态")?;
-    let remaining = lock_probe::list_locking_processes_with_progress(link, |_event| {})?;
+    let remaining = list_locking_processes_with_progress(link, |_event| {})?;
     if remaining.is_empty() {
         return Ok(());
     }
@@ -162,9 +162,7 @@ enum LockResolutionAction {
     Cancel,
 }
 
-fn select_lock_resolution_action(
-    procs: &[lock_probe::ProcInfo],
-) -> Result<LockResolutionAction, SymmError> {
+fn select_lock_resolution_action(procs: &[ProcInfo]) -> Result<LockResolutionAction, SymmError> {
     let occupied = procs
         .iter()
         .map(|proc| format!("  - {}", proc))

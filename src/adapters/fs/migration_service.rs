@@ -1,8 +1,7 @@
 use crate::adapters::errors::io_map::ioe;
-use crate::adapters::fs::acl;
 use crate::adapters::fs::path_ops;
-#[cfg(windows)]
-use crate::adapters::fs::tree_copy::recreate_symlink;
+use crate::adapters::fs::rebase::{rebase_symlinks_in_tree, tree_contains_symlink};
+use crate::adapters::platform::{PlatformFs, format_relocate_failure, fs_platform};
 use crate::domain::error::SymmError;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,14 +51,19 @@ where
             target: dst.display().to_string(),
         })?;
         fs::rename(src, dst).map_err(ioe)?;
+        if tree_contains_symlink(dst)? {
+            rebase_symlinks_in_tree(dst, src)?;
+        }
         return Ok(());
     }
 
-    let acl_snapshot = acl::snapshot_dir_acl(src)?;
-    super::copy_with_progress::copy_path_with_progress(src, dst, reporter)?;
-    if let Some(snapshot) = acl_snapshot {
-        let _ = acl::restore_dir_acl(dst, &snapshot);
+    if let Some(acl_file) = fs_platform().snapshot_dir_acl(src)? {
+        super::copy_with_progress::copy_path_with_progress(src, dst, reporter)?;
+        let _ = fs_platform().restore_dir_acl(dst, &acl_file);
+    } else {
+        super::copy_with_progress::copy_path_with_progress(src, dst, reporter)?;
     }
+
     reporter(MigrationEvent::RemovingSource {
         source: src.display().to_string(),
     })?;
@@ -87,35 +91,7 @@ pub fn can_use_fast_move(src: &Path, dst: &Path) -> Result<bool, SymmError> {
         });
     }
 
-    #[cfg(windows)]
-    {
-        Ok(path_prefix(src) == path_prefix(dst_parent))
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let src_meta = fs::metadata(src).map_err(ioe)?;
-        let dst_meta = fs::metadata(dst_parent).map_err(ioe)?;
-        Ok(src_meta.dev() == dst_meta.dev())
-    }
-
-    #[cfg(not(any(windows, unix)))]
-    {
-        let _ = src;
-        let _ = dst_parent;
-        Ok(false)
-    }
-}
-
-#[cfg(windows)]
-fn path_prefix(path: &Path) -> Option<String> {
-    use std::path::Component;
-
-    path.components().find_map(|component| match component {
-        Component::Prefix(prefix) => Some(prefix.as_os_str().to_string_lossy().to_string()),
-        _ => None,
-    })
+    fs_platform().same_volume(src, dst_parent)
 }
 
 pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {
@@ -169,51 +145,33 @@ pub fn rollback_staged_path(
 }
 
 pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    match fs::rename(src, dst) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            #[cfg(windows)]
-            if e.raw_os_error() == Some(5)
-                && let Ok(meta) = fs::symlink_metadata(src)
-                && meta.file_type().is_symlink()
-            {
-                return move_symlink_by_recreate(src, dst, role);
-            }
-            let mut message = format!("无法移动 {role}：{e}");
-            if e.raw_os_error() == Some(5) {
-                message.push_str(
-                    "。系统拒绝访问（os error 5），可能仍有占用未被识别，或当前进程权限不足（可尝试以管理员身份运行）",
-                );
-            }
-            Err(SymmError::IoError { message })
-        }
-    }
-}
-
-#[cfg(windows)]
-fn move_symlink_by_recreate(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    if dst.exists() {
-        path_ops::remove_path_any(dst)?;
-    }
-    if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
-            message: format!("无法创建 {role} 目标父目录：{e}"),
-        })?;
-    }
-    recreate_symlink(src, dst, Some((src, dst))).map_err(|e| SymmError::IoError {
-        message: format!("重建软链接失败（{role}）：{e}"),
-    })?;
-    path_ops::remove_path_any(src)?;
-    Ok(())
+    fs_platform()
+        .relocate_path(src, dst)
+        .map_err(|failure| format_relocate_failure(role, failure))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{MigrationEvent, migrate_path, move_path_without_progress};
     use crate::adapters::fs::copy_with_progress::copy_path_with_progress;
+    use crate::adapters::fs::rebase;
     use crate::domain::error::SymmError;
     use std::fs;
+    use std::path::Path;
     use tempfile::tempdir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
+    #[cfg(windows)]
+    fn symlink_file(target: &Path, link: &Path) {
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+    }
+
+    #[cfg(unix)]
+    fn symlink_file(target: &Path, link: &Path) {
+        symlink(target, link).expect("symlink");
+    }
 
     #[test]
     fn move_path_without_progress_moves_file() {
@@ -265,6 +223,24 @@ mod tests {
     }
 
     #[test]
+    fn migrate_path_rebases_internal_symlink_on_same_volume() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("agent");
+        let dst = temp.path().join("agent1");
+        fs::create_dir_all(src.join("data")).expect("dir");
+        fs::write(src.join("data").join("x.txt"), "ok").expect("write");
+        symlink_file(&src.join("data").join("x.txt"), &src.join("lnk"));
+
+        migrate_path(&src, &dst, &mut |_event| Ok(())).expect("migrate");
+
+        assert!(!src.exists());
+        assert_eq!(
+            fs::read_link(dst.join("lnk")).expect("read"),
+            dst.join("data").join("x.txt")
+        );
+    }
+
+    #[test]
     fn copy_path_with_progress_cleans_partial_target_when_reporter_aborts() {
         let temp = tempdir().expect("temp dir");
         let src = temp.path().join("src_dir");
@@ -287,5 +263,15 @@ mod tests {
             !dst.exists(),
             "partial destination should be cleaned when copy aborts"
         );
+    }
+
+    #[test]
+    fn rebase_skipped_for_tree_without_symlinks() {
+        let temp = tempdir().expect("temp dir");
+        let root = temp.path().join("plain");
+        fs::create_dir_all(root.join("nested")).expect("dir");
+        fs::write(root.join("nested").join("f.txt"), "x").expect("write");
+        assert!(!rebase::tree_contains_symlink(&root).expect("scan"));
+        rebase::rebase_symlinks_in_tree(&root, &root).expect("no-op rebase");
     }
 }

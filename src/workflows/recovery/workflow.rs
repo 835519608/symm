@@ -1,6 +1,6 @@
 use crate::adapters::db::repository;
-use crate::adapters::fs::link_creator;
 use crate::adapters::fs::link_remover;
+use crate::adapters::platform::{PlatformFs, fs_platform};
 use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
 use serde::Deserialize;
@@ -132,7 +132,7 @@ fn try_recover_add_link_change(payload: &str) -> String {
         );
     }
 
-    match link_creator::create_link(target, link) {
+    match fs_platform().create_link(target, link) {
         Ok(kind) => format!(
             "已自动重建 link（{} -> {}，kind={kind}）",
             link.display(),

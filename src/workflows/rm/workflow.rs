@@ -1,3 +1,5 @@
+//! `rm` 删除或恢复：通过 [`migration_service::stage_existing_path`] /
+//! [`rollback_staged_path`] 暂存 link，再删库或把 target 迁回 link（与 `add` 共用 staging 约定）。
 use crate::adapters::db::repository;
 use crate::adapters::fs::migration_service as migration;
 use crate::adapters::fs::migration_service::{rollback_staged_path, stage_existing_path};

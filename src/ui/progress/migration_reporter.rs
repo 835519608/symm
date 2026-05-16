@@ -1,5 +1,5 @@
 use crate::adapters::fs::migration_service::MigrationEvent;
-use crate::adapters::processes::lock_probe;
+use crate::adapters::platform::LockProbeProgress;
 use crate::domain::error::SymmError;
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
@@ -53,9 +53,9 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
         }
     }
 
-    pub fn handle_lock_probe_event(&mut self, event: lock_probe::LockProbeProgress) {
+    pub fn handle_lock_probe_event(&mut self, event: LockProbeProgress) {
         match event {
-            lock_probe::LockProbeProgress::Scanning {
+            LockProbeProgress::Scanning {
                 scanned_files,
                 current,
             } => {
@@ -64,7 +64,7 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
                     current.display()
                 ));
             }
-            lock_probe::LockProbeProgress::Querying {
+            LockProbeProgress::Querying {
                 batch,
                 total_batches,
             } => {
@@ -83,11 +83,15 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
         if !self.should_emit_progress(copied_bytes, total_bytes) {
             return Ok(());
         }
-        let mut message = format!(
-            "正在复制：{} / {}",
-            format_bytes(copied_bytes),
-            format_bytes(total_bytes)
-        );
+        let mut message = if total_bytes == 0 {
+            format!("正在复制：{}", format_bytes(copied_bytes))
+        } else {
+            format!(
+                "正在复制：{} / {}",
+                format_bytes(copied_bytes),
+                format_bytes(total_bytes)
+            )
+        };
         if let Some(item) = current_item.filter(|name| !name.is_empty()) {
             message.push_str("  当前：");
             message.push_str(item);
@@ -99,21 +103,23 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
         if !self.is_terminal {
             let changed_bucket = self
                 .last_copy_snapshot
-                .is_none_or(|(_, last_total)| total_bytes != last_total)
-                || self.last_copy_snapshot.is_none_or(|(last_copied, _)| {
-                    copied_bytes.saturating_sub(last_copied) >= 64 * 1024 * 1024
+                .is_none_or(|(last_copied, last_total)| {
+                    total_bytes != last_total
+                        || copied_bytes.saturating_sub(last_copied) >= 64 * 1024 * 1024
                 });
-            if changed_bucket || copied_bytes == total_bytes {
+            let finished = total_bytes > 0 && copied_bytes == total_bytes;
+            if changed_bucket || finished {
                 self.last_copy_snapshot = Some((copied_bytes, total_bytes));
                 return true;
             }
             return false;
         }
         let now = Instant::now();
+        let finished = total_bytes > 0 && copied_bytes == total_bytes;
         let should_emit = self
             .last_copy_report_at
             .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(250))
-            || copied_bytes == total_bytes;
+            || finished;
         if should_emit {
             self.last_copy_report_at = Some(now);
         }
