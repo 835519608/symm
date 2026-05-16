@@ -31,7 +31,8 @@ impl PlatformFs for Platform {
     fn write_symlink(&self, link: &Path, target: &Path) -> Result<(), SymmError> {
         let is_dir_link = match fs::metadata(target) {
             Ok(m) => m.is_dir(),
-            Err(_) => true,
+            // 目标尚不存在时默认按文件软链处理，避免误建目录软链导致跟随失败。
+            Err(_) => false,
         };
         if is_dir_link {
             symlink_dir(target, link).map_err(ioe)?;

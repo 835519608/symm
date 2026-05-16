@@ -4,7 +4,7 @@ use crate::adapters::fs::rebase;
 use crate::domain::error::SymmError;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 pub fn copy_dir_tree_with_progress<F>(
@@ -18,6 +18,8 @@ where
     let total_bytes = dir_file_bytes_total(src)?;
 
     let mut copied_bytes: u64 = 0;
+    let mut deferred_symlinks: Vec<(PathBuf, PathBuf)> = Vec::new();
+
     for entry in WalkDir::new(src).follow_links(false) {
         let entry = entry.map_err(|e| SymmError::IoError {
             message: format!("扫描迁移内容失败：{e}"),
@@ -34,8 +36,7 @@ where
         let file_type = entry.file_type();
 
         if file_type.is_symlink() {
-            ensure_parent_dir(&dst_path)?;
-            rebase::recreate_symlink(src_path, &dst_path, Some((src, dst)))?;
+            deferred_symlinks.push((src_path.to_path_buf(), dst_path));
             continue;
         }
 
@@ -49,6 +50,11 @@ where
             copied_bytes =
                 copy_file_with_progress(src_path, &dst_path, copied_bytes, total_bytes, reporter)?;
         }
+    }
+
+    for (src_link, dst_link) in deferred_symlinks {
+        ensure_parent_dir(&dst_link)?;
+        rebase::recreate_symlink(&src_link, &dst_link, Some((src, dst)))?;
     }
 
     Ok(())
