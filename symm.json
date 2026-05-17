@@ -1,38 +1,47 @@
 {
-    "version": "0.2.10-test-windows",
-    "description": "跨平台软链接管理（CLI + GUI）",
-    "homepage": "https://github.com/835519608/symm",
-    "license": "MIT",
-    "notes": "安装：scoop bucket add symm https://github.com/835519608/symm && scoop install symm/symm。根目录 symm.exe（GUI）；CLI 为 cli/symm-cli.exe。version 由发版 CI 根据 tag 自动同步。",
-    "architecture": {
-        "64bit": {
-            "url": "https://github.com/835519608/symm/releases/download/v0.2.10-test-windows/symm-portable-windows-x64.zip",
-            "hash": "92c7ba8002c2b72c7655aed193c75aaeb82f08d05d635dc89f74201977596c37",
-            "extract_dir": "symm"
-        }
-    },
-    "bin": [
-        ["symm.exe", "symm"],
-        ["cli/symm-cli.exe", "symm-cli"]
-    ],
-    "shortcuts": [
-        ["symm.exe", "symm"]
-    ],
-    "persist": "data",
-    "checkver": {
-        "github": "835519608/symm",
-        "regex": "v([\\w.-]+)$",
-        "pre_release": true
-    },
-    "autoupdate": {
-        "architecture": {
-            "64bit": {
-                "url": "https://github.com/835519608/symm/releases/download/v$version/symm-portable-windows-x64.zip",
-                "hash": {
-                    "url": "https://github.com/835519608/symm/releases/download/v$version/SHA256SUMS",
-                    "find": "symm-portable-windows-x64.zip"
-                }
-            }
-        }
+  "version": "0.2.11-test-windows",
+  "description": "跨平台软链接管理（CLI + GUI）",
+  "homepage": "https://github.com/835519608/symm",
+  "license": "MIT",
+  "notes": "安装：scoop bucket add symm https://github.com/835519608/symm && scoop install symm/symm。根目录 symm.exe（GUI）；CLI 为 cli/symm-cli.exe。version 由发版 CI 根据 tag 自动同步。",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/835519608/symm/releases/download/v0.2.11-test-windows/symm-portable-windows-x64.zip",
+      "hash": "cab38267bfc74a22d6b164a48b56fc3c3473f7527cc99947b548bb663d0ea2e3",
+      "extract_dir": "symm"
     }
+  },
+  "bin": [
+    [
+      "symm.exe",
+      "symm"
+    ],
+    [
+      "cli/symm-cli.exe",
+      "symm-cli"
+    ]
+  ],
+  "shortcuts": [
+    [
+      "symm.exe",
+      "symm"
+    ]
+  ],
+  "persist": "data",
+  "checkver": {
+    "github": "835519608/symm",
+    "regex": "v([\\w.-]+)$",
+    "pre_release": true
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/835519608/symm/releases/download/v$version/symm-portable-windows-x64.zip",
+        "hash": {
+          "url": "https://github.com/835519608/symm/releases/download/v$version/SHA256SUMS",
+          "find": "symm-portable-windows-x64.zip"
+        }
+      }
+    }
+  }
 }
