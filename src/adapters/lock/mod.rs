@@ -68,17 +68,12 @@ where
         match privileged::list_locking_processes(path) {
             Ok(procs) => Ok(procs),
             Err(err) if uac_cancelled_by_user(&err) => Err(err),
-            Err(elevated_err) => platform()
-                .list_locking_processes_with_progress(path, &mut progress)
-                .map_err(|_| elevated_err),
+            Err(elevated_err) => Err(elevated_err),
         }
     }
 
     #[cfg(unix)]
     {
-        if let Ok(procs) = platform().list_locking_processes_with_progress(path, &mut progress) {
-            return Ok(procs);
-        }
         progress(LockProbeProgress::Querying {
             batch: 1,
             total_batches: 1,
