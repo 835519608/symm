@@ -19,9 +19,19 @@ fn run() -> Result<(), symm::domain::error::SymmError> {
         })?;
 
     match command {
-        Commands::ElevatedListLocks { out, path } => {
-            symm::adapters::lock::elevated_list_locks_entry(&path, &out)
-        }
+        Commands::ElevatedListLocks {
+            out,
+            path,
+            elevated_log,
+        } => match symm::adapters::lock::elevated_list_locks_entry(&path, &out) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if let Some(log) = elevated_log {
+                    let _ = std::fs::write(&log, err.to_string());
+                }
+                Err(err)
+            }
+        },
         Commands::ElevatedKill { pids } => symm::adapters::lock::elevated_kill_entry(&pids),
         #[cfg(windows)]
         Commands::ElevatedCreateLink { target, link } => {

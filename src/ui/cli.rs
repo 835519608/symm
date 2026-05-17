@@ -39,6 +39,9 @@ pub enum Commands {
         #[arg(long)]
         out: PathBuf,
         path: PathBuf,
+        /// 内部：提权子进程错误日志路径
+        #[arg(long = "elevated-log", hide = true)]
+        elevated_log: Option<PathBuf>,
     },
     /// 内部：提权子进程结束占用（用户勿直接调用）
     #[command(hide = true, name = "__elevated-kill")]

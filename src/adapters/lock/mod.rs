@@ -20,6 +20,15 @@ fn use_direct_platform_ops() -> bool {
     privilege::is_privileged() || test_hooks::skip_privileged_lock_probe()
 }
 
+#[cfg(windows)]
+fn uac_cancelled_by_user(err: &SymmError) -> bool {
+    matches!(
+        err,
+        SymmError::PermissionDenied { message }
+            if message.contains("取消 UAC")
+    )
+}
+
 /// Windows：当前进程非管理员时，占用检测会弹出 UAC 提权子进程（仅扫描/结束占用，不提升主进程）。
 #[cfg(windows)]
 pub fn lock_probe_requests_uac() -> bool {
@@ -57,7 +66,20 @@ where
             batch: 1,
             total_batches: 1,
         });
-        privileged::list_locking_processes(path)
+        match privileged::list_locking_processes(path) {
+            Ok(procs) => Ok(procs),
+            Err(err) if uac_cancelled_by_user(&err) => Err(err),
+            Err(elevated_err) => {
+                if let Ok(procs) =
+                    platform().list_locking_processes_with_progress(path, &mut progress)
+                {
+                    if !procs.is_empty() {
+                        return Ok(procs);
+                    }
+                }
+                Err(elevated_err)
+            }
+        }
     }
 
     #[cfg(unix)]
