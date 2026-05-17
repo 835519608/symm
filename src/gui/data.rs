@@ -1,9 +1,13 @@
 use crate::adapters::db::repository;
 use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
-use crate::gui::state::LinkSnapshot;
+use crate::gui::env::{with_add_policies, with_env_vars};
+use crate::gui::state::{AddConflictPolicy, AddLockPolicy, LinkSnapshot};
+use crate::gui::util::VecWriter;
 use crate::workflows::list_views;
+use crate::workflows::rm::workflow::{self, RemoveMode};
 use rusqlite::Connection;
+use std::path::Path;
 
 pub struct DataStore {
     conn: Option<Connection>,
@@ -15,24 +19,49 @@ impl DataStore {
     }
 
     pub fn reload(&mut self) -> Result<LinkSnapshot, SymmError> {
-        try_reload(&mut self.conn)
+        let conn = self.connection_mut()?;
+        let collected = list_views::collect_all(conn, None, None, 0)?;
+        Ok(LinkSnapshot {
+            views: collected.items,
+            scanned: collected.scanned,
+        })
     }
-}
 
-fn try_reload(conn_slot: &mut Option<Connection>) -> Result<LinkSnapshot, SymmError> {
-    let conn = match conn_slot {
-        Some(c) => c,
-        None => {
-            let c = repository::open_db()?;
-            *conn_slot = Some(c);
-            conn_slot.as_mut().expect("just inserted")
+    pub fn add_link(
+        &mut self,
+        link: &Path,
+        target: &Path,
+        name: &str,
+        lock: AddLockPolicy,
+        conflict: AddConflictPolicy,
+    ) -> Result<String, SymmError> {
+        let conn = self.connection_mut()?;
+        let mut writer = VecWriter(Vec::new());
+        with_add_policies(name, lock, conflict, || {
+            crate::workflows::add::workflow::run_named(conn, link, target, Some(name), &mut writer)
+        })?;
+        Ok(writer.into_log())
+    }
+
+    pub fn remove_link(&mut self, selector: &str, mode: RemoveMode) -> Result<String, SymmError> {
+        let conn = self.connection_mut()?;
+        let mut writer = VecWriter(Vec::new());
+        let action = match mode {
+            RemoveMode::DeleteLinkOnly => "delete",
+            RemoveMode::RestoreTargetToLink => "restore",
+        };
+        with_env_vars(&[("SYMM_RM_ACTION", action)], || {
+            workflow::run_with_mode(conn, &[selector.to_string()], mode, &mut writer)
+        })?;
+        Ok(writer.into_log())
+    }
+
+    fn connection_mut(&mut self) -> Result<&mut Connection, SymmError> {
+        if self.conn.is_none() {
+            self.conn = Some(repository::open_db()?);
         }
-    };
-    let collected = list_views::collect_all(conn, None, None, 0)?;
-    Ok(LinkSnapshot {
-        views: collected.items,
-        scanned: collected.scanned,
-    })
+        Ok(self.conn.as_mut().expect("connection"))
+    }
 }
 
 pub fn data_home_display() -> Result<String, SymmError> {

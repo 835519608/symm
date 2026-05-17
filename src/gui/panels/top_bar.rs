@@ -4,49 +4,60 @@ use egui::{RichText, Ui};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TopBarAction {
-    Refresh,
     AddLink,
     ListAll,
     ShowDetail,
     Remove,
-    OpenDataDir,
+    ToggleSettings,
     None,
 }
 
-pub fn show_top_bar(ui: &mut Ui, _state: &AppState) -> TopBarAction {
+pub fn show_top_bar(ui: &mut Ui, state: &AppState) -> TopBarAction {
     let mut action = TopBarAction::None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         action = action.or(tool_btn(
             ui,
             "➕ 添加链接",
-            "symm add",
+            "创建新软链",
             TopBarAction::AddLink,
         ));
         action = action.or(tool_btn(
             ui,
             "📋 列表",
-            "刷新链接列表",
+            "查看全部链接表格",
             TopBarAction::ListAll,
         ));
+        let detail_tip = if state.selected_id.is_some() {
+            "查看当前选中链接详情"
+        } else {
+            "请先在左侧选择链接"
+        };
         action = action.or(tool_btn(
             ui,
             "🔍 详情",
-            "查看选中链接",
+            detail_tip,
             TopBarAction::ShowDetail,
         ));
-        action = action.or(tool_btn(ui, "🗑 删除", "删除选中链接", TopBarAction::Remove));
-        ui.separator();
         action = action.or(tool_btn(
             ui,
-            "↻ 刷新",
-            "重新加载数据库",
-            TopBarAction::Refresh,
+            "🗑 删除",
+            "删除选中的链接",
+            TopBarAction::Remove,
         ));
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("⚙").on_hover_text("数据目录").clicked() {
-                action = TopBarAction::OpenDataDir;
+            let settings_label = if state.settings_open {
+                "⚙ 设置 ▾"
+            } else {
+                "⚙ 设置"
+            };
+            if ui
+                .small_button(settings_label)
+                .on_hover_text("外观：浅色 / 深色 / 跟随系统")
+                .clicked()
+            {
+                action = TopBarAction::ToggleSettings;
             }
             ui.label(
                 RichText::new("symm")

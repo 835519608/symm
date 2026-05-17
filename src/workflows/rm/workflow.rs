@@ -15,14 +15,40 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoveMode {
+    DeleteLinkOnly,
+    RestoreTargetToLink,
+}
+
+impl RemoveMode {
+    fn to_action(self) -> RmAction {
+        match self {
+            RemoveMode::DeleteLinkOnly => RmAction::DeleteLinkOnly,
+            RemoveMode::RestoreTargetToLink => RmAction::RestoreTargetToLink,
+        }
+    }
+}
+
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
     selectors: &[String],
     writer: &mut W,
 ) -> Result<(), SymmError> {
+    let action = select_rm_action()?;
+    run_with_mode(conn, selectors, action.to_remove_mode(), writer)
+}
+
+/// GUI / 脚本：指定删除方式，不走交互选择。
+pub fn run_with_mode<W: Write>(
+    conn: &rusqlite::Connection,
+    selectors: &[String],
+    mode: RemoveMode,
+    writer: &mut W,
+) -> Result<(), SymmError> {
     let started = Instant::now();
     let records = resolve_records(conn, selectors)?;
-    let action = select_rm_action()?;
+    let action = mode.to_action();
     let mut labels = Vec::with_capacity(records.len());
     let mut failures = Vec::new();
     for record in records {
@@ -166,6 +192,15 @@ fn record_label(record: &LinkRecord) -> String {
 enum RmAction {
     DeleteLinkOnly,
     RestoreTargetToLink,
+}
+
+impl RmAction {
+    fn to_remove_mode(self) -> RemoveMode {
+        match self {
+            RmAction::DeleteLinkOnly => RemoveMode::DeleteLinkOnly,
+            RmAction::RestoreTargetToLink => RemoveMode::RestoreTargetToLink,
+        }
+    }
 }
 
 fn select_rm_action() -> Result<RmAction, SymmError> {

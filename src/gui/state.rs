@@ -1,23 +1,66 @@
 use crate::domain::model::{LinkKind, LinkStatus, LinkView};
+use crate::workflows::rm::workflow::RemoveMode;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MainView {
-    Dashboard,
+    #[default]
     Detail,
+    List,
+    Add,
+}
+
+pub use crate::gui::theme::ThemePreference;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AddConflictPolicy {
+    #[default]
+    KeepLink,
+    KeepTarget,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AddLockPolicy {
+    #[default]
+    Unlock,
+    Cancel,
+}
+
+#[derive(Debug, Default)]
+pub struct AddForm {
+    pub link_path: String,
+    pub target_path: String,
+    pub name: String,
+    pub conflict_policy: AddConflictPolicy,
+    pub lock_policy: AddLockPolicy,
+    pub status_message: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RmDialog {
+    pub selector: String,
+    pub display_name: String,
+    pub mode: RemoveMode,
 }
 
 #[derive(Debug)]
 pub struct AppState {
     pub search: String,
     pub selected_id: Option<i64>,
-    pub expanded_groups: HashSet<String>,
+    pub expanded_ids: HashSet<i64>,
     pub main_view: MainView,
     pub sidebar_width: f32,
     pub toast: Option<String>,
     pub data_home: Option<PathBuf>,
     pub db_error: Option<String>,
+    pub theme: ThemePreference,
+    pub locale: String,
+    pub settings_open: bool,
+    pub add_form: AddForm,
+    pub rm_dialog: Option<RmDialog>,
+    pub busy: bool,
 }
 
 #[derive(Debug, Default)]
@@ -52,7 +95,8 @@ impl LinkSnapshot {
 
     pub fn filtered<'a>(&'a self, search: &str) -> Vec<&'a LinkView> {
         let q = search.trim().to_lowercase();
-        self.views
+        let mut out: Vec<&LinkView> = self
+            .views
             .iter()
             .filter(|v| {
                 if q.is_empty() {
@@ -62,26 +106,14 @@ impl LinkSnapshot {
                     || v.link_path.to_lowercase().contains(&q)
                     || v.target_path.to_lowercase().contains(&q)
             })
-            .collect()
+            .collect();
+        out.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+        out
     }
 
     pub fn selected_view(&self, id: Option<i64>) -> Option<&LinkView> {
         let id = id?;
         self.views.iter().find(|v| v.id == id)
-    }
-
-    pub fn groups(&self, search: &str) -> Vec<(String, Vec<&LinkView>)> {
-        use std::collections::BTreeMap;
-        let mut map: BTreeMap<String, Vec<&LinkView>> = BTreeMap::new();
-        for view in self.filtered(search) {
-            let group = PathBuf::from(&view.link_path)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "（根目录）".to_string());
-            map.entry(group).or_default().push(view);
-        }
-        map.into_iter().collect()
     }
 }
 
@@ -90,12 +122,18 @@ impl Default for AppState {
         Self {
             search: String::new(),
             selected_id: None,
-            expanded_groups: HashSet::new(),
-            main_view: MainView::Dashboard,
-            sidebar_width: 260.0,
+            expanded_ids: HashSet::new(),
+            main_view: MainView::Detail,
+            sidebar_width: 280.0,
             toast: None,
             data_home: None,
             db_error: None,
+            theme: ThemePreference::System,
+            locale: crate::domain::gui_settings::GuiSettings::default().locale,
+            settings_open: false,
+            add_form: AddForm::default(),
+            rm_dialog: None,
+            busy: false,
         }
     }
 }

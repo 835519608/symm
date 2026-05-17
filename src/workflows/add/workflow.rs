@@ -20,7 +20,46 @@ pub fn run<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let (link, target) = paths::resolve_add_paths(conn, link, target)?;
-    let link_norm = runtime_paths::normalize_link(&link);
+    execute_add(conn, &link, &target, None, writer)?;
+    perf::log_perf(
+        "add",
+        started.elapsed(),
+        &[
+            ("link_path", link.display().to_string()),
+            ("target_path", target.display().to_string()),
+        ],
+    );
+    Ok(())
+}
+
+/// GUI / 脚本：已给定 link、target，可选名称，不走交互式路径与名称提示。
+pub fn run_named<W: Write>(
+    conn: &rusqlite::Connection,
+    link: &Path,
+    target: &Path,
+    name: Option<&str>,
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    let started = Instant::now();
+    execute_add(conn, link, target, name, writer)?;
+    let link_norm = runtime_paths::normalize_link(link);
+    let target_norm = runtime_paths::normalize_target(target)?;
+    perf::log_perf(
+        "add",
+        started.elapsed(),
+        &[("link_path", link_norm), ("target_path", target_norm)],
+    );
+    Ok(())
+}
+
+fn execute_add<W: Write>(
+    conn: &rusqlite::Connection,
+    link: &Path,
+    target: &Path,
+    name: Option<&str>,
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    let link_norm = runtime_paths::normalize_link(link);
     let existing = repository::find_optional(conn, &LinkQuery::link_path_exact(&link_norm))?;
     let mut reporter = MigrationProgressReporter::new(writer);
     lock_gate::ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
@@ -47,7 +86,7 @@ pub fn run<W: Write>(
     };
 
     let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-    let name_input = resolve_add_name(default_name)?;
+    let name_input = resolve_add_name(default_name, name)?;
     reporter.handle_migration_event(MigrationEvent::PersistingDb {
         link: link_norm.clone(),
     })?;
@@ -66,19 +105,13 @@ pub fn run<W: Write>(
         name.as_str()
     };
     reporter.write_line(&format!("已添加：{link_norm}（名称：{display_name}）"))?;
-    perf::log_perf(
-        "add",
-        started.elapsed(),
-        &[
-            ("link_path", link_norm),
-            ("target_path", target_norm),
-            ("name", name),
-        ],
-    );
     Ok(())
 }
 
-fn resolve_add_name(default_name: &str) -> Result<String, SymmError> {
+fn resolve_add_name(default_name: &str, explicit: Option<&str>) -> Result<String, SymmError> {
+    if let Some(name) = explicit {
+        return Ok(name.trim().to_string());
+    }
     if let Ok(v) = std::env::var("SYMM_ADD_NAME") {
         return Ok(v.trim().to_string());
     }
