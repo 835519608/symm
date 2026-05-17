@@ -32,11 +32,8 @@ where
 
     // Windows：同用户占用进程通常无需 UAC；仅失败时再走提权子进程 + 快照文件。
     #[cfg(windows)]
-    {
-        match platform().list_locking_processes_with_progress(path, &mut progress) {
-            Ok(procs) => return Ok(procs),
-            Err(_) => {}
-        }
+    if let Ok(procs) = platform().list_locking_processes_with_progress(path, &mut progress) {
+        return Ok(procs);
     }
 
     progress(LockProbeProgress::Querying {
