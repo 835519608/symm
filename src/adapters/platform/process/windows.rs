@@ -1,8 +1,11 @@
 use super::{LockProbeProgress, PlatformProcess, ProcInfo};
 use crate::domain::error::SymmError;
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct Platform;
 
@@ -59,9 +62,6 @@ where
 
 pub(crate) fn kill_processes_direct(pids: &[u32]) -> Result<(), SymmError> {
     use filelocksmith::{quit_processes, set_debug_privilege};
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     if pids.is_empty() {
         return Ok(());

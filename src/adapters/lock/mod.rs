@@ -33,9 +33,9 @@ where
         return platform().list_locking_processes_with_progress(path, &mut progress);
     }
 
-    // Windows 非管理员：filelocksmith 需 SeDebug 才能枚举部分句柄；与结束占用一致走 UAC 提权子进程。
     #[cfg(windows)]
     {
+        // 非管理员：filelocksmith 需 SeDebug 才能枚举部分句柄；与结束占用一致走 UAC 提权子进程。
         progress(LockProbeProgress::Querying {
             batch: 1,
             total_batches: 1,
@@ -44,15 +44,16 @@ where
     }
 
     #[cfg(unix)]
-    if let Ok(procs) = platform().list_locking_processes_with_progress(path, &mut progress) {
-        return Ok(procs);
+    {
+        if let Ok(procs) = platform().list_locking_processes_with_progress(path, &mut progress) {
+            return Ok(procs);
+        }
+        progress(LockProbeProgress::Querying {
+            batch: 1,
+            total_batches: 1,
+        });
+        privileged::list_locking_processes(path)
     }
-
-    progress(LockProbeProgress::Querying {
-        batch: 1,
-        total_batches: 1,
-    });
-    privileged::list_locking_processes(path)
 }
 
 pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
