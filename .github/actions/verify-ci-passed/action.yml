@@ -17,6 +17,7 @@ runs:
     - name: 校验 CI 已通过
       shell: bash
       env:
+        GH_TOKEN: ${{ github.token }}
         WORKFLOW_FILE: ${{ inputs.workflow_file }}
         INPUT_SHA: ${{ inputs.sha }}
       run: |
