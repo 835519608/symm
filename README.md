@@ -11,6 +11,24 @@
 
 失败不自动回滚；任一步出错即停止，中间态由人工处理后重试。
 
+### 终端中文与 JSON 英文
+
+- **表格 / `show` / 菜单 / 进度**：使用简体中文（如状态「正常」「目标没了」）。
+- **`--json` 与 `--status`**：字段值仍为英文枚举（`ok`、`broken`、`symlink` 等），便于脚本过滤。
+
+| 状态（JSON / `--status`） | 终端显示 | 含义 |
+|---------------------------|----------|------|
+| `ok` | 正常 | 软链在，目标在，指向与库一致 |
+| `broken` | 目标没了 | 软链在，目标路径不存在 |
+| `missing` | 链接没了 | 链接路径本身不存在 |
+| `stale` | 不是软链 | 路径还在，但已不是软链 |
+| `drift` | 指向不对 | 仍是软链，指向与库中目标不一致 |
+
+| 类型（JSON） | 终端显示 |
+|--------------|----------|
+| `symlink` | 软链接 |
+| `junction` | 目录联接 |
+
 ## 快速开始
 
 ### 依赖
@@ -68,7 +86,7 @@ SYMM_HOME=/var/lib/symm symm ls
 
 ### `SYMM_ADD_NAME`
 
-在 `symm add` 成功建链/纳管之后、写入数据库之前，跳过「可选填写 name」的输入框。
+在 `symm add` 成功建链/纳管之后、写入数据库之前，跳过「名称（可选）」输入框。
 
 - `name` 是给人看的别名（如 `symm show demo`、`symm rm demo`），可留空；**非空** `name` 在库内必须唯一
 - 更新已有 `link` 时若不设置此变量，提示框会默认带上原来的 `name`，回车即可保持不变
@@ -81,7 +99,7 @@ SYMM_ADD_NAME=my-project symm add ./link ./target
 
 ### `SYMM_ADD_LOCK_CHOICE`
 
-在 `add` 时发现 **link 路径**被其它进程占用时，代替「是否结束占用并继续」的菜单。
+在 `add` 时发现**链接位置**被其它进程占用时，代替「是否结束占用并继续」的菜单。
 
 | 取值 | 效果 |
 | :--- | :--- |
@@ -121,7 +139,7 @@ SYMM_ADD_LOCK_CHOICE=unlock symm add ./busy-link ./target
 
 ### `SYMM_RM_ACTION`
 
-在 `symm rm` 查到记录之后，代替「是否将 target 恢复到 link 位置」的菜单。
+在 `symm rm` 查到记录之后，代替「是否把目标移回链接位置」的菜单。
 
 | 取值 | 效果 |
 | :--- | :--- |
@@ -247,16 +265,22 @@ src/
   workflows/                     # 业务流程（无平台 cfg，不 use platform）
     add/
       workflow.rs                # add 主流程（占用 → adopt → 建链 → 写库）
+      paths.rs                   # 无参时解析 link/target（含库内模板）
+      lock_gate.rs               # link 占用检测与解除
       adopt.rs                   # 冲突/接管（实体 vs 软链、保留哪边）
+    select.rs                    # 无 selector 时交互选记录（show/rm）
     rm/workflow.rs
+    list_views.rs              # ls / show 共用 LinkView 构建与筛选
     ls/workflow.rs
     show/workflow.rs
     perf.rs                      # SYMM_PERF_LOG 耗时（各 workflow 共用）
   adapters/
     db/
+      schema.rs                  # 建表、索引、legacy 迁移
       repository.rs              # SQLite 打开、CRUD、list
       query.rs                   # 查询条件 DSL（供 repository / 未来 API）
       resolve.rs                 # name / ls 序号 → LinkRecord
+      pick_list.rs               # ls 序号列表 + 状态标签（供交互选择）
     symlink/                     # 建链/写链/删链（唯一入口；Windows UAC 在 windows 子模块）
       link.rs / unlink.rs
       windows.rs                 # 仅 Windows cfg
@@ -284,8 +308,8 @@ src/
   ui/
     cli.rs                       # clap 定义（含隐藏 __elevated-*）
     output.rs                    # 表格 / JSON / 错误 JSON
-    interaction/                 # inquire 菜单、记录选择器
-      pick_record.rs
+    interaction/                 # inquire 菜单（无 DB/status 依赖）
+      choice.rs / pick_record.rs
     progress/migration_reporter.rs
 ```
 
@@ -296,7 +320,7 @@ bin / app  →  workflows  →  adapters（db / symlink / migrate / lock / paths
                               ↘ platform → domain
 migrate / symlink  →  paths / platform（禁止 platform → migrate/symlink/status）
 paths  →  domain / errors
-ui  →  domain / adapters（仅展示与交互，不含业务 cfg）
+ui  →  domain（及 migrate 进度事件类型）；交互选记录由 workflows/select + adapters/db/pick_list 准备选项
 ```
 
 约定（**修改代码必须遵守**；Agent 见 `.cursor/rules/architecture-layers.mdc`）：
@@ -322,8 +346,8 @@ ui  →  domain / adapters（仅展示与交互，不含业务 cfg）
 
 ## 实现要点
 
-- `ls` / `show`：只查 SQLite，不扫盘；`ls` 支持流式输出与 `--limit` / `--offset`
-- 链状态（`status::probe`，仅读盘、不扫全库）：`missing`（link 不存在）→ `stale`（存在但非软链）→ `broken`（target 不存在）→ `drift`（软链指向与库中 target 不一致）→ `ok`
+- `ls` / `show`：列表从 SQLite 读取，展示前对每条记录 `status::probe` 读盘；`ls` 支持流式输出与 `--limit` / `--offset`
+- 链状态判定顺序：`missing` → `stale` → `broken` → `drift` → `ok`（见上文「终端中文与 JSON 英文」对照表）
 - SQLite：`busy_timeout=5000`、`WAL`、`synchronous=NORMAL`、`temp_store=MEMORY`
 - 非空 `name` 在库内唯一（空 name 允许多条）
 - Windows 依赖：`windows`（Restart Manager）、`runas`（UAC 子进程）；已移除 `filelocksmith`

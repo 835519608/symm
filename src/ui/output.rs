@@ -11,22 +11,21 @@ struct ErrorPayload<'a> {
 }
 
 pub fn write_list_table<W: Write>(writer: &mut W, items: &[LinkView]) -> Result<(), SymmError> {
-    let headers = ["序号", "名称", "状态", "类型", "链接路径", "目标路径"];
-    let rows: Vec<Vec<String>> = items
-        .iter()
-        .map(|item| {
-            vec![
-                item.index.to_string(),
-                item.display_name(),
-                item.status.to_string(),
-                item.link_kind.to_string(),
-                item.link_path.clone(),
-                item.target_path.clone(),
-            ]
-        })
-        .collect();
+    let headers = ["序号", "名称", "类型", "链接路径", "目标路径", "状态"];
+    let rows: Vec<Vec<String>> = items.iter().map(view_table_row).collect();
     let table = format_table(&headers, &rows);
     writer.write_all(table.as_bytes()).map_err(io_err)
+}
+
+fn view_table_row(item: &LinkView) -> Vec<String> {
+    vec![
+        item.index.to_string(),
+        item.display_name(),
+        item.link_kind.label_zh().to_string(),
+        item.link_path.clone(),
+        item.target_path.clone(),
+        item.status.label_zh().to_string(),
+    ]
 }
 
 pub fn write_json_array_start<W: Write>(writer: &mut W) -> Result<(), SymmError> {
@@ -50,15 +49,15 @@ pub fn write_json_item<W: Write>(
     })
 }
 
-pub fn render_show_table(item: &LinkView) -> String {
+pub fn render_show_detail(item: &LinkView) -> String {
     format!(
-        "序号: {}\n名称: {}\n状态: {}\n类型: {}\n链接路径: {}\n目标路径: {}\n",
+        "序号: {}\n名称: {}\n类型: {}\n链接路径: {}\n目标路径: {}\n状态: {}\n",
         item.index,
         item.display_name(),
-        item.status,
-        item.link_kind,
+        item.link_kind.label_zh(),
         item.link_path,
-        item.target_path
+        item.target_path,
+        item.status.label_zh(),
     )
 }
 

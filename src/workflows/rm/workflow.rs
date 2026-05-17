@@ -1,14 +1,15 @@
 //! `rm`：删库后删除 link，或将 target 迁回 link 路径。支持多个 selector；省略参数时交互多选。
 use crate::adapters::db::resolve;
 use crate::adapters::db::{LinkQuery, repository};
-use crate::adapters::migrate as migration;
+use crate::adapters::migrate;
 use crate::adapters::status;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkRecord, LinkStatus};
-use crate::ui::interaction::{choice, pick_record};
+use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::perf;
+use crate::workflows::select;
 use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
@@ -38,9 +39,9 @@ pub fn run<W: Write>(
     }
 
     let action_hint = match action {
-        RmAction::DeleteLinkOnly => "删除成功",
-        RmAction::RestoreTargetToLink if failures.is_empty() => "删除成功并已恢复 target 到 link",
-        RmAction::RestoreTargetToLink => "删除成功（部分条目无法恢复，已改为仅删库）",
+        RmAction::DeleteLinkOnly => "已删除",
+        RmAction::RestoreTargetToLink if failures.is_empty() => "已删除，目标已移回链接位置",
+        RmAction::RestoreTargetToLink => "已删除（部分无法移回目标，仅删了记录）",
     };
     let summary = if labels.len() == 1 {
         labels[0].clone()
@@ -72,7 +73,7 @@ fn resolve_records(
     selectors: &[String],
 ) -> Result<Vec<LinkRecord>, SymmError> {
     if selectors.is_empty() {
-        return pick_record::pick_many(conn);
+        return select::pick_many_records(conn);
     }
 
     let mut records = Vec::with_capacity(selectors.len());
@@ -107,8 +108,9 @@ fn remove_one<W: Write>(
     {
         writeln!(
             writer,
-            "提示：{} 状态为 {link_status}，无法恢复 target，本条改为仅删库",
-            record.link_path
+            "提示：{} 状态为 {}，无法移回目标，本条只删记录",
+            record.link_path,
+            link_status.label_zh()
         )
         .map_err(|e| SymmError::IoError {
             message: e.to_string(),
@@ -143,7 +145,7 @@ fn apply_delete_link_only<W: Write>(
     } else if link_status == LinkStatus::Stale {
         writeln!(
             writer,
-            "提示：{} 已不是软链接，将仅删除库记录（路径仍保留）",
+            "提示：{} 已不是软链，只删记录（路径文件仍保留）",
             record.link_path
         )
         .map_err(|e| SymmError::IoError {
@@ -170,15 +172,12 @@ fn select_rm_action() -> Result<RmAction, SymmError> {
     choice::choose_with_env(
         "SYMM_RM_ACTION",
         parse_rm_action,
-        "是否将 target 恢复到原 link 位置？",
+        "是否把目标移回链接位置？",
         "↑↓ 移动  Enter 确认  Esc 取消",
         vec![
+            ("只删软链和记录".to_string(), RmAction::DeleteLinkOnly),
             (
-                "否：仅删除软链接并删除数据库记录".to_string(),
-                RmAction::DeleteLinkOnly,
-            ),
-            (
-                "是：删除软链接并将 target 恢复到 link 位置".to_string(),
+                "删软链，并把目标移回链接位置".to_string(),
                 RmAction::RestoreTargetToLink,
             ),
         ],
@@ -191,7 +190,7 @@ fn parse_rm_action(raw: &str) -> Result<RmAction, SymmError> {
         "yes" | "y" | "restore" | "restore_target" => Ok(RmAction::RestoreTargetToLink),
         _ => Err(SymmError::InvalidArgument {
             message: format!(
-                "环境变量 SYMM_RM_ACTION 值无效：{raw}（可选：no/yes 或 delete/restore）"
+                "环境变量 SYMM_RM_ACTION 无效：{raw}（可选：delete / restore 或 no / yes）"
             ),
         }),
     }
@@ -204,10 +203,10 @@ fn restore_target_to_link<W: Write>(
 ) -> Result<(), SymmError> {
     symlink::unlink(link)?;
     let mut reporter = MigrationProgressReporter::new(writer);
-    migration::migrate_path(target, link, &mut |event| {
+    migrate::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)
     })
     .map_err(|e| SymmError::IoError {
-        message: format!("恢复 target 到 link 失败：{e}"),
+        message: format!("移回目标到链接位置失败：{e}"),
     })
 }

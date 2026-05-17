@@ -23,23 +23,20 @@ pub fn wait_after_kill(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
 
 pub fn format_still_locked_message(link: &Path, remaining: &[ProcInfo]) -> String {
     let base = format!(
-        "link 路径仍被占用，未执行 add：{}（剩余 {} 个进程，示例：{}）",
+        "链接位置仍被占用：{}（还剩 {} 个进程，例如 {}）",
         link.display(),
         remaining.len(),
         remaining[0]
     );
     if remaining.iter().all(is_explorer_process) {
         format!(
-            "{base}。资源管理器（explorer.exe）结束后会自动重启并可能再次占用该路径；请先关闭正在浏览该路径或其父目录的文件夹窗口，并关闭其它可能占用该路径的程序后重试"
+            "{base}。请关闭正在浏览该文件夹的资源管理器窗口，并退出其它可能占用该路径的程序后重试"
         )
     } else if remaining.iter().any(is_explorer_process) {
-        format!("{base}。其中包含资源管理器（explorer.exe），请关闭相关文件夹窗口后重试")
+        format!("{base}。请关闭相关文件夹窗口后重试")
     } else if remaining.len() == 1 {
-        format!(
-            "{base}。请结束或完全退出占用进程（{}，含托盘/后台实例）后重试",
-            remaining[0]
-        )
+        format!("{base}。请完全退出占用程序（含托盘/后台）后重试")
     } else {
-        format!("{base}。请结束或完全退出上述占用进程（含托盘/后台实例）后重试")
+        format!("{base}。请完全退出上述占用程序（含托盘/后台）后重试")
     }
 }

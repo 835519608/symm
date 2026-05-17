@@ -72,7 +72,7 @@ pub fn list_locking_processes(
     }
 
     let run_result = child.join().map_err(|_| SymmError::IoError {
-        message: "提权扫锁子进程异常退出".to_string(),
+        message: "占用扫描子进程异常退出".to_string(),
     })?;
 
     if let Err(err) = run_result {
@@ -81,7 +81,9 @@ pub fn list_locking_processes(
     if !snapshot.is_file() {
         return Err(enrich_elevated_error(
             SymmError::PermissionDenied {
-                message: "提权扫锁未生成结果：可能未弹出或未在 UAC 对话框中点击「是」。请检查系统 UAC 是否开启后重试".to_string(),
+                message:
+                    "占用扫描无结果：可能未弹出 UAC，或未点「是」。请确认系统 UAC 已开启后重试"
+                        .to_string(),
             },
             &log,
         ));
@@ -90,7 +92,7 @@ pub fn list_locking_processes(
         enrich_elevated_error(
             SymmError::PermissionDenied {
                 message: format!(
-                    "提权扫锁结果无效（{}）。若未看到 UAC 对话框，请检查 UAC 设置；若已取消授权请重试",
+                    "占用扫描结果无效（{}）。未看到 UAC 请检查设置；若已取消授权请重试",
                     e
                 ),
             },
@@ -134,7 +136,7 @@ fn enrich_elevated_error(err: SymmError, log: &Path) -> SymmError {
     }
     match err {
         SymmError::PermissionDenied { message } => SymmError::PermissionDenied {
-            message: format!("{message}（提权子进程：{detail}）"),
+            message: format!("{message}（子进程日志：{detail}）"),
         },
         other => other,
     }

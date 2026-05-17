@@ -14,9 +14,16 @@ pub enum LinkKind {
 
 impl Display for LinkKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label_zh())
+    }
+}
+
+impl LinkKind {
+    /// 终端表格/详情用；JSON 仍为 `symlink` / `junction`。
+    pub fn label_zh(self) -> &'static str {
         match self {
-            LinkKind::Symlink => write!(f, "symlink"),
-            LinkKind::Junction => write!(f, "junction"),
+            LinkKind::Symlink => "软链接",
+            LinkKind::Junction => "目录联接",
         }
     }
 }
@@ -51,12 +58,19 @@ pub enum LinkStatus {
 
 impl Display for LinkStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label_zh())
+    }
+}
+
+impl LinkStatus {
+    /// 终端表格/详情用；JSON / `--status` 仍为英文枚举。
+    pub fn label_zh(self) -> &'static str {
         match self {
-            LinkStatus::Ok => write!(f, "ok"),
-            LinkStatus::Broken => write!(f, "broken"),
-            LinkStatus::Missing => write!(f, "missing"),
-            LinkStatus::Stale => write!(f, "stale"),
-            LinkStatus::Drift => write!(f, "drift"),
+            LinkStatus::Ok => "正常",
+            LinkStatus::Broken => "目标没了",
+            LinkStatus::Missing => "链接没了",
+            LinkStatus::Stale => "不是软链",
+            LinkStatus::Drift => "指向不对",
         }
     }
 }

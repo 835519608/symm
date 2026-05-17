@@ -1,5 +1,5 @@
 //! `add` 冲突与接管：直接腾路径并 `migrate_path`，无 staging 旁路文件。
-use crate::adapters::migrate::{self as migration, MigrationEvent};
+use crate::adapters::migrate::{self, MigrationEvent};
 use crate::adapters::paths::remove;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
@@ -93,7 +93,7 @@ fn prepare_symlink_exist(
             Ok(finish_outcome(false, target_existed_at_start, false, false))
         }
         SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {
-            message: "用户取消：未执行 add".to_string(),
+            message: "已取消".to_string(),
         }),
     }
 }
@@ -118,7 +118,7 @@ where
             Ok(finish_outcome(false, target_existed_at_start, false, false))
         }
         ConflictChoice::Cancel => Err(SymmError::InvalidArgument {
-            message: "用户取消：未执行 add".to_string(),
+            message: "已取消".to_string(),
         }),
     }
 }
@@ -135,34 +135,34 @@ where
 {
     if !target_known_absent && target.exists() {
         return Err(SymmError::InvalidArgument {
-            message: "接管失败：目标路径已存在".to_string(),
+            message: "接管失败：目标位置已有文件".to_string(),
         });
     }
     ensure_target_parent_dir(target)?;
     if !link_is_entity {
         let meta = fs::symlink_metadata(link).map_err(|e| SymmError::IoError {
-            message: format!("接管失败：无法读取 link 元数据：{e}"),
+            message: format!("接管失败：无法读取链接路径：{e}"),
         })?;
         if meta.file_type().is_symlink() {
             return Err(SymmError::InvalidArgument {
-                message: "接管失败：link 已经是软链接".to_string(),
+                message: "接管失败：该路径已是软链".to_string(),
             });
         }
     }
-    migration::migrate_path(link, target, reporter).map_err(|e| SymmError::IoError {
-        message: format!("接管失败：无法将 link 迁移到 target：{e}"),
+    migrate::migrate_path(link, target, reporter).map_err(|e| SymmError::IoError {
+        message: format!("接管失败：无法把链接内容移到目标位置：{e}"),
     })
 }
 
 fn ensure_target_parent_dir(target: &Path) -> Result<(), SymmError> {
     let parent = target.parent().ok_or_else(|| SymmError::InvalidArgument {
-        message: format!("无法解析 target 父目录：{}", target.display()),
+        message: format!("无法解析目标路径的父目录：{}", target.display()),
     })?;
     if parent.exists() {
         return Ok(());
     }
     fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
-        message: format!("接管失败：无法创建 target 父目录 {}：{e}", parent.display()),
+        message: format!("接管失败：无法创建目录 {}：{e}", parent.display()),
     })
 }
 
@@ -170,15 +170,15 @@ fn select_conflict_choice() -> Result<ConflictChoice, SymmError> {
     choice::choose_with_env(
         "SYMM_ADD_CONFLICT_CHOICE",
         parse_conflict_choice,
-        "检测到 target 与 link 都已存在，请选择处理方式：",
+        "链接位置和目标位置都已存在，请选择：",
         "↑↓ 移动  Enter 确认  Esc 取消",
         vec![
             (
-                "保留 link（放弃 target）".to_string(),
+                "留链接这边（不要目标那边）".to_string(),
                 ConflictChoice::KeepLink,
             ),
             (
-                "保留 target（放弃 link）".to_string(),
+                "留目标那边（不要链接这边）".to_string(),
                 ConflictChoice::KeepTarget,
             ),
             ("取消".to_string(), ConflictChoice::Cancel),
@@ -193,7 +193,7 @@ fn parse_conflict_choice(raw: &str) -> Result<ConflictChoice, SymmError> {
         "cancel" | "abort" => Ok(ConflictChoice::Cancel),
         _ => Err(SymmError::InvalidArgument {
             message: format!(
-                "环境变量 SYMM_ADD_CONFLICT_CHOICE 值无效：{raw}（可选：link/target/cancel）"
+                "环境变量 SYMM_ADD_CONFLICT_CHOICE 无效：{raw}（可选：link / target / cancel）"
             ),
         }),
     }
@@ -203,11 +203,11 @@ fn select_symlink_conflict_choice() -> Result<SymlinkConflictChoice, SymmError> 
     choice::choose_with_env(
         "SYMM_ADD_SYMLINK_CONFLICT_CHOICE",
         parse_symlink_conflict_choice,
-        "检测到 link 已是软链接但当前指向与 target 不一致，请选择处理方式：",
+        "该路径已是软链，但指向与目标不一致，请选择：",
         "↑↓ 移动  Enter 确认  Esc 取消",
         vec![
             (
-                "改为指向新的 target".to_string(),
+                "改成指向新目标".to_string(),
                 SymlinkConflictChoice::Retarget,
             ),
             ("取消".to_string(), SymlinkConflictChoice::Cancel),
@@ -221,7 +221,7 @@ fn parse_symlink_conflict_choice(raw: &str) -> Result<SymlinkConflictChoice, Sym
         "cancel" | "abort" => Ok(SymlinkConflictChoice::Cancel),
         _ => Err(SymmError::InvalidArgument {
             message: format!(
-                "环境变量 SYMM_ADD_SYMLINK_CONFLICT_CHOICE 值无效：{raw}（可选：retarget/cancel）"
+                "环境变量 SYMM_ADD_SYMLINK_CONFLICT_CHOICE 无效：{raw}（可选：retarget / cancel）"
             ),
         }),
     }

@@ -1,8 +1,8 @@
-use crate::adapters::db::repository;
-use crate::adapters::status;
 use crate::domain::error::SymmError;
-use crate::domain::model::{LinkStatus, LinkView};
+use crate::domain::model::LinkStatus;
+use crate::domain::model::LinkView;
 use crate::ui::output;
+use crate::workflows::list_views;
 use crate::workflows::perf;
 use std::io::Write;
 use std::time::Instant;
@@ -16,13 +16,12 @@ pub fn run<W: Write>(
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
-    let records = repository::list_links(conn)?;
-    let views = collect_views(records, wanted, limit, offset);
+    let views = list_views::collect_all(conn, wanted, limit, offset)?;
     let scanned = views.scanned;
     let emitted = views.items.len();
 
     if json {
-        stream_ls_json(&views.items, writer)?;
+        stream_json(&views.items, writer)?;
     } else {
         output::write_list_table(writer, &views.items)?;
     }
@@ -52,43 +51,7 @@ pub fn run<W: Write>(
     Ok(())
 }
 
-struct CollectedViews {
-    items: Vec<LinkView>,
-    scanned: usize,
-}
-
-fn collect_views(
-    records: Vec<crate::domain::model::LinkRecord>,
-    wanted: Option<LinkStatus>,
-    limit: Option<u32>,
-    offset: u32,
-) -> CollectedViews {
-    let scanned = records.len();
-    let filtered: Vec<LinkView> = records
-        .into_iter()
-        .enumerate()
-        .map(|(i, record)| {
-            let mut view = status::to_view(record);
-            view.index = i as u32 + 1;
-            view
-        })
-        .filter(|view| wanted.is_none_or(|status| view.status == status))
-        .collect();
-
-    let start = offset as usize;
-    let end = limit
-        .map(|lim| start.saturating_add(lim as usize))
-        .unwrap_or(filtered.len());
-    let items = filtered
-        .into_iter()
-        .skip(start)
-        .take(end.saturating_sub(start))
-        .collect();
-
-    CollectedViews { items, scanned }
-}
-
-fn stream_ls_json<W: Write>(items: &[LinkView], writer: &mut W) -> Result<(), SymmError> {
+fn stream_json<W: Write>(items: &[LinkView], writer: &mut W) -> Result<(), SymmError> {
     output::write_json_array_start(writer)?;
     let mut first = true;
     for view in items {

@@ -23,7 +23,7 @@ where
     if meta.is_dir() {
         if dst.exists() {
             return Err(SymmError::InvalidArgument {
-                message: "迁移失败：目标目录已存在".to_string(),
+                message: "迁移失败：目标目录已存在".to_string(), // keep
             });
         }
         fs::create_dir_all(dst).map_err(|e| SymmError::IoError {

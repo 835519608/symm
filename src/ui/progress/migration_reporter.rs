@@ -30,10 +30,10 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
     pub fn handle_migration_event(&mut self, event: MigrationEvent) -> Result<(), SymmError> {
         match event {
             MigrationEvent::Scanning { source, target } => {
-                self.write_line(&format!("正在扫描迁移内容：{source} -> {target}"))
+                self.write_line(&format!("正在扫描：{source} → {target}"))
             }
             MigrationEvent::FastMove { source, target } => {
-                self.write_line(&format!("正在快速移动（同盘）：{source} -> {target}"))
+                self.write_line(&format!("正在同盘移动：{source} → {target}"))
             }
             MigrationEvent::Copying {
                 copied_bytes,
@@ -41,15 +41,15 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
                 current_item,
             } => self.write_copy_progress(copied_bytes, files_copied, current_item.as_deref()),
             MigrationEvent::RemovingSource { source } => {
-                self.write_line(&format!("正在删除源路径：{source}"))
+                self.write_line(&format!("正在删除源：{source}"))
             }
             MigrationEvent::CreatingLink { link, target } => {
-                self.write_line(&format!("正在创建链接：{link} -> {target}"))
+                self.write_line(&format!("正在创建软链：{link} → {target}"))
             }
             MigrationEvent::PersistingDb { link } => {
-                self.write_line(&format!("正在写入数据库：{link}"))
+                self.write_line(&format!("正在保存记录：{link}"))
             }
-            MigrationEvent::Done { link } => self.write_line(&format!("迁移完成：{link}")),
+            MigrationEvent::Done { link } => self.write_line(&format!("完成：{link}")),
         }
     }
 
@@ -60,7 +60,7 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
                 current,
             } => {
                 let _ = self.write_line(&format!(
-                    "正在扫描占用检测文件：已扫描 {scanned_files} 个（示例：{}）",
+                    "正在扫描占用：已检查 {scanned_files} 个文件（当前 {}）",
                     current.display()
                 ));
             }
@@ -68,8 +68,7 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
                 batch,
                 total_batches,
             } => {
-                let _ =
-                    self.write_line(&format!("正在查询占用进程：第 {batch}/{total_batches} 批"));
+                let _ = self.write_line(&format!("正在查询占用进程：{batch}/{total_batches}"));
             }
         }
     }
@@ -84,12 +83,12 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
             return Ok(());
         }
         let mut message = format!(
-            "正在复制：{}，已处理 {} 个文件",
+            "正在复制 {}，已处理 {} 个文件",
             format_bytes(copied_bytes),
             files_copied
         );
         if let Some(item) = current_item.filter(|name| !name.is_empty()) {
-            message.push_str("  当前：");
+            message.push_str("，当前：");
             message.push_str(item);
         }
         self.write_line(&message)

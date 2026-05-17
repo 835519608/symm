@@ -1,9 +1,8 @@
-use crate::adapters::db::resolve;
-use crate::adapters::status;
 use crate::domain::error::SymmError;
-use crate::ui::interaction::pick_record;
 use crate::ui::output;
+use crate::workflows::list_views;
 use crate::workflows::perf;
+use crate::workflows::select;
 use std::io::Write;
 use std::time::Instant;
 
@@ -15,9 +14,7 @@ pub fn run<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let selector = resolve_selector(conn, selector)?;
-    let record = resolve::record_from_token(conn, &selector)?;
-    let mut view = status::to_view(record.clone());
-    view.index = resolve::index_in_list(conn, &record)?;
+    let view = list_views::view_from_selector(conn, &selector)?;
     if json {
         let text = output::render_json(&view)?;
         writeln!(writer, "{text}").map_err(|e| SymmError::IoError {
@@ -25,7 +22,7 @@ pub fn run<W: Write>(
         })?;
     } else {
         writer
-            .write_all(output::render_show_table(&view).as_bytes())
+            .write_all(output::render_show_detail(&view).as_bytes())
             .map_err(|e| SymmError::IoError {
                 message: e.to_string(),
             })?;
@@ -45,5 +42,5 @@ fn resolve_selector(
     if let Some(selector) = selector.filter(|s| !s.is_empty()) {
         return Ok(selector.to_string());
     }
-    pick_record::pick_one(conn)
+    select::pick_one_selector(conn)
 }

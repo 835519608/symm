@@ -75,10 +75,10 @@ fn map_runas_spawn_error(error: std::io::Error) -> SymmError {
     #[cfg(windows)]
     if error.raw_os_error() == Some(1223) {
         return SymmError::PermissionDenied {
-            message: "需要管理员权限，但用户已取消 UAC 授权".to_string(),
+            message: "需要管理员权限，但已取消 UAC".to_string(),
         };
     }
     SymmError::IoError {
-        message: format!("无法启动提权子进程：{error}"),
+        message: format!("无法启动提权进程：{error}"),
     }
 }

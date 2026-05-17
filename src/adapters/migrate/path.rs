@@ -67,7 +67,7 @@ where
     if let Err(remove_err) = remove::remove_any(src) {
         return Err(SymmError::IoError {
             message: format!(
-                "跨磁盘复制已完成但无法删除源路径：{remove_err}（目标已存在于 {}，请人工处理）",
+                "跨盘复制完成，但源路径删不掉：{remove_err}（目标已在 {}，请手动清理源）",
                 dst.display()
             ),
         });

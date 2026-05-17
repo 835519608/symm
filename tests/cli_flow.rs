@@ -27,7 +27,7 @@ fn add_then_ls_then_show_then_rm() {
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success()
-        .stdout(contains("name: demo"));
+        .stdout(contains("名称：demo"));
 
     cmd()
         .env("SYMM_HOME", &symm_home)
@@ -35,7 +35,7 @@ fn add_then_ls_then_show_then_rm() {
         .assert()
         .success()
         .stdout(contains("demo"))
-        .stdout(contains("ok"));
+        .stdout(contains("正常"));
 
     cmd()
         .env("SYMM_HOME", &symm_home)
@@ -50,7 +50,7 @@ fn add_then_ls_then_show_then_rm() {
         .args(["rm", "demo"])
         .assert()
         .success()
-        .stdout(contains("删除成功：demo"));
+        .stdout(contains("已删除：demo"));
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn rm_with_restore_moves_target_back_to_link_path() {
         .args(["rm", "restore-demo"])
         .assert()
         .success()
-        .stdout(contains("删除成功并已恢复 target 到 link：restore-demo"));
+        .stdout(contains("已删除，目标已移回链接位置：restore-demo"));
 
     assert!(
         !target.exists(),
@@ -235,10 +235,10 @@ fn add_adopts_existing_link_entity_when_target_missing() {
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success()
-        .stdout(contains("正在扫描迁移内容"))
-        .stdout(contains("正在快速移动（同盘）"))
-        .stdout(contains("正在创建链接"))
-        .stdout(contains("正在写入数据库"));
+        .stdout(contains("正在扫描："))
+        .stdout(contains("正在同盘移动："))
+        .stdout(contains("正在创建软链："))
+        .stdout(contains("正在保存记录："));
 
     // 原实体应被移动到 target
     assert_eq!(fs::read_to_string(&target).expect("read moved"), "payload");
@@ -519,7 +519,7 @@ fn add_when_link_is_locked_and_user_cancels_fails_before_mutation() {
         json["message"]
             .as_str()
             .expect("message string")
-            .contains("已取消解除占用")
+            .contains("链接位置仍被占用，已取消")
     );
     assert_eq!(fs::read_to_string(&link).expect("read link"), "payload");
     assert!(!target.exists(), "target should remain absent after cancel");
@@ -544,11 +544,11 @@ fn add_when_link_is_locked_and_unlock_succeeds_continues_normally() {
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success()
-        .stdout(contains("正在检查 link 占用"))
-        .stdout(contains("检测到占用进程"))
-        .stdout(contains("正在结束全部占用进程"))
-        .stdout(contains("正在等待占用进程释放句柄"))
-        .stdout(contains("正在扫描迁移内容"));
+        .stdout(contains("正在检查链接是否被占用"))
+        .stdout(contains("检测到占用"))
+        .stdout(contains("正在结束占用进程"))
+        .stdout(contains("等待程序释放文件"))
+        .stdout(contains("正在扫描："));
 
     assert_eq!(fs::read_to_string(&target).expect("read target"), "payload");
     assert_eq!(fs::read_to_string(&link).expect("read link"), "payload");
@@ -672,8 +672,8 @@ fn add_pure_digit_name_is_stored_with_link_prefix() {
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success()
-        .stdout(contains("name「42」已自动改为「link-42」"))
-        .stdout(contains("name: link-42"));
+        .stdout(contains("名称「42」已改为「link-42」"))
+        .stdout(contains("名称：link-42"));
 
     cmd()
         .env("SYMM_HOME", &symm_home)
@@ -852,8 +852,8 @@ fn rm_restore_on_stale_falls_back_without_blocking_batch() {
         .args(["rm", "stale-item", "ok-item"])
         .assert()
         .success()
-        .stdout(contains("删除成功"))
-        .stdout(contains("无法恢复 target"));
+        .stdout(contains("已删除"))
+        .stdout(contains("无法移回目标"));
 
     assert!(link_stale.exists());
     assert!(link_ok.exists());
@@ -899,8 +899,8 @@ fn rm_stale_entry_deletes_db_and_keeps_non_symlink_path() {
         .args(["rm", "stale-rm"])
         .assert()
         .success()
-        .stdout(contains("删除成功"))
-        .stdout(contains("将仅删除库记录"));
+        .stdout(contains("已删除"))
+        .stdout(contains("只删记录"));
 
     assert!(link.join("child.txt").exists());
 
@@ -939,8 +939,8 @@ fn ls_shows_stale_status_when_link_no_longer_symlink() {
         .assert()
         .success()
         .stdout(contains("stale-item"))
-        .stdout(contains("stale"))
-        .stdout(predicates::str::contains(" ok ").not());
+        .stdout(contains("不是软链"))
+        .stdout(predicates::str::contains("正常").not());
 }
 
 #[test]

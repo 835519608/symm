@@ -7,15 +7,13 @@ pub fn pre_scan_notices() -> Vec<&'static str> {
         let mut lines = Vec::new();
         if super::lock_probe_requests_uac() {
             lines.push(
-                "将通过 UAC 提权扫描占用（Restart Manager，按迁移目录文件清单；仅检测/结束占用进程；迁移与建链仍在当前用户下执行，请勿对整个终端「以管理员身份运行」）",
+                "将弹出 UAC 以扫描文件占用（只用于查/结束占用进程；迁移和建链仍在当前用户下执行）",
             );
-            lines.push(
-                "若未出现 UAC 对话框，请检查系统「用户账户控制」是否开启；出现后请点击「是」",
-            );
+            lines.push("若出现 UAC 对话框，请点击「是」");
         }
         if crate::adapters::platform::privilege::is_privileged() {
             lines.push(
-                "提示：当前 symm 以管理员身份运行，新建目录可能归属管理员；建议使用普通终端运行 symm，仅在 UAC 提示时授权占用扫描",
+                "提示：当前终端已是管理员；新建文件可能归管理员所有。建议用普通终端运行 symm，仅在 UAC 时授权",
             );
         }
         lines
@@ -30,7 +28,7 @@ pub fn pre_scan_notices() -> Vec<&'static str> {
 pub fn empty_lock_list_notice() -> Option<&'static str> {
     #[cfg(windows)]
     {
-        Some("未发现占用进程（已使用提权扫描）；若迁移仍报文件被锁定，请完全退出相关程序后重试")
+        Some("未发现占用进程；若仍提示文件被锁，请完全退出相关程序后重试")
     }
     #[cfg(not(windows))]
     {
