@@ -1,0 +1,25 @@
+name: Sync Scoop manifest version
+description: 根据发版 tag 更新 symm.json（Scoop manifest）的 version 并提交到默认分支
+
+inputs:
+  release_version:
+    description: 如 0.2.7-test
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 更新 manifest version
+      shell: bash
+      run: |
+        set -euo pipefail
+        tmp="$(mktemp)"
+        jq --arg v "${{ inputs.release_version }}" '.version = $v' symm.json > "${tmp}"
+        mv "${tmp}" symm.json
+        grep '"version"' symm.json
+
+    - name: 提交到默认分支
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "chore(scoop): manifest version ${{ inputs.release_version }}"
+        file_pattern: symm.json

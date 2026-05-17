@@ -1,4 +1,4 @@
-//! egui 桌面界面（`symm-gui`，feature `gui`）。
+//! egui 桌面界面（`symm` 可执行文件，feature `gui`）。
 //!
 //! 布局参考常见数据库管理工具：顶栏工具、左侧树、中央仪表盘、底栏状态。
 //! 数据经 `adapters::db` 与 `workflows::list_views` 读取，不重复业务逻辑。

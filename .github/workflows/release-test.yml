@@ -13,6 +13,7 @@
 # 版本号：小改动 Z+1（0.1.0→0.1.1）；大变动 Y+1 且 Z 归零（0.1.2→0.2.0）
 #
 # 打包前不重复跑测试：校验当前 commit 上 ci.yml 已成功（见 verify-ci-passed）。
+# Windows 附件：setup 安装包、便携 zip、SHA256SUMS（Scoop 校验）；不再单独上传裸 exe。
 name: Release Test
 
 on:
@@ -48,6 +49,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_version: ${{ steps.version.outputs.version }}
+      release_semver: ${{ steps.version.outputs.semver }}
       release_body: ${{ steps.notes.outputs.body }}
       build_windows: ${{ steps.meta.outputs.build_windows }}
       build_linux: ${{ steps.meta.outputs.build_linux }}
@@ -127,10 +130,28 @@ jobs:
       - name: 校验当前 commit 的 CI 已通过
         uses: ./.github/actions/verify-ci-passed
 
+      - id: version
+        uses: ./.github/actions/resolve-release-version
+        with:
+          release_tag: ${{ steps.meta.outputs.release_tag }}
+
       - id: notes
         uses: ./.github/actions/prepare-release-notes
         with:
           dispatch_notes: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes || '' }}
+
+  sync-scoop-manifest:
+    name: 同步 Scoop manifest 版本
+    needs: plan
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/sync-scoop-manifest
+        with:
+          release_version: ${{ needs.plan.outputs.release_version }}
 
   build-and-release-windows:
     name: 测试包 (windows-latest)
@@ -147,12 +168,11 @@ jobs:
       - name: 启用 Cargo 缓存
         uses: Swatinem/rust-cache@v2
 
-      - name: 构建 release
-        run: cargo build --release
-
-      - name: 准备发布文件
-        shell: bash
-        run: cp "target/release/symm.exe" "symm-windows-x64.exe"
+      - name: Windows 安装包与便携包
+        uses: ./.github/actions/package-windows
+        with:
+          release_version: ${{ needs.plan.outputs.release_version }}
+          release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传到 GitHub Release（测试）
         uses: softprops/action-gh-release@v3
@@ -160,7 +180,10 @@ jobs:
           tag_name: ${{ needs.plan.outputs.release_tag }}
           name: Test ${{ needs.plan.outputs.release_tag }}
           body: ${{ needs.plan.outputs.release_body }}
-          files: symm-windows-x64.exe
+          files: |
+            symm-setup-windows-x64.exe
+            symm-portable-windows-x64.zip
+            SHA256SUMS
           prerelease: true
           make_latest: false
           generate_release_notes: false
@@ -180,12 +203,11 @@ jobs:
       - name: 启用 Cargo 缓存
         uses: Swatinem/rust-cache@v2
 
-      - name: 构建 release
-        run: cargo build --release
-
-      - name: 准备发布文件
-        shell: bash
-        run: cp "target/release/symm" "symm-linux-x64"
+      - name: 打包便携 zip
+        uses: ./.github/actions/package-portable
+        with:
+          archive_name: symm-portable-linux-x64.zip
+          release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传到 GitHub Release（测试）
         uses: softprops/action-gh-release@v3
@@ -193,7 +215,7 @@ jobs:
           tag_name: ${{ needs.plan.outputs.release_tag }}
           name: Test ${{ needs.plan.outputs.release_tag }}
           body: ${{ needs.plan.outputs.release_body }}
-          files: symm-linux-x64
+          files: symm-portable-linux-x64.zip
           prerelease: true
           make_latest: false
           generate_release_notes: false
@@ -213,12 +235,11 @@ jobs:
       - name: 启用 Cargo 缓存
         uses: Swatinem/rust-cache@v2
 
-      - name: 构建 release
-        run: cargo build --release
-
-      - name: 准备发布文件
-        shell: bash
-        run: cp "target/release/symm" "symm-macos-x64"
+      - name: 打包便携 zip
+        uses: ./.github/actions/package-portable
+        with:
+          archive_name: symm-portable-macos-x64.zip
+          release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传到 GitHub Release（测试）
         uses: softprops/action-gh-release@v3
@@ -226,7 +247,7 @@ jobs:
           tag_name: ${{ needs.plan.outputs.release_tag }}
           name: Test ${{ needs.plan.outputs.release_tag }}
           body: ${{ needs.plan.outputs.release_body }}
-          files: symm-macos-x64
+          files: symm-portable-macos-x64.zip
           prerelease: true
           make_latest: false
           generate_release_notes: false

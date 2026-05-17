@@ -6,7 +6,7 @@ use std::fs;
 use tempfile::tempdir;
 
 fn cmd() -> Command {
-    let mut command = Command::cargo_bin("symm").expect("binary exists");
+    let mut command = Command::cargo_bin("symm-cli").expect("binary exists");
     command.env("SYMM_TEST_SKIP_PRIVILEGED_LOCK", "1");
     command
 }

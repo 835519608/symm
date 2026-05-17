@@ -1,0 +1,17 @@
+name: Apply Cargo version
+description: 将 Cargo.toml 的 version 设为发版 semver（仅 CI 工作区，不提交）
+
+inputs:
+  semver:
+    description: X.Y.Z
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 写入 Cargo.toml version
+      shell: bash
+      run: |
+        set -euo pipefail
+        perl -i -pe 's/^version = .*/version = "${{ inputs.semver }}"/' Cargo.toml
+        grep '^version' Cargo.toml

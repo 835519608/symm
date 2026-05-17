@@ -1,0 +1,39 @@
+name: Resolve release version
+description: 从 Git tag 解析发布 version（0.2.7-test）与 semver（0.2.7）
+
+inputs:
+  release_tag:
+    description: 例如 v0.2.7-test；默认 github.ref_name
+    required: false
+
+outputs:
+  version:
+    description: 去掉 v 前缀，用于 Scoop / Release 资源路径
+    value: ${{ steps.resolve.outputs.version }}
+  semver:
+    description: X.Y.Z，用于 Cargo.toml 与安装包显示版本
+    value: ${{ steps.resolve.outputs.semver }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        tag="${{ inputs.release_tag }}"
+        if [ -z "${tag}" ]; then
+          tag="${GITHUB_REF_NAME:-}"
+        fi
+        version="${tag#v}"
+        if [[ "${version}" =~ ^test-run- ]]; then
+          semver="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          version="${semver}"
+        elif [[ "${version}" =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+          semver="${BASH_REMATCH[1]}"
+        else
+          semver="${version}"
+        fi
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+        echo "semver=${semver}" >> "$GITHUB_OUTPUT"
+        echo "Resolved tag=${tag} version=${version} semver=${semver}"
