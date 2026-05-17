@@ -1,11 +1,16 @@
 //! Windows Restart Manager：按迁移资源清单查询占用进程。
+//!
+//! RM 只应注册**文件**路径；目录若不带尾部 `\` 会导致 `RmGetList` 返回 `ERROR_ACCESS_DENIED`。
+//! 批次内若有受防护/过滤驱动拦截的路径，会对整批 `RmGetList` 失败，故对 `ACCESS_DENIED` 做二分拆分。
 
 use super::ProcInfo;
 use crate::domain::error::SymmError;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use windows::Win32::Foundation::{ERROR_MORE_DATA, ERROR_SUCCESS, WIN32_ERROR};
+use windows::Win32::Foundation::{
+    ERROR_ACCESS_DENIED, ERROR_MORE_DATA, ERROR_SUCCESS, WIN32_ERROR,
+};
 use windows::Win32::System::RestartManager::{
     CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RmEndSession, RmGetList, RmRegisterResources,
     RmStartSession,
@@ -14,6 +19,7 @@ use windows::core::PCWSTR;
 
 /// 单次 RM 会话注册的资源上限（路径过多时分批）。
 const RM_REGISTER_CHUNK: usize = 512;
+const RM_GETLIST_MAX_RETRIES: u32 = 6;
 
 struct RmSession(u32);
 
@@ -30,11 +36,11 @@ pub fn list_locking_processes_for_path(
     mut progress: impl FnMut(super::LockProbeProgress),
 ) -> Result<Vec<ProcInfo>, SymmError> {
     let resources = collect_resource_paths(root, &mut progress)?;
-    progress(super::LockProbeProgress::Querying {
-        batch: 1,
-        total_batches: 1,
-    });
-    list_processes_for_resources(&resources)
+    if resources.is_empty() {
+        return Ok(vec![]);
+    }
+    let total_batches = resources.len().div_ceil(RM_REGISTER_CHUNK);
+    list_processes_for_resources(&resources, total_batches, &mut progress)
 }
 
 fn collect_resource_paths(
@@ -46,7 +52,7 @@ fn collect_resource_paths(
         return Ok(vec![root]);
     }
 
-    let mut paths = vec![root.clone()];
+    let mut paths = Vec::new();
     let mut files_seen = 0usize;
     for entry in WalkDir::new(&root).follow_links(false) {
         let entry = entry.map_err(|e| SymmError::IoError {
@@ -71,15 +77,19 @@ fn collect_resource_paths(
     Ok(paths)
 }
 
-fn list_processes_for_resources(paths: &[PathBuf]) -> Result<Vec<ProcInfo>, SymmError> {
-    if paths.is_empty() {
-        return Ok(vec![]);
-    }
-
+fn list_processes_for_resources(
+    paths: &[PathBuf],
+    total_batches: usize,
+    progress: &mut impl FnMut(super::LockProbeProgress),
+) -> Result<Vec<ProcInfo>, SymmError> {
     let self_pid = std::process::id();
     let mut by_pid: HashMap<u32, ProcInfo> = HashMap::new();
 
-    for chunk in paths.chunks(RM_REGISTER_CHUNK) {
+    for (batch_idx, chunk) in paths.chunks(RM_REGISTER_CHUNK).enumerate() {
+        progress(super::LockProbeProgress::Querying {
+            batch: batch_idx + 1,
+            total_batches,
+        });
         for info in query_rm_chunk(chunk)? {
             let pid = info.Process.dwProcessId;
             if pid == 0 || pid == self_pid {
@@ -98,58 +108,83 @@ fn list_processes_for_resources(paths: &[PathBuf]) -> Result<Vec<ProcInfo>, Symm
 }
 
 fn query_rm_chunk(paths: &[PathBuf]) -> Result<Vec<RM_PROCESS_INFO>, SymmError> {
+    if paths.is_empty() {
+        return Ok(vec![]);
+    }
+    match query_rm_chunk_once(paths) {
+        Ok(list) => Ok(list),
+        Err(code) if code == ERROR_ACCESS_DENIED && paths.len() > 1 => {
+            let mid = paths.len() / 2;
+            let (left, right) = paths.split_at(mid);
+            let mut merged = query_rm_chunk(left)?;
+            merged.extend(query_rm_chunk(right)?);
+            Ok(merged)
+        }
+        Err(ERROR_ACCESS_DENIED) => Ok(vec![]),
+        Err(code) => Err(rm_error(code, "RmGetList")),
+    }
+}
+
+fn query_rm_chunk_once(paths: &[PathBuf]) -> Result<Vec<RM_PROCESS_INFO>, WIN32_ERROR> {
     let wide_paths = paths
         .iter()
         .map(|p| path_to_wide_null(p))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ERROR_ACCESS_DENIED)?;
+
     let pcwstrs: Vec<PCWSTR> = wide_paths.iter().map(|w| PCWSTR(w.as_ptr())).collect();
 
     unsafe {
         let session = start_session()?;
         let register = RmRegisterResources(session.0, Some(pcwstrs.as_slice()), None, None);
-        win32_ok(register, "RmRegisterResources")?;
-        let list = get_process_list(session.0)?;
-        Ok(list)
+        if register != ERROR_SUCCESS {
+            return Err(register);
+        }
+        get_process_list(session.0)
     }
 }
 
-unsafe fn start_session() -> Result<RmSession, SymmError> {
+unsafe fn start_session() -> Result<RmSession, WIN32_ERROR> {
     let mut handle = 0u32;
     let mut key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
     let result =
         unsafe { RmStartSession(&mut handle, Some(0), windows::core::PWSTR(key.as_mut_ptr())) };
-    win32_ok(result, "RmStartSession")?;
+    if result != ERROR_SUCCESS {
+        return Err(result);
+    }
     Ok(RmSession(handle))
 }
 
-unsafe fn get_process_list(session: u32) -> Result<Vec<RM_PROCESS_INFO>, SymmError> {
-    let mut needed = 0u32;
+unsafe fn get_process_list(session: u32) -> Result<Vec<RM_PROCESS_INFO>, WIN32_ERROR> {
     let mut count = 0u32;
-    let mut reboot = 0u32;
-    let first = unsafe { RmGetList(session, &mut needed, &mut count, None, &mut reboot) };
-    if first != ERROR_SUCCESS && first != ERROR_MORE_DATA {
-        return Err(rm_error(first, "RmGetList（查询大小）"));
-    }
-    if needed == 0 {
-        return Ok(vec![]);
-    }
+    let mut buffer: Vec<RM_PROCESS_INFO> = Vec::new();
+    let mut retry = 0u32;
 
-    let mut buffer = vec![RM_PROCESS_INFO::default(); needed as usize];
-    count = needed;
-    let second = unsafe {
-        RmGetList(
-            session,
-            &mut needed,
-            &mut count,
-            Some(buffer.as_mut_ptr()),
-            &mut reboot,
-        )
-    };
-    if second != ERROR_SUCCESS && second != ERROR_MORE_DATA {
-        return Err(rm_error(second, "RmGetList"));
+    loop {
+        let mut needed = 0u32;
+        let mut count_inout = count;
+        let mut reboot = 0u32;
+        let ptr = if buffer.is_empty() {
+            None
+        } else {
+            Some(buffer.as_mut_slice())
+        };
+        let result = unsafe { RmGetList(session, &mut needed, &mut count_inout, ptr, &mut reboot) };
+
+        if result == ERROR_SUCCESS {
+            buffer.truncate(count_inout as usize);
+            return Ok(buffer);
+        }
+
+        if result == ERROR_MORE_DATA && retry < RM_GETLIST_MAX_RETRIES {
+            count = needed;
+            buffer.resize(needed as usize, RM_PROCESS_INFO::default());
+            retry += 1;
+            continue;
+        }
+
+        return Err(result);
     }
-    buffer.truncate(count as usize);
-    Ok(buffer)
 }
 
 fn format_rm_process(info: &RM_PROCESS_INFO, pid: u32) -> String {
@@ -169,6 +204,11 @@ fn format_rm_process(info: &RM_PROCESS_INFO, pid: u32) -> String {
 
 fn path_to_wide_null(path: &Path) -> Result<Vec<u16>, SymmError> {
     use std::os::windows::ffi::OsStrExt;
+    if path.is_dir() {
+        return Err(SymmError::IoError {
+            message: "Restart Manager 资源须为文件路径，不能注册目录".to_string(),
+        });
+    }
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     if wide.len() <= 1 {
         return Err(SymmError::IoError {
@@ -181,14 +221,6 @@ fn path_to_wide_null(path: &Path) -> Result<Vec<u16>, SymmError> {
 fn wide_null_to_string(buf: &[u16]) -> String {
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..end])
-}
-
-fn win32_ok(code: WIN32_ERROR, api: &str) -> Result<(), SymmError> {
-    if code == ERROR_SUCCESS {
-        Ok(())
-    } else {
-        Err(rm_error(code, api))
-    }
 }
 
 fn rm_error(code: WIN32_ERROR, api: &str) -> SymmError {
