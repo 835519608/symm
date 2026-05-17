@@ -167,7 +167,7 @@ unsafe fn get_process_list(session: u32) -> Result<Vec<RM_PROCESS_INFO>, WIN32_E
         let ptr = if buffer.is_empty() {
             None
         } else {
-            Some(buffer.as_mut_slice())
+            Some(buffer.as_mut_ptr())
         };
         let result = unsafe { RmGetList(session, &mut needed, &mut count_inout, ptr, &mut reboot) };
 
