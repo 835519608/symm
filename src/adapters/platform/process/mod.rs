@@ -9,13 +9,6 @@ use crate::domain::error::SymmError;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 
-/// 占用检测深度：轮询用 [`LockProbeDepth::Shallow`]；首次发现占用用 [`LockProbeDepth::Deep`]。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LockProbeDepth {
-    Shallow,
-    Deep,
-}
-
 #[derive(Debug, Clone)]
 pub enum LockProbeProgress {
     Scanning {
@@ -44,7 +37,6 @@ pub trait PlatformProcess {
     fn list_locking_processes_with_progress<F>(
         &self,
         path: &Path,
-        depth: LockProbeDepth,
         progress: &mut F,
     ) -> Result<Vec<ProcInfo>, SymmError>
     where

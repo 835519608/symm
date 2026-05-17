@@ -7,9 +7,9 @@ mod snapshot;
 mod test_hooks;
 
 pub use messages::{empty_lock_list_notice, pre_scan_notices};
-pub use release::{format_still_locked_message, poll_until_unlocked};
+pub use release::{format_still_locked_message, wait_after_kill};
 
-pub use crate::adapters::platform::process::{LockProbeDepth, LockProbeProgress, ProcInfo};
+pub use crate::adapters::platform::process::{LockProbeProgress, ProcInfo};
 
 use crate::adapters::platform::privilege;
 use crate::adapters::platform::process::{PlatformProcess, platform};
@@ -56,60 +56,27 @@ where
     }
 
     if use_direct_platform_ops() {
-        return platform().list_locking_processes_with_progress(
-            path,
-            LockProbeDepth::Deep,
-            &mut progress,
-        );
+        return platform().list_locking_processes_with_progress(path, &mut progress);
     }
 
     #[cfg(windows)]
     {
-        // 非管理员：先非提权扫描（有进度输出）；仍无结果再走 UAC 子进程（子进程内无进度，靠深度扫时限兜底）。
         progress(LockProbeProgress::Querying {
             batch: 1,
             total_batches: 1,
         });
-        if let Ok(procs) = platform().list_locking_processes_with_progress(
-            path,
-            LockProbeDepth::Shallow,
-            &mut progress,
-        ) && !procs.is_empty()
-        {
-            return Ok(procs);
-        }
-        match platform().list_locking_processes_with_progress(
-            path,
-            LockProbeDepth::Deep,
-            &mut progress,
-        ) {
+        match privileged::list_locking_processes(path) {
             Ok(procs) => Ok(procs),
-            Err(_) => match privileged::list_locking_processes(path) {
-                Ok(procs) => Ok(procs),
-                Err(err) if uac_cancelled_by_user(&err) => Err(err),
-                Err(elevated_err) => {
-                    if let Ok(procs) = platform().list_locking_processes_with_progress(
-                        path,
-                        LockProbeDepth::Deep,
-                        &mut progress,
-                    ) && !procs.is_empty()
-                    {
-                        Ok(procs)
-                    } else {
-                        Err(elevated_err)
-                    }
-                }
-            },
+            Err(err) if uac_cancelled_by_user(&err) => Err(err),
+            Err(elevated_err) => platform()
+                .list_locking_processes_with_progress(path, &mut progress)
+                .map_err(|_| elevated_err),
         }
     }
 
     #[cfg(unix)]
     {
-        if let Ok(procs) = platform().list_locking_processes_with_progress(
-            path,
-            LockProbeDepth::Deep,
-            &mut progress,
-        ) {
+        if let Ok(procs) = platform().list_locking_processes_with_progress(path, &mut progress) {
             return Ok(procs);
         }
         progress(LockProbeProgress::Querying {
@@ -118,19 +85,6 @@ where
         });
         privileged::list_locking_processes(path)
     }
-}
-
-/// 结束占用后的轮询：不做 UAC，仅路径级检测，避免反复提权与深度扫盘卡住。
-pub(crate) fn list_locking_processes_shallow_for_poll(
-    path: &Path,
-) -> Result<Vec<ProcInfo>, SymmError> {
-    if let Some(mocked) = test_hooks::mock_locking_processes(path) {
-        return Ok(mocked);
-    }
-    if test_hooks::skip_real_lock_probe_in_tests() {
-        return Ok(vec![]);
-    }
-    platform().list_locking_processes_with_progress(path, LockProbeDepth::Shallow, &mut |_| {})
 }
 
 pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {

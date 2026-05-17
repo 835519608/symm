@@ -468,7 +468,7 @@ fn add_when_link_is_locked_and_unlock_succeeds_continues_normally() {
         .stdout(contains("正在检查 link 占用"))
         .stdout(contains("检测到占用进程"))
         .stdout(contains("正在结束全部占用进程"))
-        .stdout(contains("正在重新确认占用状态"))
+        .stdout(contains("正在等待占用进程释放句柄"))
         .stdout(contains("正在扫描迁移内容"));
 
     assert_eq!(fs::read_to_string(&target).expect("read target"), "payload");

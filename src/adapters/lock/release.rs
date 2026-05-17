@@ -1,31 +1,23 @@
-//! 解除占用后的轮询与面向 Windows 资源管理器的提示文案。
+//! 杀进程后的等待与面向 Windows 资源管理器的提示文案。
 
+use super::ProcInfo;
 use super::test_hooks;
-use super::{ProcInfo, list_locking_processes_shallow_for_poll};
 use crate::domain::error::SymmError;
 use std::path::Path;
 use std::time::Duration;
 
-const POLL_ATTEMPTS: usize = 24;
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// 结束占用进程后：测试走 mock；真实环境仅短暂等待句柄释放，不再重复扫锁/UAC。
+const AFTER_KILL_SETTLE_MS: u64 = 800;
 
 pub fn is_explorer_process(proc: &ProcInfo) -> bool {
     proc.display.to_ascii_lowercase().contains("explorer.exe")
 }
 
-pub fn poll_until_unlocked(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
-    let attempts = poll_attempts();
-    for attempt in 0..attempts {
-        let remaining = list_locking_processes_shallow_for_poll(path)?;
-        if remaining.is_empty() {
-            return Ok(vec![]);
-        }
-        if attempt + 1 < attempts {
-            std::thread::sleep(poll_interval());
-        } else {
-            return Ok(remaining);
-        }
+pub fn wait_after_kill(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+    if let Some(remaining) = test_hooks::mock_locking_processes(path) {
+        return Ok(remaining);
     }
+    std::thread::sleep(Duration::from_millis(AFTER_KILL_SETTLE_MS));
     Ok(vec![])
 }
 
@@ -49,21 +41,5 @@ pub fn format_still_locked_message(link: &Path, remaining: &[ProcInfo]) -> Strin
         )
     } else {
         format!("{base}。请结束或完全退出上述占用进程（含托盘/后台实例）后重试")
-    }
-}
-
-fn poll_attempts() -> usize {
-    if test_hooks::should_mock_kill_processes() && !test_hooks::mock_locks_clear_on_kill() {
-        1
-    } else {
-        POLL_ATTEMPTS
-    }
-}
-
-fn poll_interval() -> Duration {
-    if test_hooks::should_mock_kill_processes() {
-        Duration::from_millis(0)
-    } else {
-        POLL_INTERVAL
     }
 }

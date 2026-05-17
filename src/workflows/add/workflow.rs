@@ -3,7 +3,7 @@ use crate::adapters::fs::link;
 use crate::adapters::fs::migration_service::MigrationEvent;
 use crate::adapters::lock::{
     ProcInfo, empty_lock_list_notice, format_still_locked_message, kill_processes,
-    list_locking_processes_with_progress, poll_until_unlocked, pre_scan_notices,
+    list_locking_processes_with_progress, pre_scan_notices, wait_after_kill,
 };
 use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
@@ -120,8 +120,8 @@ fn ensure_link_not_locked<W: Write>(
     reporter.write_line("正在结束全部占用进程")?;
     let pids = procs.iter().map(|proc| proc.pid).collect::<Vec<_>>();
     kill_processes(&pids)?;
-    reporter.write_line("正在重新确认占用状态")?;
-    let remaining = poll_until_unlocked(link)?;
+    reporter.write_line("正在等待占用进程释放句柄")?;
+    let remaining = wait_after_kill(link)?;
     if remaining.is_empty() {
         return Ok(());
     }
