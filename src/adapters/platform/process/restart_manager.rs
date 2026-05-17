@@ -116,9 +116,8 @@ fn query_rm_chunk(paths: &[PathBuf]) -> Result<Vec<RM_PROCESS_INFO>, SymmError> 
 unsafe fn start_session() -> Result<RmSession, SymmError> {
     let mut handle = 0u32;
     let mut key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
-    let result = unsafe {
-        RmStartSession(&mut handle, Some(0), windows::core::PWSTR(key.as_mut_ptr()))
-    };
+    let result =
+        unsafe { RmStartSession(&mut handle, Some(0), windows::core::PWSTR(key.as_mut_ptr())) };
     win32_ok(result, "RmStartSession")?;
     Ok(RmSession(handle))
 }
