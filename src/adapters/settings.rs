@@ -81,10 +81,11 @@ mod tests {
     fn save_and_load_round_trip() {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join(SETTINGS_FILE_NAME);
-        let mut settings = GuiSettings::default();
-        settings.theme = ThemeMode::Dark;
-        settings.locale = "en".to_string();
-        settings.sidebar_width = 320.0;
+        let settings = GuiSettings {
+            theme: ThemeMode::Dark,
+            locale: "en".to_string(),
+            sidebar_width: 320.0,
+        };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
     }

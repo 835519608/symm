@@ -63,14 +63,14 @@ fn execute_add<W: Write>(
     let existing = repository::find_optional(conn, &LinkQuery::link_path_exact(&link_norm))?;
     let mut reporter = MigrationProgressReporter::new(writer);
     lock_gate::ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
-    let prep = adopt::resolve_add_conflict(Path::new(&link_norm), &target, &mut |event| {
+    let prep = adopt::resolve_add_conflict(Path::new(&link_norm), target, &mut |event| {
         reporter.handle_migration_event(event)
     })?;
 
     let target_norm = if prep.skip_target_exists_check {
-        runtime_paths::normalize_target_known_exists(&target)?
+        runtime_paths::normalize_target_known_exists(target)?
     } else {
-        runtime_paths::normalize_target(&target)?
+        runtime_paths::normalize_target(target)?
     };
     let link_kind = if prep.link_exists_at_path {
         existing

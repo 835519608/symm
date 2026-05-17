@@ -107,7 +107,7 @@ impl LinkSnapshot {
                     || v.target_path.to_lowercase().contains(&q)
             })
             .collect();
-        out.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+        out.sort_by_key(|v| v.display_name());
         out
     }
 
