@@ -10,6 +10,7 @@ on:
       - "Cargo.lock"
       - "build.rs"
       - ".github/workflows/**"
+      - ".github/actions/**"
   pull_request:
     paths:
       - "src/**"
@@ -18,6 +19,7 @@ on:
       - "Cargo.lock"
       - "build.rs"
       - ".github/workflows/**"
+      - ".github/actions/**"
 
 jobs:
   test:
