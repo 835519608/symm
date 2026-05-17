@@ -18,10 +18,11 @@ jobs:
     name: 仅保留最新测试包
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: 删除旧测试 Release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
