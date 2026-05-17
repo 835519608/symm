@@ -22,7 +22,7 @@ pub fn io_ctx(context: &str, error: std::io::Error) -> SymmError {
 fn append_windows_lock_hint(error: &std::io::Error, message: &mut String) {
     if error.raw_os_error() == Some(33) {
         message.push_str(
-            "。该文件可能被其它程序独占锁定（常见于 Cursor 仍打开该目录时）；请完全退出 Cursor 后重试。无需对整个 symm「以管理员身份运行」——在普通终端执行 add，对 UAC 选「是」即可用于占用扫描",
+            "。该文件可能被其它程序独占锁定；请关闭正在使用该路径的程序（如编辑器、资源管理器窗口）后重试。无需对整个 symm「以管理员身份运行」——在普通终端执行 add，对 UAC 选「是」即可用于占用扫描",
         );
     }
 }

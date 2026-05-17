@@ -42,6 +42,10 @@ where
         return Ok(mocked);
     }
 
+    if test_hooks::skip_real_lock_probe_in_tests() {
+        return Ok(vec![]);
+    }
+
     if use_direct_platform_ops() {
         return platform().list_locking_processes_with_progress(path, &mut progress);
     }

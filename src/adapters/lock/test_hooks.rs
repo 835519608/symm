@@ -37,6 +37,12 @@ pub fn skip_privileged_lock_probe() -> bool {
         .is_ok_and(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
 }
 
+/// 集成测试默认跳过真实 OS 扫锁（Windows CI 上 filelocksmith 慢且易误报占用）。
+/// 显式设置 `SYMM_TEST_LOCK_PATHS` 时仍走 mock，不跳过。
+pub fn skip_real_lock_probe_in_tests() -> bool {
+    skip_privileged_lock_probe() && std::env::var("SYMM_TEST_LOCK_PATHS").is_err()
+}
+
 pub fn mark_mock_released_if_configured() {
     if mock_locks_clear_on_kill() {
         MOCK_LOCK_RELEASED.store(true, Ordering::SeqCst);

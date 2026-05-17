@@ -27,7 +27,9 @@ pub fn pre_scan_notices() -> Vec<&'static str> {
 pub fn empty_lock_list_notice() -> Option<&'static str> {
     #[cfg(windows)]
     {
-        Some("未发现占用进程；若迁移时报文件锁定，请先完全退出 Cursor 后再试")
+        Some(
+            "未发现占用进程；若迁移时报文件被锁定，请关闭正在使用该路径的程序（如编辑器、资源管理器窗口）后重试",
+        )
     }
     #[cfg(not(windows))]
     {

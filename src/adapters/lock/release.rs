@@ -38,17 +38,17 @@ pub fn format_still_locked_message(link: &Path, remaining: &[ProcInfo]) -> Strin
     );
     if remaining.iter().all(is_explorer_process) {
         format!(
-            "{base}。资源管理器（explorer.exe）结束后会自动重启并可能再次占用该路径；请先关闭正在浏览该路径或其父目录的文件夹窗口，必要时退出 Cursor 后重试"
+            "{base}。资源管理器（explorer.exe）结束后会自动重启并可能再次占用该路径；请先关闭正在浏览该路径或其父目录的文件夹窗口，并关闭其它可能占用该路径的程序后重试"
         )
     } else if remaining.iter().any(is_explorer_process) {
         format!("{base}。其中包含资源管理器（explorer.exe），请关闭相关文件夹窗口后重试")
-    } else if remaining
-        .iter()
-        .any(|proc| proc.display.to_ascii_lowercase().contains("cursor"))
-    {
-        format!("{base}。请先完全退出 Cursor（含托盘）后重试")
+    } else if remaining.len() == 1 {
+        format!(
+            "{base}。请结束或完全退出占用进程（{}，含托盘/后台实例）后重试",
+            remaining[0]
+        )
     } else {
-        base
+        format!("{base}。请结束或完全退出上述占用进程（含托盘/后台实例）后重试")
     }
 }
 
