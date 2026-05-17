@@ -42,10 +42,8 @@ fn resolve_selector(
     conn: &rusqlite::Connection,
     selector: Option<&str>,
 ) -> Result<String, SymmError> {
-    if let Some(selector) = selector {
-        if !selector.is_empty() {
-            return Ok(selector.to_string());
-        }
+    if let Some(selector) = selector.filter(|s| !s.is_empty()) {
+        return Ok(selector.to_string());
     }
     record_picker::pick_one(conn)
 }

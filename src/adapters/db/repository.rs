@@ -209,7 +209,7 @@ fn push_string_predicate(
     }
 }
 
-fn query_params<'a>(built: &'a BuiltQuery) -> Vec<&'a dyn ToSql> {
+fn query_params(built: &BuiltQuery) -> Vec<&dyn ToSql> {
     built.params.iter().map(|p| p.as_ref()).collect()
 }
 
