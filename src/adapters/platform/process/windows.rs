@@ -40,7 +40,7 @@ pub(crate) fn list_locking_processes_direct<F>(
 where
     F: FnMut(LockProbeProgress),
 {
-    restart_manager::list_locking_processes_for_path(path, |event| progress(event))
+    restart_manager::list_locking_processes_for_path(path, progress)
 }
 
 pub(crate) fn kill_processes_direct(pids: &[u32]) -> Result<(), SymmError> {
