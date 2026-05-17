@@ -2,8 +2,8 @@ use crate::adapters::db::repository;
 use crate::adapters::fs::link;
 use crate::adapters::fs::migration_service::MigrationEvent;
 use crate::adapters::lock::{
-    ProcInfo, format_still_locked_message, kill_processes, list_locking_processes_with_progress,
-    poll_until_unlocked,
+    ProcInfo, empty_lock_list_notice, format_still_locked_message, kill_processes,
+    list_locking_processes_with_progress, poll_until_unlocked, pre_scan_notices,
 };
 use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
@@ -95,10 +95,16 @@ fn ensure_link_not_locked<W: Write>(
     reporter: &mut MigrationProgressReporter<'_, W>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查 link 占用：{}", link.display()))?;
+    for notice in pre_scan_notices() {
+        reporter.write_line(notice)?;
+    }
     let procs = list_locking_processes_with_progress(link, |event| {
         reporter.handle_lock_probe_event(event)
     })?;
     if procs.is_empty() {
+        if let Some(notice) = empty_lock_list_notice() {
+            reporter.write_line(notice)?;
+        }
         return Ok(());
     }
     reporter.write_line("检测到占用进程，等待用户选择“解除占用/取消”")?;

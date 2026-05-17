@@ -1,10 +1,12 @@
 //! 文件占用检测与结束进程（编排层；底层 OS 调用在 `platform::process`）。
 
+mod messages;
 mod privileged;
 mod release;
 mod snapshot;
 mod test_hooks;
 
+pub use messages::{empty_lock_list_notice, pre_scan_notices};
 pub use release::{format_still_locked_message, poll_until_unlocked};
 
 pub use crate::adapters::platform::process::{LockProbeProgress, ProcInfo};
@@ -16,6 +18,17 @@ use std::path::Path;
 
 fn use_direct_platform_ops() -> bool {
     privilege::is_privileged() || test_hooks::skip_privileged_lock_probe()
+}
+
+/// Windows：当前进程非管理员时，占用检测会弹出 UAC 提权子进程（仅扫描/结束占用，不提升主进程）。
+#[cfg(windows)]
+pub fn lock_probe_requests_uac() -> bool {
+    !use_direct_platform_ops()
+}
+
+#[cfg(not(windows))]
+pub fn lock_probe_requests_uac() -> bool {
+    false
 }
 
 pub fn list_locking_processes_with_progress<F>(

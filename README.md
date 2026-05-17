@@ -235,7 +235,13 @@ src/
   ui/                      # 交互、进度输出
 ```
 
-约定：workflow 与 `adapters/fs` 不写 `#[cfg(windows)]`；平台分支在 `adapters/platform/**`。对外入口示例：
+约定（**修改代码必须遵守**；Agent 见 `.cursor/rules/architecture-layers.mdc`）：
+
+- `workflows/**`、`adapters/fs/**`（除既有 `link_windows` 等封装）不写 `#[cfg(windows)]` / `#[cfg(unix)]`，不直接 `use adapters::platform::*`
+- 平台 API、`cfg` 分支、UAC/占用相关文案 → `adapters/platform/**` 或 `adapters/lock/**`（如 `lock/messages.rs`）
+- `workflows` 只编排流程，通过 adapters 对外入口调用
+
+对外入口示例：
 
 - 文件系统：`adapters::platform::fs_platform()`（`PlatformFs`）
 - 占用：`adapters::lock::list_locking_processes_with_progress` / `kill_processes`
