@@ -9,6 +9,9 @@ pub fn pre_scan_notices() -> Vec<&'static str> {
             lines.push(
                 "即将通过 UAC 提权扫描占用（仅检测/结束占用进程；迁移与建链仍在当前用户下执行，请勿对整个终端「以管理员身份运行」）",
             );
+            lines.push(
+                "若未出现 UAC 对话框，请检查系统「用户账户控制」是否开启；出现后请点击「是」",
+            );
         }
         if crate::adapters::platform::privilege::is_privileged() {
             lines.push(

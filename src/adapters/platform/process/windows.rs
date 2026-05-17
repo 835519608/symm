@@ -1,9 +1,13 @@
 use super::{LockProbeProgress, PlatformProcess, ProcInfo};
 use crate::domain::error::SymmError;
+use std::collections::HashSet;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
+
+/// 目录句柄未命中时，抽样扫描子文件以发现占用（如编辑器锁定目录内文件）。
+const DIR_LOCK_PROBE_MAX_FILES: usize = 48;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -40,8 +44,7 @@ where
         total_batches: 1,
     });
     let _ = set_debug_privilege();
-    let path_string = path.to_string_lossy().to_string();
-    let pids = find_processes_locking_path(&path_string);
+    let pids = collect_locking_pids(path);
     let mut out = Vec::with_capacity(pids.len());
     for pid in pids {
         let pid_u32 = match u32::try_from(pid) {
@@ -85,6 +88,34 @@ pub(crate) fn kill_processes_direct(pids: &[u32]) -> Result<(), SymmError> {
         std::thread::sleep(Duration::from_millis(1500));
     }
     Ok(())
+}
+
+fn collect_locking_pids(path: &Path) -> Vec<usize> {
+    use filelocksmith::find_processes_locking_path;
+
+    let path_string = path.to_string_lossy();
+    let mut pids: HashSet<usize> = find_processes_locking_path(path_string.as_ref())
+        .into_iter()
+        .collect();
+    if !pids.is_empty() || !path.is_dir() {
+        return pids.into_iter().collect();
+    }
+
+    let mut files_checked = 0usize;
+    for entry in walkdir::WalkDir::new(path).max_depth(2) {
+        let Ok(entry) = entry else { continue };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        for pid in find_processes_locking_path(entry.path()) {
+            pids.insert(pid);
+        }
+        files_checked += 1;
+        if files_checked >= DIR_LOCK_PROBE_MAX_FILES || pids.len() >= 8 {
+            break;
+        }
+    }
+    pids.into_iter().collect()
 }
 
 fn is_explorer_pid(pid: u32) -> bool {

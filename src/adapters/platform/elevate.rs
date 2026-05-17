@@ -40,7 +40,10 @@ where
         .unwrap_or_else(|| ".".to_string());
 
     let script = format!(
-        "$p = Start-Process -FilePath {} -ArgumentList @({}) -WorkingDirectory {} -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode",
+        "$ErrorActionPreference = 'Stop'; \
+         $p = Start-Process -FilePath {} -ArgumentList @({}) -WorkingDirectory {} -Verb RunAs -Wait -PassThru; \
+         if ($null -eq $p) {{ exit 1223 }}; \
+         exit $p.ExitCode",
         ps_single_quote(&exe.to_string_lossy()),
         ps_args,
         ps_single_quote(&work_dir),
@@ -50,7 +53,6 @@ where
         .creation_flags(CREATE_NO_WINDOW)
         .args([
             "-NoProfile",
-            "-NonInteractive",
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
