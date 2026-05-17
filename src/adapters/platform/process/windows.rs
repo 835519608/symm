@@ -1,13 +1,15 @@
-use super::{LockProbeProgress, PlatformProcess, ProcInfo};
+use super::{LockProbeDepth, LockProbeProgress, PlatformProcess, ProcInfo};
 use crate::domain::error::SymmError;
 use std::collections::HashSet;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// 目录句柄未命中时，抽样扫描子文件以发现占用（如编辑器锁定目录内文件）。
 const DIR_LOCK_PROBE_MAX_FILES: usize = 48;
+/// 深度抽样总时长上限，避免提权子进程长时间无输出被误认为卡死。
+const DIR_LOCK_PROBE_MAX_DURATION: Duration = Duration::from_secs(12);
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -17,12 +19,13 @@ impl PlatformProcess for Platform {
     fn list_locking_processes_with_progress<F>(
         &self,
         path: &Path,
+        depth: LockProbeDepth,
         progress: &mut F,
     ) -> Result<Vec<ProcInfo>, SymmError>
     where
         F: FnMut(LockProbeProgress),
     {
-        list_locking_processes_direct(path, progress)
+        list_locking_processes_direct(path, depth, progress)
     }
 
     fn kill_processes(&self, pids: &[u32]) -> Result<(), SymmError> {
@@ -32,6 +35,7 @@ impl PlatformProcess for Platform {
 
 pub(crate) fn list_locking_processes_direct<F>(
     path: &Path,
+    depth: LockProbeDepth,
     progress: &mut F,
 ) -> Result<Vec<ProcInfo>, SymmError>
 where
@@ -44,7 +48,7 @@ where
         total_batches: 1,
     });
     let _ = set_debug_privilege();
-    let pids = collect_locking_pids(path);
+    let pids = collect_locking_pids(path, depth, progress);
     let mut out = Vec::with_capacity(pids.len());
     for pid in pids {
         let pid_u32 = match u32::try_from(pid) {
@@ -90,19 +94,26 @@ pub(crate) fn kill_processes_direct(pids: &[u32]) -> Result<(), SymmError> {
     Ok(())
 }
 
-fn collect_locking_pids(path: &Path) -> Vec<usize> {
+fn collect_locking_pids<F>(path: &Path, depth: LockProbeDepth, progress: &mut F) -> Vec<usize>
+where
+    F: FnMut(LockProbeProgress),
+{
     use filelocksmith::find_processes_locking_path;
 
     let path_string = path.to_string_lossy();
     let mut pids: HashSet<usize> = find_processes_locking_path(path_string.as_ref())
         .into_iter()
         .collect();
-    if !pids.is_empty() || !path.is_dir() {
+    if !pids.is_empty() || !path.is_dir() || depth == LockProbeDepth::Shallow {
         return pids.into_iter().collect();
     }
 
+    let started = Instant::now();
     let mut files_checked = 0usize;
     for entry in walkdir::WalkDir::new(path).max_depth(2) {
+        if started.elapsed() >= DIR_LOCK_PROBE_MAX_DURATION {
+            break;
+        }
         let Ok(entry) = entry else { continue };
         if !entry.file_type().is_file() {
             continue;
@@ -111,6 +122,10 @@ fn collect_locking_pids(path: &Path) -> Vec<usize> {
             pids.insert(pid);
         }
         files_checked += 1;
+        progress(LockProbeProgress::Scanning {
+            scanned_files: files_checked,
+            current: entry.path().to_path_buf(),
+        });
         if files_checked >= DIR_LOCK_PROBE_MAX_FILES || pids.len() >= 8 {
             break;
         }

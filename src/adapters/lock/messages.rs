@@ -7,7 +7,7 @@ pub fn pre_scan_notices() -> Vec<&'static str> {
         let mut lines = Vec::new();
         if super::lock_probe_requests_uac() {
             lines.push(
-                "即将通过 UAC 提权扫描占用（仅检测/结束占用进程；迁移与建链仍在当前用户下执行，请勿对整个终端「以管理员身份运行」）",
+                "必要时将通过 UAC 提权扫描占用（先在本机快速检测；仅检测/结束占用进程；迁移与建链仍在当前用户下执行，请勿对整个终端「以管理员身份运行」）",
             );
             lines.push(
                 "若未出现 UAC 对话框，请检查系统「用户账户控制」是否开启；出现后请点击「是」",

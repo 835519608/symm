@@ -1,4 +1,4 @@
-use super::{LockProbeProgress, PlatformProcess, ProcInfo};
+use super::{LockProbeDepth, LockProbeProgress, PlatformProcess, ProcInfo};
 use crate::adapters::errors::io_map::io_ctx;
 use crate::domain::error::SymmError;
 use std::path::Path;
@@ -10,6 +10,7 @@ impl PlatformProcess for Platform {
     fn list_locking_processes_with_progress<F>(
         &self,
         path: &Path,
+        _depth: LockProbeDepth,
         progress: &mut F,
     ) -> Result<Vec<ProcInfo>, SymmError>
     where

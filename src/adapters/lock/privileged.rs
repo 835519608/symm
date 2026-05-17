@@ -3,7 +3,7 @@
 use super::ProcInfo;
 use super::snapshot::{read_snapshot, write_snapshot};
 use crate::adapters::platform::privilege;
-use crate::adapters::platform::process::{PlatformProcess, platform};
+use crate::adapters::platform::process::{LockProbeDepth, PlatformProcess, platform};
 use crate::domain::error::SymmError;
 use std::env;
 use std::ffi::OsStr;
@@ -63,7 +63,8 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
 }
 
 pub fn elevated_list_locks_entry(path: &Path, output: &Path) -> Result<(), SymmError> {
-    let procs = platform().list_locking_processes_with_progress(path, &mut |_| {})?;
+    let procs =
+        platform().list_locking_processes_with_progress(path, LockProbeDepth::Deep, &mut |_| {})?;
     write_snapshot(output, &procs)
 }
 

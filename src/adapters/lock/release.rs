@@ -1,7 +1,7 @@
 //! 解除占用后的轮询与面向 Windows 资源管理器的提示文案。
 
 use super::test_hooks;
-use super::{ProcInfo, list_locking_processes_with_progress};
+use super::{ProcInfo, list_locking_processes_shallow_for_poll};
 use crate::domain::error::SymmError;
 use std::path::Path;
 use std::time::Duration;
@@ -16,7 +16,7 @@ pub fn is_explorer_process(proc: &ProcInfo) -> bool {
 pub fn poll_until_unlocked(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     let attempts = poll_attempts();
     for attempt in 0..attempts {
-        let remaining = list_locking_processes_with_progress(path, |_| {})?;
+        let remaining = list_locking_processes_shallow_for_poll(path)?;
         if remaining.is_empty() {
             return Ok(vec![]);
         }
