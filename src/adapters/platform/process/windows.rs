@@ -37,7 +37,7 @@ pub(crate) fn list_locking_processes_direct<F>(
 where
     F: FnMut(LockProbeProgress),
 {
-    use filelocksmith::{find_processes_locking_path, pid_to_process_path, set_debug_privilege};
+    use filelocksmith::{pid_to_process_path, set_debug_privilege};
 
     progress(LockProbeProgress::Querying {
         batch: 1,
