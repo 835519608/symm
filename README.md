@@ -266,4 +266,33 @@ cargo build --release --target <triple>
 | Workflow | 触发 | 说明 |
 |----------|------|------|
 | **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | ubuntu / windows / macos：`fmt` → `clippy -D warnings` → `test` |
-| **Release** | 推送 `v*` tag | 构建 release 并上传；含 `-test` 的 tag 仅 Windows 预发布，正式 tag 三平台 |
+| **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，三平台，设为 Latest |
+| **Release Test** | 推送 `vX.Y.Z-testN` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定平台（见下） |
+
+**Release Test 平台选择**（正式 `release.yml` 仍固定三端全打）：
+
+- Tag `vX.Y.Z-testN` → 三端；`vX.Y.Z-testN-windows` / `-linux` / `-macos` 或组合如 `-windows-linux`（`win` / `mac` 别名）
+- 手动：`gh workflow run release-test.yml -f build_windows=true -f build_linux=false -f build_macos=false`
+
+**打包与 CI**：`release*.yml` 只做 `cargo build --release`，**不重复**跑测试；会先查当前 commit 上 `ci.yml` 三端矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
+
+**Release 变更说明**（相对**上一枚**测试/正式 tag，不要堆砌 commit 标题）：
+
+1. 打 tag 前用 `git log <上一tag>..HEAD --oneline` 回顾区间，写成**功能级**增删改（跨多 commit 时尤其重要）。
+2. 使用**附注 tag**（`-a`），正文会写入 GitHub Release：
+
+```bash
+PREV=v0.2.0-test17   # 或上一枚正式 tag：v0.2.0
+git log "${PREV}"..HEAD --oneline
+
+git tag -a v0.2.0-test18 -m "测试包：Windows 提权修复" -m "$(cat <<'EOF'
+相对 v0.2.0-test17：
+- 新增：…
+- 修复：Windows 下 …
+- 移除：…
+EOF
+)"
+git push origin v0.2.0-test18
+```
+
+轻量 tag（无 `-a`）或空说明会导致打包 workflow 失败。手动触发测试包时可传 `release_notes` 字段。

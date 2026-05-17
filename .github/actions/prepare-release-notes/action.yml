@@ -1,0 +1,58 @@
+name: Prepare release notes
+description: 读取附注 tag 说明或 workflow_dispatch 输入，作为 GitHub Release 正文
+
+inputs:
+  tag_name:
+    description: 当前 Release 使用的 tag 名
+    required: true
+  dispatch_notes:
+    description: workflow_dispatch 时填写的变更说明
+    required: false
+    default: ""
+
+outputs:
+  body:
+    description: Release 正文（Markdown）
+    value: ${{ steps.notes.outputs.body }}
+
+runs:
+  using: composite
+  steps:
+    - name: 准备 Release 说明
+      id: notes
+      shell: bash
+      env:
+        TAG_NAME: ${{ inputs.tag_name }}
+        DISPATCH_NOTES: ${{ inputs.dispatch_notes }}
+      run: |
+        set -euo pipefail
+
+        body=""
+        if [ -n "${DISPATCH_NOTES}" ]; then
+          body="${DISPATCH_NOTES}"
+        elif git rev-parse "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+          object_type=$(git cat-file -t "refs/tags/${TAG_NAME}")
+          if [ "${object_type}" = "tag" ]; then
+            body=$(git cat-file tag "refs/tags/${TAG_NAME}" | sed '1,/^$/d')
+          fi
+        fi
+
+        body=$(printf '%s' "${body}" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+        if [ -z "${body}" ]; then
+          echo "::error::缺少 Release 变更说明。"
+          echo "::error::请使用附注 tag：git tag -a ${TAG_NAME} -m \"标题\" -m \"相对上一包的增删说明\""
+          echo "::error::或手动触发时填写 release_notes。勿用轻量 tag、勿直接复用 commit 信息。"
+          exit 1
+        fi
+
+        if [ "$(wc -l <<< "${body}")" -lt 2 ] && ! grep -qE '^[[:space:]]*[-*]' <<< "${body}"; then
+          echo "::warning::建议包含「相对上一测试/正式包」的新增、删除、修复等功能级条目（可用 - 列表）"
+        fi
+
+        {
+          echo "body<<NOTES_EOF"
+          printf '%s\n' "${body}"
+          echo "NOTES_EOF"
+        } >> "${GITHUB_OUTPUT}"
+
+        echo "Release 说明已就绪（${#body} 字符）"

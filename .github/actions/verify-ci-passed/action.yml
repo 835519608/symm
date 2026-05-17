@@ -1,0 +1,71 @@
+name: Verify CI passed
+description: 校验当前 commit 上 CI 工作流已成功完成（不重复跑测试）
+
+inputs:
+  workflow_file:
+    description: CI workflow 文件名（位于 .github/workflows/）
+    required: false
+    default: ci.yml
+  sha:
+    description: 要校验的 commit SHA
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: 校验 CI 已通过
+      shell: bash
+      env:
+        WORKFLOW_FILE: ${{ inputs.workflow_file }}
+        INPUT_SHA: ${{ inputs.sha }}
+      run: |
+        set -euo pipefail
+
+        SHA="${INPUT_SHA:-${GITHUB_SHA}}"
+        REPO="${GITHUB_REPOSITORY}"
+
+        echo "检查 commit ${SHA} 的 CI（${WORKFLOW_FILE}）…"
+
+        runs_json=$(gh api \
+          -H "Accept: application/vnd.github+json" \
+          "/repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?head_sha=${SHA}&per_page=20")
+
+        success_url=$(echo "$runs_json" | jq -r '
+          [.workflow_runs[] | select(.status == "completed" and .conclusion == "success")]
+          | sort_by(.updated_at) | reverse | .[0].html_url // empty
+        ')
+
+        if [ -n "${success_url}" ]; then
+          echo "CI 已通过: ${success_url}"
+          exit 0
+        fi
+
+        in_progress=$(echo "$runs_json" | jq -r '
+          [.workflow_runs[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting")]
+          | sort_by(.updated_at) | reverse | .[0] // empty
+        ')
+
+        if [ -n "${in_progress}" ] && [ "${in_progress}" != "null" ]; then
+          url=$(echo "$in_progress" | jq -r '.html_url')
+          echo "::error::commit ${SHA} 的 CI 仍在运行，请等待通过后再打包。"
+          echo "运行中: ${url}"
+          exit 1
+        fi
+
+        latest=$(echo "$runs_json" | jq -r '
+          [.workflow_runs[] | select(.status == "completed")]
+          | sort_by(.updated_at) | reverse | .[0] // empty
+        ')
+
+        if [ -n "${latest}" ] && [ "${latest}" != "null" ]; then
+          url=$(echo "$latest" | jq -r '.html_url')
+          conclusion=$(echo "$latest" | jq -r '.conclusion')
+          echo "::error::commit ${SHA} 的 CI 未通过（${conclusion}），已中止打包。"
+          echo "最近运行: ${url}"
+          exit 1
+        fi
+
+        echo "::error::commit ${SHA} 上未找到 CI 运行记录。"
+        echo "::error::请先 push 到默认分支，待 Actions「CI」三端矩阵全部通过后再打 tag 或手动触发打包。"
+        exit 1

@@ -1,0 +1,227 @@
+# 测试包：Pre-release，不成为 Latest，不影响正式发布流程。
+#
+# 触发：
+#   - 推送 vX.Y.Z-testN tag（默认三端全打）
+#   - 推送 vX.Y.Z-testN-<platforms>（仅打指定平台，见 plan job）
+#   - 手动 workflow_dispatch（勾选平台）
+#
+# Tag 平台后缀（在 -testN 之后，用 - 连接）：
+#   v0.2.0-test16              → windows + linux + macos
+#   v0.2.0-test16-windows      → 仅 Windows
+#   v0.2.0-test16-linux        → 仅 Linux
+#   v0.2.0-test16-macos        → 仅 macOS
+#   v0.2.0-test16-windows-linux → Windows + Linux
+#   别名：win / mac
+#
+# 打包前不重复跑测试：校验当前 commit 上 ci.yml 已成功（见 verify-ci-passed）。
+name: Release Test
+
+on:
+  push:
+    tags:
+      - "v*-test*"
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: 构建 Windows 包
+        type: boolean
+        default: true
+      build_linux:
+        description: 构建 Linux 包
+        type: boolean
+        default: true
+      build_macos:
+        description: 构建 macOS 包
+        type: boolean
+        default: true
+      release_notes:
+        description: 相对上一测试包的变更说明（手动触发时填写，Markdown）
+        type: string
+        required: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  plan:
+    name: 解析平台与 Release tag
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_body: ${{ steps.notes.outputs.body }}
+      build_windows: ${{ steps.meta.outputs.build_windows }}
+      build_linux: ${{ steps.meta.outputs.build_linux }}
+      build_macos: ${{ steps.meta.outputs.build_macos }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RELEASE_TAG="${{ github.ref_name }}"
+          else
+            RELEASE_TAG="test-run-${{ github.run_id }}"
+          fi
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+          build_windows=false
+          build_linux=false
+          build_macos=false
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            [ "${{ inputs.build_windows }}" = "true" ] && build_windows=true
+            [ "${{ inputs.build_linux }}" = "true" ] && build_linux=true
+            [ "${{ inputs.build_macos }}" = "true" ] && build_macos=true
+          elif [[ "${RELEASE_TAG}" =~ -test[0-9]+$ ]]; then
+            build_windows=true
+            build_linux=true
+            build_macos=true
+          elif [[ "${RELEASE_TAG}" =~ -test[0-9]+-(.+)$ ]]; then
+            suffix="${BASH_REMATCH[1]}"
+            IFS='-' read -ra parts <<< "${suffix}"
+            for part in "${parts[@]}"; do
+              case "${part}" in
+                windows|win) build_windows=true ;;
+                linux) build_linux=true ;;
+                macos|mac) build_macos=true ;;
+                *)
+                  echo "::warning::未知平台后缀「${part}」，已忽略"
+                  ;;
+              esac
+            done
+            if ! $build_windows && ! $build_linux && ! $build_macos; then
+              echo "::error::未识别任何平台后缀「${suffix}」"
+              exit 1
+            fi
+          else
+            build_windows=true
+            build_linux=true
+            build_macos=true
+          fi
+
+          if ! $build_windows && ! $build_linux && ! $build_macos; then
+            echo "::error::至少选择一个平台"
+            exit 1
+          fi
+
+          echo "build_windows=${build_windows}" >> "$GITHUB_OUTPUT"
+          echo "build_linux=${build_linux}" >> "$GITHUB_OUTPUT"
+          echo "build_macos=${build_macos}" >> "$GITHUB_OUTPUT"
+
+          echo "Release tag: ${RELEASE_TAG}"
+          echo "Platforms: windows=${build_windows} linux=${build_linux} macos=${build_macos}"
+
+      - name: 校验当前 commit 的 CI 已通过
+        uses: ./.github/actions/verify-ci-passed
+
+      - id: notes
+        uses: ./.github/actions/prepare-release-notes
+        with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
+          dispatch_notes: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes || '' }}
+
+  build-and-release-windows:
+    name: 测试包 (windows-latest)
+    needs: plan
+    if: needs.plan.outputs.build_windows == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建 release
+        run: cargo build --release
+
+      - name: 准备发布文件
+        shell: bash
+        run: cp "target/release/symm.exe" "symm-windows-x64.exe"
+
+      - name: 上传到 GitHub Release（测试）
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.plan.outputs.release_tag }}
+          name: Test ${{ needs.plan.outputs.release_tag }}
+          body: ${{ needs.plan.outputs.release_body }}
+          files: symm-windows-x64.exe
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+
+  build-and-release-linux:
+    name: 测试包 (ubuntu-latest)
+    needs: plan
+    if: needs.plan.outputs.build_linux == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建 release
+        run: cargo build --release
+
+      - name: 准备发布文件
+        shell: bash
+        run: cp "target/release/symm" "symm-linux-x64"
+
+      - name: 上传到 GitHub Release（测试）
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.plan.outputs.release_tag }}
+          name: Test ${{ needs.plan.outputs.release_tag }}
+          body: ${{ needs.plan.outputs.release_body }}
+          files: symm-linux-x64
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+
+  build-and-release-macos:
+    name: 测试包 (macos-latest)
+    needs: plan
+    if: needs.plan.outputs.build_macos == 'true'
+    runs-on: macos-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 构建 release
+        run: cargo build --release
+
+      - name: 准备发布文件
+        shell: bash
+        run: cp "target/release/symm" "symm-macos-x64"
+
+      - name: 上传到 GitHub Release（测试）
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.plan.outputs.release_tag }}
+          name: Test ${{ needs.plan.outputs.release_tag }}
+          body: ${{ needs.plan.outputs.release_body }}
+          files: symm-macos-x64
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false

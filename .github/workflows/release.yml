@@ -1,3 +1,5 @@
+# 正式发布：仅匹配无连字符的 semver tag（如 v0.2.0），勿用 -test / -rc 等后缀。
+# 打包前不重复跑测试：校验当前 commit 上 ci.yml 已成功。
 name: Release
 
 on:
@@ -7,10 +9,37 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  verify-ci:
+    name: 校验 CI 已通过
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/verify-ci-passed
+
+  prepare-release:
+    name: 准备 Release 说明
+    needs: verify-ci
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    outputs:
+      release_body: ${{ steps.notes.outputs.body }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: notes
+        uses: ./.github/actions/prepare-release-notes
+        with:
+          tag_name: ${{ github.ref_name }}
+
   build-and-release-windows:
     name: 发布产物 (windows-latest)
+    needs: prepare-release
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: windows-latest
     steps:
       - name: 检出代码
@@ -32,12 +61,15 @@ jobs:
       - name: 上传到 GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          body: ${{ needs.prepare-release.outputs.release_body }}
           files: symm-windows-x64.exe
-          prerelease: ${{ contains(github.ref_name, '-test') }}
+          prerelease: false
+          make_latest: true
 
   build-and-release-linux:
     name: 发布产物 (ubuntu-latest)
-    if: ${{ !contains(github.ref_name, '-test') }}
+    needs: prepare-release
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
@@ -59,12 +91,15 @@ jobs:
       - name: 上传到 GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          body: ${{ needs.prepare-release.outputs.release_body }}
           files: symm-linux-x64
           prerelease: false
+          make_latest: true
 
   build-and-release-macos:
     name: 发布产物 (macos-latest)
-    if: ${{ !contains(github.ref_name, '-test') }}
+    needs: prepare-release
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: macos-latest
     steps:
       - name: 检出代码
@@ -86,5 +121,7 @@ jobs:
       - name: 上传到 GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          body: ${{ needs.prepare-release.outputs.release_body }}
           files: symm-macos-x64
           prerelease: false
+          make_latest: true
