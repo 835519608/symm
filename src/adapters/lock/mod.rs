@@ -70,7 +70,8 @@ where
             Ok(procs) => Ok(procs),
             Err(err) if uac_cancelled_by_user(&err) => Err(err),
             Err(elevated_err) => {
-                if let Ok(procs) = platform().list_locking_processes_with_progress(path, &mut progress)
+                if let Ok(procs) =
+                    platform().list_locking_processes_with_progress(path, &mut progress)
                     && !procs.is_empty()
                 {
                     return Ok(procs);
