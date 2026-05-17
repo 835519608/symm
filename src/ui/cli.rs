@@ -16,8 +16,9 @@ pub enum Commands {
         target: PathBuf,
     },
     Rm {
-        /// 记录 ID、name 或 link_path
-        selector: String,
+        /// ls 序号（纯数字）或 name；可多个；省略则交互多选
+        #[arg(value_name = "SELECTOR")]
+        selectors: Vec<String>,
     },
     Ls {
         #[arg(long)]
@@ -30,7 +31,7 @@ pub enum Commands {
         offset: u32,
     },
     Show {
-        /// 记录 ID、name 或 link_path；省略则交互选择
+        /// ls 序号（纯数字）或 name；省略则交互选择
         selector: Option<String>,
         #[arg(long)]
         json: bool,

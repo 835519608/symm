@@ -3,6 +3,7 @@ use crate::domain::error::SymmError;
 use std::fs;
 use std::path::Path;
 
+/// 删除文件、软链或目录树（不存在则忽略）。
 pub fn remove_path_any(path: &Path) -> Result<(), SymmError> {
     match fs::symlink_metadata(path) {
         Ok(meta) => {

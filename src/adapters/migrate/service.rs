@@ -1,9 +1,7 @@
-use crate::adapters::errors::io_map::ioe;
-use crate::adapters::fs::path_ops;
-use crate::adapters::fs::rebase::rebase_symlinks_in_tree;
+use super::{copy, rebase, relocate};
+use crate::adapters::paths::path_ops;
 use crate::adapters::platform::{PlatformFs, format_relocate_failure, fs_platform};
 use crate::domain::error::SymmError;
-use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -50,16 +48,16 @@ where
             source: src.display().to_string(),
             target: dst.display().to_string(),
         })?;
-        fs::rename(src, dst).map_err(ioe)?;
-        rebase_symlinks_in_tree(dst, src)?;
+        move_path_with_retry(src, dst, "迁移项")?;
+        rebase::rebase_symlinks_in_tree(dst, src)?;
         return Ok(());
     }
 
     if let Some(acl_file) = fs_platform().snapshot_dir_acl(src)? {
-        super::copy_with_progress::copy_path_with_progress(src, dst, reporter)?;
+        copy::copy_path_with_progress(src, dst, reporter)?;
         let _ = fs_platform().restore_dir_acl(dst, &acl_file);
     } else {
-        super::copy_with_progress::copy_path_with_progress(src, dst, reporter)?;
+        copy::copy_path_with_progress(src, dst, reporter)?;
     }
 
     reporter(MigrationEvent::RemovingSource {
@@ -105,16 +103,21 @@ pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {
 }
 
 pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    fs_platform()
-        .relocate_path(src, dst)
-        .map_err(|failure| format_relocate_failure(role, failure))
+    match fs_platform().relocate_path(src, dst) {
+        Ok(()) => Ok(()),
+        Err(failure) if failure.symlink_needs_recreate => relocate::relocate_symlink(src, dst)
+            .map_err(|inner| SymmError::IoError {
+                message: format!("无法移动 {role}：{inner}"),
+            }),
+        Err(failure) => Err(format_relocate_failure(role, failure)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{MigrationEvent, migrate_path, move_path_without_progress};
-    use crate::adapters::fs::copy_with_progress::copy_path_with_progress;
-    use crate::adapters::fs::rebase;
+    use crate::adapters::migrate::copy::copy_path_with_progress;
+    use crate::adapters::migrate::rebase;
     use crate::domain::error::SymmError;
     use std::fs;
     use std::path::Path;

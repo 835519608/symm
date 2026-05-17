@@ -10,12 +10,12 @@ struct ErrorPayload<'a> {
 }
 
 pub fn write_list_table<W: Write>(writer: &mut W, items: &[LinkView]) -> Result<(), SymmError> {
-    let headers = ["ID", "名称", "状态", "类型", "链接路径", "目标路径"];
+    let headers = ["序号", "名称", "状态", "类型", "链接路径", "目标路径"];
     let rows: Vec<Vec<String>> = items
         .iter()
         .map(|item| {
             vec![
-                item.id.to_string(),
+                item.index.to_string(),
                 item.display_name(),
                 item.status.to_string(),
                 item.link_kind.to_string(),
@@ -51,8 +51,8 @@ pub fn write_json_item<W: Write>(
 
 pub fn render_show_table(item: &LinkView) -> String {
     format!(
-        "ID: {}\n名称: {}\n状态: {}\n类型: {}\n链接路径: {}\n目标路径: {}\n",
-        item.id,
+        "序号: {}\n名称: {}\n状态: {}\n类型: {}\n链接路径: {}\n目标路径: {}\n",
+        item.index,
         item.display_name(),
         item.status,
         item.link_kind,

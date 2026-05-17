@@ -1,7 +1,7 @@
 //! `add` 冲突与接管：直接腾路径并 `migrate_path`，无 staging 旁路文件。
-use crate::adapters::fs::link_remover;
-use crate::adapters::fs::migration_service::{self as migration, MigrationEvent};
-use crate::adapters::fs::path_ops;
+use crate::adapters::migrate::{self as migration, MigrationEvent};
+use crate::adapters::paths::path_ops;
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
 use std::fs;
@@ -89,7 +89,7 @@ fn prepare_symlink_exist(
     }
     match select_symlink_conflict_choice()? {
         SymlinkConflictChoice::Retarget => {
-            link_remover::remove_link(link)?;
+            symlink::remove_link(link)?;
             Ok(finish_outcome(false, target_existed_at_start, false, false))
         }
         SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {

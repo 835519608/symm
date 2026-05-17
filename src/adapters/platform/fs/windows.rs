@@ -1,8 +1,6 @@
 use super::PlatformFs;
 use super::error::{RelocateFailure, map_link_io_error};
 use crate::adapters::errors::io_map::ioe;
-use crate::adapters::fs::path_ops;
-use crate::adapters::fs::rebase;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use std::fs;
@@ -34,10 +32,7 @@ impl PlatformFs for Platform {
                         .map(|m| m.file_type().is_symlink())
                         .unwrap_or(false) =>
             {
-                relocate_symlink_by_recreate(src, dst).map_err(|inner| RelocateFailure {
-                    inner,
-                    access_denied: false,
-                })
+                Err(RelocateFailure::symlink_rename_denied(e))
             }
             Err(e) => Err(RelocateFailure::from_io(e)),
         }
@@ -190,16 +185,4 @@ fn create_junction(target: &Path, link: &Path) -> Result<(), SymmError> {
             message: stderr.into_owned(),
         })
     }
-}
-
-fn relocate_symlink_by_recreate(src: &Path, dst: &Path) -> Result<(), SymmError> {
-    if dst.exists() {
-        path_ops::remove_path_any(dst)?;
-    }
-    if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent).map_err(ioe)?;
-    }
-    rebase::recreate_symlink(src, dst, Some((src, dst)))?;
-    path_ops::remove_path_any(src)?;
-    Ok(())
 }

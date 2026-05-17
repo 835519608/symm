@@ -1,15 +1,10 @@
 use crate::adapters::errors::io_map::ioe;
-use crate::adapters::fs::path_ops;
+use crate::adapters::paths::{path_ops, rebase_paths};
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
-
-#[cfg(unix)]
-use crate::adapters::platform::{PlatformFs, fs_platform};
-
-#[cfg(windows)]
-use crate::adapters::platform::fs::write_symlink_direct;
 
 pub fn recreate_symlink(
     src_link: &Path,
@@ -19,12 +14,12 @@ pub fn recreate_symlink(
     let link_target = fs::read_link(src_link).map_err(ioe)?;
     let rebased_target = match rebase {
         Some((src_root, dst_root)) => {
-            let roots = source_roots(src_root);
-            internal_target(dst_root, src_link, &link_target, &roots)
+            let roots = rebase_paths::source_roots(src_root);
+            rebase_paths::internal_target(dst_root, src_link, &link_target, &roots)
         }
         None => link_target,
     };
-    write_symlink_at(dst_link, &rebased_target)
+    symlink::write_symlink(dst_link, &rebased_target)
 }
 
 /// 目录树内是否存在软链接（发现首个即返回，用于避免无意义的 rebase 重写遍历）。
@@ -54,7 +49,7 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
         return Ok(());
     }
 
-    let roots = source_roots(src_root);
+    let roots = rebase_paths::source_roots(src_root);
 
     for entry in WalkDir::new(dst_root).follow_links(false) {
         let entry = entry.map_err(|e| SymmError::IoError {
@@ -68,68 +63,14 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
             continue;
         }
         let raw = fs::read_link(link_path).map_err(ioe)?;
-        let rebased = internal_target(dst_root, link_path, &raw, &roots);
+        let rebased = rebase_paths::internal_target(dst_root, link_path, &raw, &roots);
         if rebased.as_os_str() == raw.as_os_str() {
             continue;
         }
         path_ops::remove_path_any(link_path)?;
-        write_symlink_at(link_path, &rebased)?;
+        symlink::write_symlink(link_path, &rebased)?;
     }
     Ok(())
-}
-
-fn write_symlink_at(link: &Path, target: &Path) -> Result<(), SymmError> {
-    #[cfg(windows)]
-    {
-        write_symlink_direct(link, target)
-    }
-    #[cfg(not(windows))]
-    {
-        fs_platform().write_symlink(link, target)
-    }
-}
-
-pub(crate) fn internal_target(
-    dst_root: &Path,
-    src_link: &Path,
-    raw_target: &Path,
-    source_roots: &[PathBuf],
-) -> PathBuf {
-    let resolved = if raw_target.is_absolute() {
-        raw_target.to_path_buf()
-    } else {
-        src_link
-            .parent()
-            .unwrap_or_else(|| {
-                source_roots
-                    .first()
-                    .map(PathBuf::as_path)
-                    .unwrap_or(dst_root)
-            })
-            .join(raw_target)
-    };
-
-    for base in source_roots {
-        if let Ok(rel) = resolved.strip_prefix(base) {
-            return dst_root.join(rel);
-        }
-    }
-
-    raw_target.to_path_buf()
-}
-
-pub(crate) fn source_roots(src_root: &Path) -> Vec<PathBuf> {
-    let mut roots = vec![src_root.to_path_buf()];
-    let Some(name) = src_root.file_name().and_then(|n| n.to_str()) else {
-        return roots;
-    };
-    const STAGING_SUFFIX: &str = ".__symm_staging__";
-    if let Some(original_name) = name.strip_suffix(STAGING_SUFFIX) {
-        let mut original = src_root.to_path_buf();
-        original.set_file_name(original_name);
-        roots.push(original);
-    }
-    roots
 }
 
 #[cfg(test)]

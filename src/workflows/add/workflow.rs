@@ -1,11 +1,11 @@
-use crate::adapters::db::repository;
-use crate::adapters::fs::link;
-use crate::adapters::fs::migration_service::MigrationEvent;
+use crate::adapters::db::{LinkQuery, repository};
 use crate::adapters::lock::{
     ProcInfo, empty_lock_list_notice, format_still_locked_message, kill_processes,
     list_locking_processes_with_progress, pre_scan_notices, wait_after_kill,
 };
+use crate::adapters::migrate::MigrationEvent;
 use crate::adapters::paths::runtime_paths;
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use crate::ui::interaction::choice;
@@ -25,7 +25,7 @@ pub fn run<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let link_norm = runtime_paths::normalize_link(link);
-    let existing = repository::get_by_link_path(conn, &link_norm)?;
+    let existing = repository::find_optional(conn, &LinkQuery::link_path_exact(&link_norm))?;
     let mut reporter = MigrationProgressReporter::new(writer);
     ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
     let prep = adopt::resolve_add_conflict(Path::new(&link_norm), target, &mut |event| {
@@ -47,15 +47,20 @@ pub fn run<W: Write>(
             link: link_norm.clone(),
             target: target_norm.clone(),
         })?;
-        link::create_link(Path::new(&target_norm), Path::new(&link_norm))?
+        symlink::create_link(Path::new(&target_norm), Path::new(&link_norm))?
     };
 
     let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-    let name = resolve_add_name(default_name)?;
+    let name_input = resolve_add_name(default_name)?;
     reporter.handle_migration_event(MigrationEvent::PersistingDb {
         link: link_norm.clone(),
     })?;
-    repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind)?;
+    let name = repository::insert_link(conn, &name_input, &link_norm, &target_norm, link_kind)?;
+    if name_input != name && !name_input.is_empty() {
+        reporter.write_line(&format!(
+            "name「{name_input}」已自动改为「{name}」（纯数字会与记录 ID 查询混淆）"
+        ))?;
+    }
     reporter.handle_migration_event(MigrationEvent::Done {
         link: link_norm.clone(),
     })?;

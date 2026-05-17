@@ -24,11 +24,8 @@ pub fn status_for(record: &LinkRecord) -> LinkStatus {
 pub fn as_view(record: LinkRecord) -> LinkView {
     let status = status_for(&record);
     LinkView {
-        id: record.id,
-        name: record.name,
-        link_path: record.link_path,
-        target_path: record.target_path,
-        link_kind: record.link_kind,
+        record,
+        index: 0,
         status,
     }
 }

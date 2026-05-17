@@ -66,7 +66,12 @@ fn collect_views(
     let scanned = records.len();
     let filtered: Vec<LinkView> = records
         .into_iter()
-        .map(link_status::as_view)
+        .enumerate()
+        .map(|(i, record)| {
+            let mut view = link_status::as_view(record);
+            view.index = i as u32 + 1;
+            view
+        })
         .filter(|view| wanted.is_none_or(|status| view.status == status))
         .collect();
 

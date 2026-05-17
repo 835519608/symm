@@ -9,7 +9,7 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
         Commands::Add { link, target } => {
             workflows::add::workflow::run(&conn, &link, &target, writer)
         }
-        Commands::Rm { selector } => workflows::rm::workflow::run(&conn, &selector, writer),
+        Commands::Rm { selectors } => workflows::rm::workflow::run(&conn, &selectors, writer),
         Commands::Ls {
             json,
             status,

@@ -1,50 +1,102 @@
-//! `rm`：删库后删除 link，或将 target 迁回 link 路径。
-use crate::adapters::db::repository;
-use crate::adapters::fs::link_remover;
-use crate::adapters::fs::migration_service as migration;
+//! `rm`：删库后删除 link，或将 target 迁回 link 路径。支持多个 selector；省略参数时交互多选。
+use crate::adapters::db::selector;
+use crate::adapters::db::{LinkQuery, repository};
+use crate::adapters::migrate as migration;
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
-use crate::ui::interaction::choice;
+use crate::domain::model::LinkRecord;
+use crate::ui::interaction::{choice, record_picker};
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::perf;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
-    selector: &str,
+    selectors: &[String],
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
-    let record = repository::get_by_selector(conn, selector)?;
-    let link = Path::new(&record.link_path);
-    let target = Path::new(&record.target_path);
+    let records = resolve_records(conn, selectors)?;
     let action = select_rm_action()?;
-    if action == RmAction::RestoreTargetToLink {
-        restore_target_to_link(writer, link, target)?;
+    let mut labels = Vec::with_capacity(records.len());
+    for record in records {
+        labels.push(remove_one(conn, &record, action, writer)?);
     }
-    repository::delete_by_selector(conn, selector)?;
-    if action == RmAction::DeleteLinkOnly {
-        link_remover::remove_link(link)?;
-    }
-    let success_message = match action {
-        RmAction::DeleteLinkOnly => format!("删除成功：{}", record.name),
-        RmAction::RestoreTargetToLink => {
-            format!("删除成功并已恢复 target 到 link：{}", record.name)
-        }
+
+    let summary = if labels.len() == 1 {
+        labels[0].clone()
+    } else {
+        format!("共 {} 条：{}", labels.len(), labels.join("、"))
     };
-    writeln!(writer, "{success_message}").map_err(|e| SymmError::IoError {
+    let action_hint = match action {
+        RmAction::DeleteLinkOnly => "删除成功",
+        RmAction::RestoreTargetToLink => "删除成功并已恢复 target 到 link",
+    };
+    writeln!(writer, "{action_hint}：{summary}").map_err(|e| SymmError::IoError {
         message: e.to_string(),
     })?;
+
     perf::log_perf(
         "rm",
         started.elapsed(),
         &[
-            ("selector", selector.to_string()),
+            ("count", labels.len().to_string()),
             ("action", format!("{action:?}")),
         ],
     );
     Ok(())
+}
+
+fn resolve_records(
+    conn: &rusqlite::Connection,
+    selectors: &[String],
+) -> Result<Vec<LinkRecord>, SymmError> {
+    if selectors.is_empty() {
+        return record_picker::pick_many(conn);
+    }
+
+    let mut records = Vec::with_capacity(selectors.len());
+    let mut seen_ids = HashSet::new();
+    for selector in selectors {
+        let record = selector::resolve_cli_record(conn, selector)?;
+        if seen_ids.insert(record.id) {
+            records.push(record);
+        }
+    }
+    if records.is_empty() {
+        return Err(SymmError::InvalidArgument {
+            message: "未指定要删除的记录".to_string(),
+        });
+    }
+    Ok(records)
+}
+
+fn remove_one<W: Write>(
+    conn: &rusqlite::Connection,
+    record: &LinkRecord,
+    action: RmAction,
+    writer: &mut W,
+) -> Result<String, SymmError> {
+    let link = Path::new(&record.link_path);
+    let target = Path::new(&record.target_path);
+    if action == RmAction::RestoreTargetToLink {
+        restore_target_to_link(writer, link, target)?;
+    }
+    repository::delete_one(conn, &LinkQuery::id(record.id))?;
+    if action == RmAction::DeleteLinkOnly {
+        symlink::remove_link(link)?;
+    }
+    Ok(record_label(record))
+}
+
+fn record_label(record: &LinkRecord) -> String {
+    if !record.name.is_empty() {
+        return record.name.clone();
+    }
+    format!("#{}", record.id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +141,7 @@ fn restore_target_to_link<W: Write>(
     link: &Path,
     target: &Path,
 ) -> Result<(), SymmError> {
-    link_remover::remove_link(link)?;
+    symlink::remove_link(link)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     migration::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)

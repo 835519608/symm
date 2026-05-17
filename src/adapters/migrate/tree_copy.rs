@@ -1,6 +1,5 @@
+use super::{MigrationEvent, rebase};
 use crate::adapters::errors::io_map::ioe;
-use crate::adapters::fs::migration_service::MigrationEvent;
-use crate::adapters::fs::rebase;
 use crate::domain::error::SymmError;
 use std::fs;
 use std::io::{Read, Write};
@@ -118,7 +117,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::copy_dir_tree_with_progress;
-    use crate::adapters::fs::migration_service::MigrationEvent;
+    use crate::adapters::migrate::MigrationEvent;
     use crate::domain::error::SymmError;
     use std::fs;
     use std::path::Path;
@@ -127,14 +126,12 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
-    #[cfg(windows)]
     fn symlink_file(target: &Path, link: &Path) {
-        std::os::windows::fs::symlink_file(target, link).expect("symlink");
-    }
-
-    #[cfg(unix)]
-    fn symlink_file(target: &Path, link: &Path) {
+        #[cfg(unix)]
         symlink(target, link).expect("symlink");
+
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
     }
 
     #[test]

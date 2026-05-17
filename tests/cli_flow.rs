@@ -54,6 +54,85 @@ fn add_then_ls_then_show_then_rm() {
 }
 
 #[test]
+fn rm_by_list_index_after_delete_middle_row() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    for (name, n) in [("a", 1), ("b", 2), ("c", 3)] {
+        let target = data_root.join(format!("target_idx_{n}.txt"));
+        let link = data_root.join(format!("link_idx_{n}.txt"));
+        fs::write(&target, "x").expect("write target");
+        cmd()
+            .env("SYMM_HOME", &symm_home)
+            .env("SYMM_ADD_NAME", name)
+            .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+            .assert()
+            .success();
+    }
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "delete")
+        .args(["rm", "2"])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["show", "2"])
+        .assert()
+        .success()
+        .stdout(contains("名称: c"));
+}
+
+#[test]
+fn rm_multiple_selectors_deletes_all() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target1 = data_root.join("target_rm_multi_1.txt");
+    let link1 = data_root.join("link_rm_multi_1.txt");
+    let target2 = data_root.join("target_rm_multi_2.txt");
+    let link2 = data_root.join("link_rm_multi_2.txt");
+    fs::write(&target1, "a").expect("write target1");
+    fs::write(&target2, "b").expect("write target2");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "rm-a")
+        .args(["add", &link1.to_string_lossy(), &target1.to_string_lossy()])
+        .assert()
+        .success();
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "rm-b")
+        .args(["add", &link2.to_string_lossy(), &target2.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "delete")
+        .args(["rm", "rm-a", "rm-b"])
+        .assert()
+        .success()
+        .stdout(contains("共 2 条"))
+        .stdout(contains("rm-a"))
+        .stdout(contains("rm-b"));
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("[]"));
+}
+
+#[test]
 fn rm_with_restore_moves_target_back_to_link_path() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
@@ -366,7 +445,7 @@ fn add_existing_symlink_pointing_to_same_target_is_managed_without_conflict_prom
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .args(["show", &link.to_string_lossy(), "--json"])
+        .args(["show", "second", "--json"])
         .assert()
         .success()
         .stdout(contains("\"name\": \"second\""));
@@ -578,6 +657,33 @@ fn add_with_invalid_lock_choice_env_fails_fast() {
 }
 
 #[test]
+fn add_pure_digit_name_is_stored_with_link_prefix() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+    let target = data_root.join("target_digit_prefix.txt");
+    let link = data_root.join("link_digit_prefix.txt");
+    fs::write(&target, "x").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "42")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success()
+        .stdout(contains("name「42」已自动改为「link-42」"))
+        .stdout(contains("name: link-42"));
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["show", "link-42"])
+        .assert()
+        .success()
+        .stdout(contains("名称: link-42"));
+}
+
+#[test]
 fn add_name_conflict_leaves_link_for_manual_fixup() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
@@ -714,7 +820,7 @@ fn ls_shows_stale_status_when_link_no_longer_symlink() {
 }
 
 #[test]
-fn show_by_numeric_id() {
+fn show_by_list_index() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -735,6 +841,6 @@ fn show_by_numeric_id() {
         .args(["show", "1", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"id\": 1"))
+        .stdout(contains("\"index\": 1"))
         .stdout(contains("\"name\": \"id-demo\""));
 }

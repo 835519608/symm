@@ -1,5 +1,5 @@
-use crate::adapters::fs::migration_service::MigrationEvent;
 use crate::adapters::lock::LockProbeProgress;
+use crate::adapters::migrate::MigrationEvent;
 use crate::domain::error::SymmError;
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};

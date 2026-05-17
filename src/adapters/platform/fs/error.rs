@@ -5,6 +5,8 @@ use crate::domain::error::SymmError;
 pub struct RelocateFailure {
     pub inner: SymmError,
     pub access_denied: bool,
+    /// Windows：`rename` 软链遇 ACCESS_DENIED 时由 migrate 层经 `symlink::write_symlink` 兜底。
+    pub symlink_needs_recreate: bool,
 }
 
 impl RelocateFailure {
@@ -12,6 +14,15 @@ impl RelocateFailure {
         Self {
             access_denied: err.raw_os_error() == Some(5),
             inner: map_io_error(err),
+            symlink_needs_recreate: false,
+        }
+    }
+
+    pub fn symlink_rename_denied(err: std::io::Error) -> Self {
+        Self {
+            access_denied: true,
+            inner: map_io_error(err),
+            symlink_needs_recreate: true,
         }
     }
 }
