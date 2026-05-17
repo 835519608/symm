@@ -40,7 +40,7 @@ where
             batch: 1,
             total_batches: 1,
         });
-        return privileged::list_locking_processes(path);
+        privileged::list_locking_processes(path)
     }
 
     #[cfg(unix)]
