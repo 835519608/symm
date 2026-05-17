@@ -1,5 +1,4 @@
 use crate::domain::error::SymmError;
-use std::fs;
 use std::path::Path;
 
 pub fn normalize_target(path: &Path) -> Result<String, SymmError> {
@@ -27,8 +26,7 @@ pub fn normalize_link(path: &Path) -> String {
 }
 
 fn canonicalish(path: &Path) -> String {
-    match fs::canonicalize(path) {
-        Ok(p) => p.to_string_lossy().to_string(),
-        Err(_) => path.to_string_lossy().to_string(),
-    }
+    dunce::canonicalize(path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string_lossy().to_string())
 }

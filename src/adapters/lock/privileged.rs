@@ -1,18 +1,14 @@
-//! 查锁/杀进程：通过提权子进程执行（Windows UAC / Unix sudo）；调用方已在 `lock::mod` 完成分流。
+//! 查锁/杀进程：通过提权子进程执行（`runas`）；调用方已在 `lock::mod` 完成分流。
 
 use super::ProcInfo;
 use super::snapshot::{read_snapshot, write_snapshot};
+use crate::adapters::platform::elevate;
 use crate::adapters::platform::process::{PlatformProcess, platform};
 use crate::domain::error::SymmError;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-#[cfg(windows)]
-use crate::adapters::platform::elevate;
 
 pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     let snapshot = temp_snapshot_path("list");
@@ -90,33 +86,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    #[cfg(windows)]
-    {
-        elevate::run_elevated(args)
-    }
-
-    #[cfg(unix)]
-    {
-        let exe = env::current_exe().map_err(|e| SymmError::IoError {
-            message: format!("无法定位当前可执行文件：{e}"),
-        })?;
-        let status = Command::new("sudo")
-            .arg(&exe)
-            .args(args.into_iter().map(|s| s.as_ref().to_os_string()))
-            .status()
-            .map_err(|e| SymmError::IoError {
-                message: format!("无法通过 sudo 启动提权子进程：{e}"),
-            })?;
-        if status.success() {
-            return Ok(());
-        }
-        Err(SymmError::PermissionDenied {
-            message: format!(
-                "需要管理员/root 权限（sudo 退出码 {}）",
-                status.code().unwrap_or(-1)
-            ),
-        })
-    }
+    elevate::run_elevated(args)
 }
 
 fn temp_snapshot_path(kind: &str) -> PathBuf {
