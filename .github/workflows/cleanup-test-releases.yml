@@ -1,0 +1,75 @@
+# 定时清理测试 Pre-release：全库只保留发布时间最新的一条 *-test* Release（含 tag）。
+#
+# 调度：每日北京时间 01:00（cron 使用 Asia/Shanghai）。
+# 手动：gh workflow run cleanup-test-releases.yml
+name: Cleanup Test Releases
+
+on:
+  schedule:
+    - cron: "0 1 * * *"
+      timezone: Asia/Shanghai
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: 仅保留最新测试包
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 删除旧测试 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t to_delete < <(
+            gh release list --limit 200 --json tagName,isPrerelease,publishedAt \
+              --jq '
+                [.[]
+                  | select(.isPrerelease)
+                  | select(.tagName | test("-test"))
+                ]
+                | sort_by(.publishedAt)
+                | reverse
+                | .[1:]
+                | .[].tagName
+              '
+          )
+
+          if [ "${#to_delete[@]}" -eq 0 ]; then
+            latest="$(gh release list --limit 200 --json tagName,isPrerelease,publishedAt \
+              --jq '
+                [.[]
+                  | select(.isPrerelease)
+                  | select(.tagName | test("-test"))
+                ]
+                | sort_by(.publishedAt)
+                | reverse
+                | .[0].tagName // empty
+              ')"
+            if [ -z "${latest}" ]; then
+              echo "无测试 Pre-release，跳过"
+            else
+              echo "仅存在一条测试包，保留：${latest}"
+            fi
+            exit 0
+          fi
+
+          latest="$(gh release list --limit 200 --json tagName,isPrerelease,publishedAt \
+            --jq '
+              [.[]
+                | select(.isPrerelease)
+                | select(.tagName | test("-test"))
+              ]
+              | sort_by(.publishedAt)
+              | reverse
+              | .[0].tagName
+            ')"
+          echo "保留最新测试包：${latest}"
+          for tag in "${to_delete[@]}"; do
+            echo "删除：${tag}"
+            gh release delete "${tag}" --yes --cleanup-tag
+          done

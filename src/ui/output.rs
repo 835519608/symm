@@ -108,11 +108,7 @@ fn append_row(out: &mut String, cells: &[&str], widths: &[usize], is_header: boo
             out.push(' ');
         }
         let width = widths.get(i).copied().unwrap_or(0);
-        if is_header {
-            pad_cell_center(out, cell, width);
-        } else {
-            pad_cell_left(out, cell, width);
-        }
+        pad_cell_left(out, cell, width);
     }
     out.push('\n');
     if is_header {
@@ -131,18 +127,6 @@ fn append_row(out: &mut String, cells: &[&str], widths: &[usize], is_header: boo
 fn pad_cell_left(out: &mut String, cell: &str, width: usize) {
     out.push_str(cell);
     for _ in 0..width.saturating_sub(cell_width(cell)) {
-        out.push(' ');
-    }
-}
-
-fn pad_cell_center(out: &mut String, cell: &str, width: usize) {
-    let pad = width.saturating_sub(cell_width(cell));
-    let left = pad / 2;
-    for _ in 0..left {
-        out.push(' ');
-    }
-    out.push_str(cell);
-    for _ in 0..(pad - left) {
         out.push(' ');
     }
 }

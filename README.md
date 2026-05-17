@@ -348,6 +348,7 @@ cargo build --release --target <triple>
 | **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | ubuntu / windows / macos：`fmt` → `clippy -D warnings` → `test` |
 | **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，三平台，设为 Latest |
 | **Release Test** | 推送 `vX.Y.Z-test[-平台]` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定平台（见下） |
+| **Cleanup Test Releases** | 每日北京时间 01:00 或手动触发 | 删除旧测试 Pre-release，**仅保留发布时间最新的一条** `*-test*` |
 
 **Release Test 平台与版本**（正式 `release.yml` 仍固定三端全打）：
 
