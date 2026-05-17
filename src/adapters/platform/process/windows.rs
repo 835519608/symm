@@ -1,6 +1,8 @@
 use super::{LockProbeProgress, PlatformProcess, ProcInfo};
 use crate::domain::error::SymmError;
 use std::path::Path;
+use std::process::Command;
+use std::time::Duration;
 
 pub struct Platform;
 
@@ -57,18 +59,49 @@ where
 
 pub(crate) fn kill_processes_direct(pids: &[u32]) -> Result<(), SymmError> {
     use filelocksmith::{quit_processes, set_debug_privilege};
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     if pids.is_empty() {
         return Ok(());
     }
 
     let _ = set_debug_privilege();
-    let ids = pids.iter().map(|pid| *pid as usize).collect::<Vec<_>>();
-    if quit_processes(ids) {
-        Ok(())
-    } else {
-        Err(SymmError::PermissionDenied {
-            message: "无法结束占用进程（可能无权限）".to_string(),
-        })
+    let targets_explorer = pids.iter().any(|pid| is_explorer_pid(*pid));
+    if targets_explorer {
+        dismiss_explorer_windows(CREATE_NO_WINDOW);
     }
+
+    let ids = pids.iter().map(|pid| *pid as usize).collect::<Vec<_>>();
+    if !quit_processes(ids) {
+        return Err(SymmError::PermissionDenied {
+            message: "无法结束占用进程（可能无权限）".to_string(),
+        });
+    }
+
+    if targets_explorer {
+        // explorer 被结束后 winlogon 会立即拉起新实例，需留出句柄释放时间。
+        std::thread::sleep(Duration::from_millis(1500));
+    }
+    Ok(())
+}
+
+fn is_explorer_pid(pid: u32) -> bool {
+    filelocksmith::pid_to_process_path(pid as usize)
+        .is_some_and(|path| path.to_ascii_lowercase().ends_with("explorer.exe"))
+}
+
+fn dismiss_explorer_windows(create_no_window: u32) {
+    let _ = Command::new("powershell")
+        .creation_flags(create_no_window)
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$shell = New-Object -ComObject Shell.Application; foreach ($w in @($shell.Windows())) { try { $w.Quit() } catch {} }",
+        ])
+        .status();
 }

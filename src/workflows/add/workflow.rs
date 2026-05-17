@@ -1,7 +1,10 @@
 use crate::adapters::db::repository;
 use crate::adapters::fs::link;
 use crate::adapters::fs::migration_service::MigrationEvent;
-use crate::adapters::lock::{ProcInfo, kill_processes, list_locking_processes_with_progress};
+use crate::adapters::lock::{
+    ProcInfo, format_still_locked_message, kill_processes, list_locking_processes_with_progress,
+    poll_until_unlocked,
+};
 use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
@@ -112,17 +115,12 @@ fn ensure_link_not_locked<W: Write>(
     let pids = procs.iter().map(|proc| proc.pid).collect::<Vec<_>>();
     kill_processes(&pids)?;
     reporter.write_line("正在重新确认占用状态")?;
-    let remaining = list_locking_processes_with_progress(link, |_event| {})?;
+    let remaining = poll_until_unlocked(link)?;
     if remaining.is_empty() {
         return Ok(());
     }
     Err(SymmError::IoError {
-        message: format!(
-            "link 路径仍被占用，未执行 add：{}（剩余 {} 个进程，示例：{}）",
-            link.display(),
-            remaining.len(),
-            remaining[0]
-        ),
+        message: format_still_locked_message(link, &remaining),
     })
 }
 

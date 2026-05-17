@@ -43,7 +43,7 @@ pub fn mark_mock_released_if_configured() {
     }
 }
 
-fn mock_locks_clear_on_kill() -> bool {
+pub fn mock_locks_clear_on_kill() -> bool {
     std::env::var("SYMM_TEST_LOCK_CLEAR_ON_KILL")
         .map(|value| {
             !matches!(

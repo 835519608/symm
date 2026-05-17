@@ -1,8 +1,11 @@
 //! 文件占用检测与结束进程（编排层；底层 OS 调用在 `platform::process`）。
 
 mod privileged;
+mod release;
 mod snapshot;
 mod test_hooks;
+
+pub use release::{format_still_locked_message, poll_until_unlocked};
 
 pub use crate::adapters::platform::process::{LockProbeProgress, ProcInfo};
 
@@ -30,8 +33,17 @@ where
         return platform().list_locking_processes_with_progress(path, &mut progress);
     }
 
-    // Windows：同用户占用进程通常无需 UAC；仅失败时再走提权子进程 + 快照文件。
+    // Windows 非管理员：filelocksmith 需 SeDebug 才能枚举部分句柄；与结束占用一致走 UAC 提权子进程。
     #[cfg(windows)]
+    {
+        progress(LockProbeProgress::Querying {
+            batch: 1,
+            total_batches: 1,
+        });
+        return privileged::list_locking_processes(path);
+    }
+
+    #[cfg(unix)]
     if let Ok(procs) = platform().list_locking_processes_with_progress(path, &mut progress) {
         return Ok(procs);
     }

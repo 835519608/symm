@@ -1,13 +1,31 @@
 use crate::domain::error::SymmError;
 
+pub fn format_io_error(error: &std::io::Error) -> String {
+    let mut message = error.to_string();
+    append_windows_lock_hint(error, &mut message);
+    message
+}
+
 pub fn ioe(error: std::io::Error) -> SymmError {
     SymmError::IoError {
-        message: error.to_string(),
+        message: format_io_error(&error),
     }
 }
 
 pub fn io_ctx(context: &str, error: std::io::Error) -> SymmError {
     SymmError::IoError {
-        message: format!("{context}：{error}"),
+        message: format!("{context}：{}", format_io_error(&error)),
     }
 }
+
+#[cfg(windows)]
+fn append_windows_lock_hint(error: &std::io::Error, message: &mut String) {
+    if error.raw_os_error() == Some(33) {
+        message.push_str(
+            "。该文件可能被其它程序独占锁定（常见于 Cursor 等仍打开该目录时）；请完全退出相关程序。若此前占用检测未列出进程，请以管理员身份运行 symm 并授权 UAC",
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn append_windows_lock_hint(_error: &std::io::Error, _message: &mut String) {}

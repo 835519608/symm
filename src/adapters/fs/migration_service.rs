@@ -95,9 +95,13 @@ pub fn can_use_fast_move(src: &Path, dst: &Path) -> Result<bool, SymmError> {
 }
 
 pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {
-    SymmError::IoError {
-        message: e.to_string(),
-    }
+    let message = match e.kind {
+        fs_extra::error::ErrorKind::Io(ref io_err) => {
+            crate::adapters::errors::io_map::format_io_error(io_err)
+        }
+        _ => e.to_string(),
+    };
+    SymmError::IoError { message }
 }
 
 pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
