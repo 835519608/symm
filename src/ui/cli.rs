@@ -24,9 +24,6 @@ pub enum Commands {
         json: bool,
         #[arg(long)]
         status: Option<StatusArg>,
-        /// 包含 stale/drift 等库内异常记录（默认仅显示仍由 symm 纳管的软链）
-        #[arg(long)]
-        all: bool,
         #[arg(long)]
         limit: Option<u32>,
         #[arg(long, default_value_t = 0)]

@@ -11,14 +11,13 @@ pub fn run<W: Write>(
     conn: &rusqlite::Connection,
     json: bool,
     wanted: Option<LinkStatus>,
-    show_all: bool,
     limit: Option<u32>,
     offset: u32,
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let records = repository::list_links(conn)?;
-    let views = collect_views(records, wanted, show_all, limit, offset);
+    let views = collect_views(records, wanted, limit, offset);
     let scanned = views.scanned;
     let emitted = views.items.len();
 
@@ -39,7 +38,6 @@ pub fn run<W: Write>(
                     .map(|status| status.to_string())
                     .unwrap_or_else(|| "none".to_string()),
             ),
-            ("all", show_all.to_string()),
             (
                 "limit",
                 limit
@@ -62,7 +60,6 @@ struct CollectedViews {
 fn collect_views(
     records: Vec<crate::domain::model::LinkRecord>,
     wanted: Option<LinkStatus>,
-    show_all: bool,
     limit: Option<u32>,
     offset: u32,
 ) -> CollectedViews {
@@ -70,7 +67,7 @@ fn collect_views(
     let filtered: Vec<LinkView> = records
         .into_iter()
         .map(link_status::as_view)
-        .filter(|view| should_emit(view, wanted, show_all))
+        .filter(|view| wanted.is_none_or(|status| view.status == status))
         .collect();
 
     let start = offset as usize;
@@ -84,13 +81,6 @@ fn collect_views(
         .collect();
 
     CollectedViews { items, scanned }
-}
-
-fn should_emit(view: &LinkView, wanted: Option<LinkStatus>, show_all: bool) -> bool {
-    if !show_all && !link_status::visible_in_default_ls(view.status) {
-        return false;
-    }
-    wanted.is_none_or(|status| view.status == status)
 }
 
 fn stream_ls_json<W: Write>(items: &[LinkView], writer: &mut W) -> Result<(), SymmError> {

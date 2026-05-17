@@ -33,11 +33,6 @@ pub fn as_view(record: LinkRecord) -> LinkView {
     }
 }
 
-/// 默认 `ls` 隐藏 stale（路径已非软链）；drift/broken/missing 仍会显示以便处理。
-pub fn visible_in_default_ls(status: LinkStatus) -> bool {
-    status != LinkStatus::Stale
-}
-
 fn symlink_target_matches(link: &Path, expected: &Path) -> bool {
     let Ok(actual) = fs::read_link(link) else {
         return false;

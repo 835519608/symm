@@ -683,7 +683,7 @@ fn ls_status_filters_broken_and_missing() {
 }
 
 #[test]
-fn ls_hides_stale_record_until_all_flag() {
+fn ls_shows_stale_status_when_link_no_longer_symlink() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -712,15 +712,9 @@ fn ls_hides_stale_record_until_all_flag() {
         .args(["ls"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("stale-item").not());
-
-    cmd()
-        .env("SYMM_HOME", &symm_home)
-        .args(["ls", "--all", "--status", "stale"])
-        .assert()
-        .success()
         .stdout(contains("stale-item"))
-        .stdout(contains("stale"));
+        .stdout(contains("stale"))
+        .stdout(predicates::str::contains(" ok ").not());
 
     cmd()
         .env("SYMM_HOME", &symm_home)
