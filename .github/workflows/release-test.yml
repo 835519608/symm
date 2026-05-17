@@ -142,8 +142,10 @@ jobs:
 
   sync-scoop-manifest:
     name: 同步 Scoop manifest 版本
-    needs: plan
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [plan, build-and-release-windows]
+    if: >-
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+      && needs.plan.outputs.build_windows == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

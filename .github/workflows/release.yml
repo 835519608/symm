@@ -39,7 +39,7 @@ jobs:
 
   sync-scoop-manifest:
     name: 同步 Scoop manifest 版本
-    needs: prepare-release
+    needs: [prepare-release, build-and-release-windows]
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     permissions:

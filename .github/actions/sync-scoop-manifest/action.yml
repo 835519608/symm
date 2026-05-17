@@ -1,29 +1,36 @@
 name: Sync Scoop manifest version
-description: 根据发版 tag 更新 symm.json 的 version 与安装用字面量 URL（Scoop install 不展开 architecture 里的 $version）
+description: 根据发版 tag 更新 symm.json 的 version、安装用字面量 URL 与 SHA256（Scoop install 不展开 $version，且 hash 须为字面量字符串）
 
 inputs:
   release_version:
-    description: 如 0.2.7-test
+    description: 如 0.2.10-test-windows
     required: true
 
 runs:
   using: composite
   steps:
-    - name: 更新 manifest version 与下载 URL
+    - name: 更新 manifest version、URL 与 hash
       shell: bash
       run: |
         set -euo pipefail
+        v="${{ inputs.release_version }}"
+        sums_url="https://github.com/835519608/symm/releases/download/v${v}/SHA256SUMS"
+        hash="$(curl -fsSL "${sums_url}" | awk '/symm-portable-windows-x64\.zip/ { print $1; exit }')"
+        if [ -z "${hash}" ]; then
+          echo "::error::无法在 ${sums_url} 中解析 symm-portable-windows-x64.zip 的 SHA256"
+          exit 1
+        fi
         tmp="$(mktemp)"
-        jq --arg v "${{ inputs.release_version }}" '
+        jq --arg v "${v}" --arg h "${hash}" '
           .version = $v
           | .architecture."64bit".url = "https://github.com/835519608/symm/releases/download/v\($v)/symm-portable-windows-x64.zip"
-          | .architecture."64bit".hash.url = "https://github.com/835519608/symm/releases/download/v\($v)/SHA256SUMS"
+          | .architecture."64bit".hash = $h
         ' symm.json > "${tmp}"
         mv "${tmp}" symm.json
-        grep -E '"version"|"url"' symm.json | head -5
+        grep -E '"version"|"url"|"hash"' symm.json | head -6
 
     - name: 提交到默认分支
-      uses: stefanzweifel/git-auto-commit-action@v5
+      uses: stefanzweifel/git-auto-commit-action@v7
       with:
         commit_message: "chore(scoop): manifest version ${{ inputs.release_version }}"
         file_pattern: symm.json
