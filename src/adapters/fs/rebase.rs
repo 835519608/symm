@@ -1,10 +1,15 @@
 use crate::adapters::errors::io_map::ioe;
 use crate::adapters::fs::path_ops;
-use crate::adapters::platform::{PlatformFs, fs_platform};
 use crate::domain::error::SymmError;
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+#[cfg(unix)]
+use crate::adapters::platform::{PlatformFs, fs_platform};
+
+#[cfg(windows)]
+use crate::adapters::platform::fs::windows::write_symlink_direct;
 
 pub fn recreate_symlink(
     src_link: &Path,
@@ -19,7 +24,7 @@ pub fn recreate_symlink(
         }
         None => link_target,
     };
-    fs_platform().write_symlink(dst_link, &rebased_target)
+    write_symlink_at(dst_link, &rebased_target)
 }
 
 /// 目录树内是否存在软链接（发现首个即返回，用于避免无意义的 rebase 重写遍历）。
@@ -68,9 +73,20 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
             continue;
         }
         path_ops::remove_path_any(link_path)?;
-        fs_platform().write_symlink(link_path, &rebased)?;
+        write_symlink_at(link_path, &rebased)?;
     }
     Ok(())
+}
+
+fn write_symlink_at(link: &Path, target: &Path) -> Result<(), SymmError> {
+    #[cfg(windows)]
+    {
+        return write_symlink_direct(link, target);
+    }
+    #[cfg(not(windows))]
+    {
+        fs_platform().write_symlink(link, target)
+    }
 }
 
 pub(crate) fn internal_target(

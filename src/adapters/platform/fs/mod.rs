@@ -1,7 +1,6 @@
 //! 平台文件系统能力：编译期选择实现，静态分发（无 `dyn`）。
 
 mod error;
-mod unsupported;
 
 #[cfg(unix)]
 mod unix;
@@ -25,12 +24,16 @@ pub trait PlatformFs {
 
 #[cfg(unix)]
 pub use unix::Platform;
-#[cfg(not(any(unix, windows)))]
-pub use unsupported::Platform;
 #[cfg(windows)]
 pub use windows::Platform;
 
 pub fn fs() -> &'static Platform {
     static INSTANCE: Platform = Platform;
     &INSTANCE
+}
+
+/// 提权子进程入口（仅 Windows）。
+#[cfg(windows)]
+pub fn elevated_create_link_entry(target: &Path, link: &Path) -> Result<(), SymmError> {
+    windows::elevated_create_link_entry(target, link)
 }

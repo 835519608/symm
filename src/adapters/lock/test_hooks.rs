@@ -31,6 +31,12 @@ pub fn should_mock_kill_processes() -> bool {
     std::env::var("SYMM_TEST_LOCK_PATHS").is_ok()
 }
 
+/// 集成测试无交互 sudo 时，回退为当前用户直接查锁/杀进程。
+pub fn skip_privileged_lock_probe() -> bool {
+    std::env::var("SYMM_TEST_SKIP_PRIVILEGED_LOCK")
+        .is_ok_and(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
+}
+
 pub fn mark_mock_released_if_configured() {
     if mock_locks_clear_on_kill() {
         MOCK_LOCK_RELEASED.store(true, Ordering::SeqCst);

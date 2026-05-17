@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use symm::ui::cli::{Cli, Commands};
 
 fn main() -> Result<()> {
     if let Err(err) = run() {
@@ -10,20 +11,26 @@ fn main() -> Result<()> {
 }
 
 fn run() -> Result<(), symm::domain::error::SymmError> {
-    let cli = symm::ui::cli::Cli::parse();
+    let cli = Cli::parse();
     let command = cli
         .command
         .ok_or_else(|| symm::domain::error::SymmError::InvalidArgument {
             message: "未提供命令，请使用 --help 查看帮助".to_string(),
         })?;
-    #[cfg(windows)]
-    if !symm::adapters::platform::admin::is_elevated() {
-        return Err(symm::domain::error::SymmError::PermissionDenied {
-            message: "需要管理员权限运行（将通过 UAC 请求授权）".to_string(),
-        });
+
+    match command {
+        Commands::ElevatedListLocks { out, path } => {
+            symm::adapters::lock::elevated_list_locks_entry(&path, &out)
+        }
+        Commands::ElevatedKill { pids } => symm::adapters::lock::elevated_kill_entry(&pids),
+        #[cfg(windows)]
+        Commands::ElevatedCreateLink { target, link } => {
+            symm::adapters::platform::fs::elevated_create_link_entry(&target, &link)
+        }
+        other => {
+            let stdout = std::io::stdout();
+            let mut lock = stdout.lock();
+            symm::app::service::execute(other, &mut lock)
+        }
     }
-    let stdout = std::io::stdout();
-    let mut lock = stdout.lock();
-    symm::app::service::execute(command, &mut lock)?;
-    Ok(())
 }

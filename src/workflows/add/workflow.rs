@@ -1,19 +1,15 @@
 use crate::adapters::db::repository;
-use crate::adapters::fs::link_remover;
+use crate::adapters::fs::link;
 use crate::adapters::fs::migration_service::MigrationEvent;
+use crate::adapters::lock::{ProcInfo, kill_processes, list_locking_processes_with_progress};
 use crate::adapters::paths::runtime_paths;
-use crate::adapters::platform::{
-    PlatformFs, ProcInfo, fs_platform, kill_processes, list_locking_processes_with_progress,
-};
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::add::adopt;
-use crate::workflows::lifecycle::operation_tracker::OperationTracker;
 use crate::workflows::perf;
 use inquire::Text;
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
@@ -27,40 +23,28 @@ pub fn run<W: Write>(
     let started = Instant::now();
     let link_norm = runtime_paths::normalize_link(link);
     let existing = repository::get_by_link_path(conn, &link_norm)?;
-    let payload = serde_json::json!({
-        "link_path": link_norm.clone(),
-        "target_path": target.display().to_string(),
-    })
-    .to_string();
-    let tracker = OperationTracker::begin(conn, "add", &payload)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
-    tracker.pending(repository::OperationStep::Staging, "冲突解析与暂存准备");
     let prep = adopt::resolve_add_conflict(Path::new(&link_norm), target, &mut |event| {
         reporter.handle_migration_event(event)
     })?;
 
-    let target_norm = runtime_paths::normalize_target(target)?;
-    tracker.pending(repository::OperationStep::Migrate, "完成迁移预处理");
-    let link_exists_after_prep = fs::symlink_metadata(Path::new(&link_norm)).is_ok();
-    let link_kind = if link_exists_after_prep {
+    let target_norm = if prep.skip_target_exists_check {
+        runtime_paths::normalize_target_known_exists(target)?
+    } else {
+        runtime_paths::normalize_target(target)?
+    };
+    let link_kind = if prep.link_exists_at_path {
         existing
             .as_ref()
             .map(|r| r.link_kind)
             .unwrap_or(LinkKind::Symlink)
     } else {
-        tracker.pending(repository::OperationStep::LinkChange, "创建 link");
         reporter.handle_migration_event(MigrationEvent::CreatingLink {
             link: link_norm.clone(),
             target: target_norm.clone(),
         })?;
-        match fs_platform().create_link(Path::new(&target_norm), Path::new(&link_norm)) {
-            Ok(kind) => kind,
-            Err(e) => {
-                let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
-                return Err(e);
-            }
-        }
+        link::create_link(Path::new(&target_norm), Path::new(&link_norm))?
     };
 
     let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
@@ -68,21 +52,7 @@ pub fn run<W: Write>(
     reporter.handle_migration_event(MigrationEvent::PersistingDb {
         link: link_norm.clone(),
     })?;
-    tracker.run_pending(
-        repository::OperationStep::DbWrite,
-        "写入 links 表",
-        "写库失败",
-        || {
-            repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind).inspect_err(
-                |_e| {
-                    let _ = link_remover::remove_link(Path::new(&link_norm));
-                    let _ = prep.rollback(Path::new(&link_norm), Path::new(&target_norm));
-                },
-            )
-        },
-    )?;
-    prep.commit()?;
-    tracker.done();
+    repository::insert_link(conn, &name, &link_norm, &target_norm, link_kind)?;
     reporter.handle_migration_event(MigrationEvent::Done {
         link: link_norm.clone(),
     })?;

@@ -15,9 +15,8 @@ pub fn copy_dir_tree_with_progress<F>(
 where
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
-    let total_bytes = dir_file_bytes_total(src)?;
-
     let mut copied_bytes: u64 = 0;
+    let mut files_copied: u64 = 0;
     let mut deferred_symlinks: Vec<(PathBuf, PathBuf)> = Vec::new();
 
     for entry in WalkDir::new(src).follow_links(false) {
@@ -48,30 +47,32 @@ where
         if file_type.is_file() {
             ensure_parent_dir(&dst_path)?;
             copied_bytes =
-                copy_file_with_progress(src_path, &dst_path, copied_bytes, total_bytes, reporter)?;
+                copy_file_with_progress(src_path, &dst_path, copied_bytes, files_copied, reporter)?;
+            files_copied += 1;
+            reporter(MigrationEvent::Copying {
+                copied_bytes,
+                files_copied,
+                current_item: src_path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string()),
+            })?;
         }
     }
 
     for (src_link, dst_link) in deferred_symlinks {
         ensure_parent_dir(&dst_link)?;
         rebase::recreate_symlink(&src_link, &dst_link, Some((src, dst)))?;
+        files_copied += 1;
+        reporter(MigrationEvent::Copying {
+            copied_bytes,
+            files_copied,
+            current_item: dst_link
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string()),
+        })?;
     }
 
     Ok(())
-}
-
-fn dir_file_bytes_total(src: &Path) -> Result<u64, SymmError> {
-    let mut total_bytes: u64 = 0;
-    for entry in WalkDir::new(src).follow_links(false) {
-        let entry = entry.map_err(|e| SymmError::IoError {
-            message: format!("统计迁移大小失败：{e}"),
-        })?;
-        if entry.file_type().is_file() {
-            let meta = fs::symlink_metadata(entry.path()).map_err(ioe)?;
-            total_bytes = total_bytes.saturating_add(meta.len());
-        }
-    }
-    Ok(total_bytes)
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<(), SymmError> {
@@ -85,7 +86,7 @@ fn copy_file_with_progress<F>(
     src: &Path,
     dst: &Path,
     mut copied_bytes: u64,
-    total_bytes: u64,
+    files_copied: u64,
     reporter: &mut F,
 ) -> Result<u64, SymmError>
 where
@@ -106,7 +107,7 @@ where
         copied_bytes = copied_bytes.saturating_add(n as u64);
         reporter(MigrationEvent::Copying {
             copied_bytes,
-            total_bytes,
+            files_copied,
             current_item: current_item.clone(),
         })?;
     }
@@ -156,23 +157,31 @@ mod tests {
     }
 
     #[test]
-    fn copy_dir_tree_reports_total_bytes_progress() {
+    fn copy_dir_tree_reports_copy_progress_without_prescan() {
         let temp = tempdir().expect("temp dir");
         let src = temp.path().join("src_dir");
         let dst = temp.path().join("dst_dir");
         fs::create_dir_all(&src).expect("dir");
         fs::write(src.join("a.txt"), vec![0u8; 1024]).expect("write");
 
-        let mut last_total = 0;
+        let mut max_bytes = 0;
+        let mut max_files = 0;
         copy_dir_tree_with_progress(&src, &dst, &mut |event| {
-            if let MigrationEvent::Copying { total_bytes, .. } = event {
-                last_total = total_bytes;
+            if let MigrationEvent::Copying {
+                copied_bytes,
+                files_copied,
+                ..
+            } = event
+            {
+                max_bytes = max_bytes.max(copied_bytes);
+                max_files = max_files.max(files_copied);
             }
             Ok(())
         })
         .expect("copy");
 
-        assert_eq!(last_total, 1024);
+        assert_eq!(max_bytes, 1024);
+        assert_eq!(max_files, 1);
     }
 
     #[test]

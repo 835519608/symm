@@ -8,6 +8,11 @@ pub fn normalize_target(path: &Path) -> Result<String, SymmError> {
             path: path.to_string_lossy().to_string(),
         });
     }
+    normalize_target_known_exists(path)
+}
+
+/// 调用方已确认 `target` 存在时，跳过 `exists()`，仅规范化路径。
+pub fn normalize_target_known_exists(path: &Path) -> Result<String, SymmError> {
     Ok(canonicalish(path))
 }
 

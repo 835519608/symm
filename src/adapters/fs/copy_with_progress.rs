@@ -47,7 +47,7 @@ where
     if let Err(err) = file::copy_with_progress(src, dst, &options, |info| {
         let _ = reporter(MigrationEvent::Copying {
             copied_bytes: info.copied_bytes,
-            total_bytes: info.total_bytes,
+            files_copied: 1,
             current_item: src.file_name().map(|s| s.to_string_lossy().to_string()),
         });
     }) {

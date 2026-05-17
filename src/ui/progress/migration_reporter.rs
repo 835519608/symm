@@ -1,5 +1,5 @@
 use crate::adapters::fs::migration_service::MigrationEvent;
-use crate::adapters::platform::LockProbeProgress;
+use crate::adapters::lock::LockProbeProgress;
 use crate::domain::error::SymmError;
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
@@ -37,9 +37,9 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
             }
             MigrationEvent::Copying {
                 copied_bytes,
-                total_bytes,
+                files_copied,
                 current_item,
-            } => self.write_copy_progress(copied_bytes, total_bytes, current_item.as_deref()),
+            } => self.write_copy_progress(copied_bytes, files_copied, current_item.as_deref()),
             MigrationEvent::RemovingSource { source } => {
                 self.write_line(&format!("正在删除源路径：{source}"))
             }
@@ -77,21 +77,17 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
     fn write_copy_progress(
         &mut self,
         copied_bytes: u64,
-        total_bytes: u64,
+        files_copied: u64,
         current_item: Option<&str>,
     ) -> Result<(), SymmError> {
-        if !self.should_emit_progress(copied_bytes, total_bytes) {
+        if !self.should_emit_progress(copied_bytes, files_copied) {
             return Ok(());
         }
-        let mut message = if total_bytes == 0 {
-            format!("正在复制：{}", format_bytes(copied_bytes))
-        } else {
-            format!(
-                "正在复制：{} / {}",
-                format_bytes(copied_bytes),
-                format_bytes(total_bytes)
-            )
-        };
+        let mut message = format!(
+            "正在复制：{}，已处理 {} 个文件",
+            format_bytes(copied_bytes),
+            files_copied
+        );
         if let Some(item) = current_item.filter(|name| !name.is_empty()) {
             message.push_str("  当前：");
             message.push_str(item);
@@ -99,27 +95,24 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
         self.write_line(&message)
     }
 
-    fn should_emit_progress(&mut self, copied_bytes: u64, total_bytes: u64) -> bool {
+    fn should_emit_progress(&mut self, copied_bytes: u64, files_copied: u64) -> bool {
         if !self.is_terminal {
             let changed_bucket = self
                 .last_copy_snapshot
-                .is_none_or(|(last_copied, last_total)| {
-                    total_bytes != last_total
-                        || copied_bytes.saturating_sub(last_copied) >= 64 * 1024 * 1024
+                .is_none_or(|(last_copied, last_files)| {
+                    copied_bytes.saturating_sub(last_copied) >= 64 * 1024 * 1024
+                        || files_copied.saturating_sub(last_files) >= 100
                 });
-            let finished = total_bytes > 0 && copied_bytes == total_bytes;
-            if changed_bucket || finished {
-                self.last_copy_snapshot = Some((copied_bytes, total_bytes));
+            if changed_bucket {
+                self.last_copy_snapshot = Some((copied_bytes, files_copied));
                 return true;
             }
             return false;
         }
         let now = Instant::now();
-        let finished = total_bytes > 0 && copied_bytes == total_bytes;
         let should_emit = self
             .last_copy_report_at
-            .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(250))
-            || finished;
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_millis(250));
         if should_emit {
             self.last_copy_report_at = Some(now);
         }

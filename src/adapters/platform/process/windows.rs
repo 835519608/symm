@@ -13,45 +13,62 @@ impl PlatformProcess for Platform {
     where
         F: FnMut(LockProbeProgress),
     {
-        use filelocksmith::{
-            find_processes_locking_path, pid_to_process_path, set_debug_privilege,
-        };
-
-        progress(LockProbeProgress::Querying {
-            batch: 1,
-            total_batches: 1,
-        });
-        let _ = set_debug_privilege();
-        let path_string = path.to_string_lossy().to_string();
-        let pids = find_processes_locking_path(&path_string);
-        let mut out = Vec::with_capacity(pids.len());
-        for pid in pids {
-            let pid_u32 = match u32::try_from(pid) {
-                Ok(pid_u32) => pid_u32,
-                Err(_) => continue,
-            };
-            let display = match pid_to_process_path(pid) {
-                Some(proc_path) => format!("PID {pid_u32}  {proc_path}"),
-                None => format!("PID {pid}"),
-            };
-            out.push(ProcInfo {
-                pid: pid_u32,
-                display,
-            });
-        }
-        Ok(out)
+        list_locking_processes_direct(path, progress)
     }
 
     fn kill_processes(&self, pids: &[u32]) -> Result<(), SymmError> {
-        use filelocksmith::quit_processes;
+        kill_processes_direct(pids)
+    }
+}
 
-        let pids = pids.iter().map(|pid| *pid as usize).collect::<Vec<_>>();
-        if quit_processes(pids) {
-            Ok(())
-        } else {
-            Err(SymmError::PermissionDenied {
-                message: "无法结束占用进程（可能无权限）".to_string(),
-            })
-        }
+pub(crate) fn list_locking_processes_direct<F>(
+    path: &Path,
+    progress: &mut F,
+) -> Result<Vec<ProcInfo>, SymmError>
+where
+    F: FnMut(LockProbeProgress),
+{
+    use filelocksmith::{find_processes_locking_path, pid_to_process_path, set_debug_privilege};
+
+    progress(LockProbeProgress::Querying {
+        batch: 1,
+        total_batches: 1,
+    });
+    let _ = set_debug_privilege();
+    let path_string = path.to_string_lossy().to_string();
+    let pids = find_processes_locking_path(&path_string);
+    let mut out = Vec::with_capacity(pids.len());
+    for pid in pids {
+        let pid_u32 = match u32::try_from(pid) {
+            Ok(pid_u32) => pid_u32,
+            Err(_) => continue,
+        };
+        let display = match pid_to_process_path(pid) {
+            Some(proc_path) => format!("PID {pid_u32}  {proc_path}"),
+            None => format!("PID {pid}"),
+        };
+        out.push(ProcInfo {
+            pid: pid_u32,
+            display,
+        });
+    }
+    Ok(out)
+}
+
+pub(crate) fn kill_processes_direct(pids: &[u32]) -> Result<(), SymmError> {
+    use filelocksmith::{quit_processes, set_debug_privilege};
+
+    if pids.is_empty() {
+        return Ok(());
+    }
+
+    let _ = set_debug_privilege();
+    let ids = pids.iter().map(|pid| *pid as usize).collect::<Vec<_>>();
+    if quit_processes(ids) {
+        Ok(())
+    } else {
+        Err(SymmError::PermissionDenied {
+            message: "无法结束占用进程（可能无权限）".to_string(),
+        })
     }
 }

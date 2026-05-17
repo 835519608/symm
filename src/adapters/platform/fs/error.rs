@@ -44,7 +44,7 @@ pub fn format_relocate_failure(role: &str, failure: RelocateFailure) -> SymmErro
     let mut message = format!("无法移动 {role}：{detail}");
     if failure.access_denied {
         message.push_str(
-            "。系统拒绝访问（os error 5），可能仍有占用未被识别，或当前进程权限不足（可尝试以管理员身份运行）",
+            "。系统拒绝访问（os error 5），可能仍有占用未被识别；可在解除占用时授权提升，或检查目标路径权限",
         );
     }
     SymmError::IoError { message }

@@ -1,16 +1,13 @@
-//! `rm` 删除或恢复：通过 [`migration_service::stage_existing_path`] /
-//! [`rollback_staged_path`] 暂存 link，再删库或把 target 迁回 link（与 `add` 共用 staging 约定）。
+//! `rm`：删库后删除 link，或将 target 迁回 link 路径。
 use crate::adapters::db::repository;
+use crate::adapters::fs::link_remover;
 use crate::adapters::fs::migration_service as migration;
-use crate::adapters::fs::migration_service::{rollback_staged_path, stage_existing_path};
-use crate::adapters::fs::path_ops;
 use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
-use crate::workflows::lifecycle::operation_tracker::OperationTracker;
 use crate::workflows::perf;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 pub fn run<W: Write>(
@@ -20,33 +17,16 @@ pub fn run<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let record = repository::get_by_selector(conn, selector)?;
-    let payload = serde_json::json!({
-        "selector": selector,
-        "link_path": record.link_path.clone(),
-        "target_path": record.target_path.clone(),
-    })
-    .to_string();
-    let tracker = OperationTracker::begin(conn, "rm", &payload)?;
+    let link = Path::new(&record.link_path);
+    let target = Path::new(&record.target_path);
     let action = select_rm_action()?;
-    tracker.pending(repository::OperationStep::Staging, "rm 预处理与暂存");
-    let mut prep = RmPreparation::prepare(
-        action,
-        writer,
-        Path::new(&record.link_path),
-        Path::new(&record.target_path),
-    )?;
-    tracker.run_pending(
-        repository::OperationStep::DbWrite,
-        "删除 links 记录",
-        "删除记录失败",
-        || {
-            repository::delete_by_selector(conn, selector).inspect_err(|_e| {
-                let _ = prep.rollback();
-            })
-        },
-    )?;
-    prep.commit()?;
-    tracker.done();
+    if action == RmAction::RestoreTargetToLink {
+        restore_target_to_link(writer, link, target)?;
+    }
+    repository::delete_by_selector(conn, selector)?;
+    if action == RmAction::DeleteLinkOnly {
+        link_remover::remove_link(link)?;
+    }
     let success_message = match action {
         RmAction::DeleteLinkOnly => format!("删除成功：{}", record.name),
         RmAction::RestoreTargetToLink => {
@@ -71,64 +51,6 @@ pub fn run<W: Write>(
 enum RmAction {
     DeleteLinkOnly,
     RestoreTargetToLink,
-}
-
-struct RmPreparation {
-    action: RmAction,
-    link: PathBuf,
-    target: PathBuf,
-    staged_link: Option<PathBuf>,
-    target_moved_to_link: bool,
-}
-
-impl RmPreparation {
-    fn prepare<W: Write>(
-        action: RmAction,
-        writer: &mut W,
-        link: &Path,
-        target: &Path,
-    ) -> Result<Self, SymmError> {
-        let staged_link = stage_existing_path(link, ".__symm_rm_staging__", "link")?;
-        let mut prep = Self {
-            action,
-            link: link.to_path_buf(),
-            target: target.to_path_buf(),
-            staged_link,
-            target_moved_to_link: false,
-        };
-
-        if action == RmAction::RestoreTargetToLink {
-            if let Err(e) = restore_target_to_link(writer, link, target) {
-                prep.rollback()?;
-                return Err(e);
-            }
-            prep.target_moved_to_link = true;
-        }
-        Ok(prep)
-    }
-
-    fn commit(&self) -> Result<(), SymmError> {
-        if let Some(path) = &self.staged_link {
-            path_ops::remove_path_any(path)?;
-        }
-        Ok(())
-    }
-
-    fn rollback(&mut self) -> Result<(), SymmError> {
-        if self.action == RmAction::RestoreTargetToLink && self.target_moved_to_link {
-            if self.target.exists() {
-                path_ops::remove_path_any(&self.target)?;
-            }
-            if self.link.exists() {
-                migration::move_path_without_progress(&self.link, &self.target).map_err(|e| {
-                    SymmError::IoError {
-                        message: format!("回滚失败：无法恢复 target：{e}"),
-                    }
-                })?;
-            }
-        }
-        rollback_staged_path(&self.link, self.staged_link.as_deref(), "link")
-    }
 }
 
 fn select_rm_action() -> Result<RmAction, SymmError> {
@@ -167,13 +89,12 @@ fn restore_target_to_link<W: Write>(
     link: &Path,
     target: &Path,
 ) -> Result<(), SymmError> {
+    link_remover::remove_link(link)?;
     let mut reporter = MigrationProgressReporter::new(writer);
-    if let Err(e) = migration::migrate_path(target, link, &mut |event| {
+    migration::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)
-    }) {
-        return Err(SymmError::IoError {
-            message: format!("恢复 target 到 link 失败：{e}"),
-        });
-    }
-    Ok(())
+    })
+    .map_err(|e| SymmError::IoError {
+        message: format!("恢复 target 到 link 失败：{e}"),
+    })
 }

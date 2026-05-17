@@ -14,32 +14,11 @@ pub struct Platform;
 
 impl PlatformFs for Platform {
     fn create_link(&self, target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
-        if target.is_dir() {
-            match symlink_dir(target, link) {
-                Ok(()) => return Ok(LinkKind::Symlink),
-                Err(_) => {
-                    create_junction(target, link)?;
-                    return Ok(LinkKind::Junction);
-                }
-            }
-        }
-
-        symlink_file(target, link).map_err(map_link_io_error)?;
-        Ok(LinkKind::Symlink)
+        create_link_direct(target, link)
     }
 
     fn write_symlink(&self, link: &Path, target: &Path) -> Result<(), SymmError> {
-        let is_dir_link = match fs::metadata(target) {
-            Ok(m) => m.is_dir(),
-            // 目标尚不存在时默认按文件软链处理，避免误建目录软链导致跟随失败。
-            Err(_) => false,
-        };
-        if is_dir_link {
-            symlink_dir(target, link).map_err(ioe)?;
-        } else {
-            symlink_file(target, link).map_err(ioe)?;
-        }
-        Ok(())
+        write_symlink_direct(link, target)
     }
 
     fn same_volume(&self, a: &Path, b: &Path) -> Result<bool, SymmError> {
@@ -119,6 +98,66 @@ impl PlatformFs for Platform {
     }
 }
 
+/// 提权子进程入口：仅创建链接（直接 OS API，不再递归提权）。
+pub fn elevated_create_link_entry(target: &Path, link: &Path) -> Result<(), SymmError> {
+    create_link_direct(target, link).map(|_| ())
+}
+
+pub fn create_link_direct(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
+    if target.is_dir() {
+        match symlink_dir(target, link) {
+            Ok(()) => return Ok(LinkKind::Symlink),
+            Err(e) => {
+                let mapped = map_link_io_error(e);
+                if needs_link_elevation(&mapped) {
+                    return Err(mapped);
+                }
+                create_junction(target, link)?;
+                return Ok(LinkKind::Junction);
+            }
+        }
+    }
+
+    symlink_file(target, link).map_err(map_link_io_error)?;
+    Ok(LinkKind::Symlink)
+}
+
+pub fn write_symlink_direct(link: &Path, target: &Path) -> Result<(), SymmError> {
+    let is_dir_link = match fs::metadata(target) {
+        Ok(m) => m.is_dir(),
+        Err(_) => false,
+    };
+    if is_dir_link {
+        symlink_dir(target, link).map_err(ioe)?;
+    } else {
+        symlink_file(target, link).map_err(ioe)?;
+    }
+    Ok(())
+}
+
+pub fn needs_link_elevation(err: &SymmError) -> bool {
+    match err {
+        SymmError::PermissionDenied { .. } => true,
+        SymmError::IoError { message } => {
+            message.contains("1314") || message.to_ascii_lowercase().contains("privilege")
+        }
+        _ => false,
+    }
+}
+
+pub fn infer_link_kind_after_elevated(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
+    if !link.exists() {
+        return Err(SymmError::IoError {
+            message: format!("提权创建链接后路径仍不存在：{}", link.display()),
+        });
+    }
+    if target.is_dir() {
+        Ok(LinkKind::Junction)
+    } else {
+        Ok(LinkKind::Symlink)
+    }
+}
+
 fn path_prefix(path: &Path) -> Option<String> {
     path.components().find_map(|component| match component {
         Component::Prefix(prefix) => Some(prefix.as_os_str().to_string_lossy().to_string()),
@@ -138,8 +177,17 @@ fn create_junction(target: &Path, link: &Path) -> Result<(), SymmError> {
     if output.status.success() {
         Ok(())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.to_ascii_lowercase().contains("privilege")
+            || stderr.contains("1314")
+            || stderr.to_ascii_lowercase().contains("access is denied")
+        {
+            return Err(SymmError::PermissionDenied {
+                message: stderr.into_owned(),
+            });
+        }
         Err(SymmError::IoError {
-            message: String::from_utf8_lossy(&output.stderr).to_string(),
+            message: stderr.into_owned(),
         })
     }
 }

@@ -6,7 +6,9 @@ use std::fs;
 use tempfile::tempdir;
 
 fn cmd() -> Command {
-    Command::cargo_bin("symm").expect("binary exists")
+    let mut command = Command::cargo_bin("symm").expect("binary exists");
+    command.env("SYMM_TEST_SKIP_PRIVILEGED_LOCK", "1");
+    command
 }
 
 #[test]
@@ -576,7 +578,7 @@ fn add_with_invalid_lock_choice_env_fails_fast() {
 }
 
 #[test]
-fn add_name_conflict_rolls_back_created_link() {
+fn add_name_conflict_leaves_link_for_manual_fixup() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -604,9 +606,10 @@ fn add_name_conflict_rolls_back_created_link() {
         .expect("run conflicting add");
     assert!(!output.status.success());
     assert!(
-        !link2.exists(),
-        "db 冲突后应清理刚创建的 link，避免文件系统与数据库不一致"
+        link2.exists(),
+        "写库失败时保留已创建的 link，由用户人工处理或再次 add"
     );
+    assert!(link2.is_symlink());
 }
 
 #[test]

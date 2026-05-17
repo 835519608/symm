@@ -1,7 +1,4 @@
-//! 平台进程能力：占用检测与结束进程。
-
-mod test_hooks;
-mod unsupported;
+//! 平台进程能力：仅 OS API 封装（静态分发）。
 
 #[cfg(unix)]
 mod unix;
@@ -50,33 +47,10 @@ pub trait PlatformProcess {
 
 #[cfg(unix)]
 pub use unix::Platform;
-#[cfg(not(any(unix, windows)))]
-pub use unsupported::Platform;
 #[cfg(windows)]
 pub use windows::Platform;
 
 pub fn platform() -> &'static Platform {
     static INSTANCE: Platform = Platform;
     &INSTANCE
-}
-
-pub fn list_locking_processes_with_progress<F>(
-    path: &Path,
-    mut progress: F,
-) -> Result<Vec<ProcInfo>, SymmError>
-where
-    F: FnMut(LockProbeProgress),
-{
-    if let Some(mocked) = test_hooks::mock_locking_processes(path) {
-        return Ok(mocked);
-    }
-    platform().list_locking_processes_with_progress(path, &mut progress)
-}
-
-pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
-    if test_hooks::should_mock_kill_processes() {
-        test_hooks::mark_mock_released_if_configured();
-        return Ok(());
-    }
-    platform().kill_processes(pids)
 }

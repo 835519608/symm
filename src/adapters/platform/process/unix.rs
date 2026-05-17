@@ -2,6 +2,7 @@ use super::{LockProbeProgress, PlatformProcess, ProcInfo};
 use crate::adapters::errors::io_map::io_ctx;
 use crate::domain::error::SymmError;
 use std::path::Path;
+use std::process::Command;
 
 pub struct Platform;
 
@@ -14,32 +15,22 @@ impl PlatformProcess for Platform {
     where
         F: FnMut(LockProbeProgress),
     {
-        let _ = progress;
-        list_locking_processes(path)
+        progress(LockProbeProgress::Querying {
+            batch: 1,
+            total_batches: 1,
+        });
+        list_locking_processes_direct(path)
     }
 
     fn kill_processes(&self, pids: &[u32]) -> Result<(), SymmError> {
-        for pid in pids {
-            let status = std::process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .status()
-                .map_err(|e| io_ctx("执行 kill 失败", e))?;
-            if !status.success() {
-                return Err(SymmError::PermissionDenied {
-                    message: format!("无法结束进程 PID={pid}（可能无权限）"),
-                });
-            }
-        }
-        Ok(())
+        kill_processes_direct(pids)
     }
 }
 
-fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+pub(crate) fn list_locking_processes_direct(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     let p = path.to_string_lossy().to_string();
 
-    if let Ok(out) = std::process::Command::new("fuser")
-        .args(["-a", &p])
-        .output()
+    if let Ok(out) = Command::new("fuser").args(["-a", &p]).output()
         && out.status.success()
     {
         let text = String::from_utf8_lossy(&out.stdout).to_string()
@@ -47,9 +38,7 @@ fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
         return Ok(parse_pids(&text));
     }
 
-    if let Ok(out) = std::process::Command::new("lsof")
-        .args(["-t", "--", &p])
-        .output()
+    if let Ok(out) = Command::new("lsof").args(["-t", "--", &p]).output()
         && out.status.success()
     {
         let text = String::from_utf8_lossy(&out.stdout);
@@ -57,6 +46,21 @@ fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     }
 
     Ok(vec![])
+}
+
+pub(crate) fn kill_processes_direct(pids: &[u32]) -> Result<(), SymmError> {
+    for pid in pids {
+        let status = Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .map_err(|e| io_ctx("执行 kill 失败", e))?;
+        if !status.success() {
+            return Err(SymmError::PermissionDenied {
+                message: format!("无法结束进程 PID={pid}（可能无权限）"),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn parse_pids(text: &str) -> Vec<ProcInfo> {

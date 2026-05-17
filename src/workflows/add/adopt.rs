@@ -1,13 +1,33 @@
-//! `add` 冲突与接管：通过 [`migration_service`] 的 staging / `move_path_with_retry` /
-//! `migrate_path` 完成文件迁移，失败时由本模块 `rollback` 恢复（与 `rm` 共用同一套 staging 约定）。
-use crate::adapters::fs::migration_service::{
-    self as migration, MigrationEvent, move_path_with_retry, staging_path,
-};
+//! `add` 冲突与接管：直接腾路径并 `migrate_path`，无 staging 旁路文件。
+use crate::adapters::fs::link_remover;
+use crate::adapters::fs::migration_service::{self as migration, MigrationEvent};
 use crate::adapters::fs::path_ops;
 use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AddPrepareOutcome {
+    /// `link` 路径上是否已有条目（通常为软链），调用方无需再 `create_link`。
+    pub link_exists_at_path: bool,
+    /// 若 true，`add` 可对 `target` 调用 `normalize_target_known_exists`，跳过第二次 `exists()`。
+    pub skip_target_exists_check: bool,
+}
+
+fn finish_outcome(
+    link_exists_at_path: bool,
+    target_existed_at_start: bool,
+    target_removed_during_prepare: bool,
+    target_created_during_prepare: bool,
+) -> AddPrepareOutcome {
+    let skip_target_exists_check =
+        target_existed_at_start && !target_removed_during_prepare && !target_created_during_prepare;
+    AddPrepareOutcome {
+        link_exists_at_path,
+        skip_target_exists_check,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConflictChoice {
@@ -22,185 +42,116 @@ enum SymlinkConflictChoice {
     Cancel,
 }
 
-pub struct AddPreparation {
-    adopted_link_to_target: bool,
-    staged_target: Option<PathBuf>,
-    staged_link: Option<PathBuf>,
-}
-
-impl AddPreparation {
-    pub fn prepare<F>(link: &Path, target: &Path, reporter: &mut F) -> Result<Self, SymmError>
-    where
-        F: FnMut(MigrationEvent) -> Result<(), SymmError>,
-    {
-        let mut plan = AddPreparation {
-            adopted_link_to_target: false,
-            staged_target: None,
-            staged_link: None,
-        };
-        let link_meta = fs::symlink_metadata(link).ok();
-        let link_exists = link_meta.is_some();
-        let target_exists = target.exists();
-
-        match (link_exists, target_exists) {
-            (false, false) | (false, true) => Ok(plan),
-            (true, false) => {
-                if link_meta
-                    .as_ref()
-                    .is_some_and(|m| m.file_type().is_symlink())
-                {
-                    return Err(SymmError::TargetNotFound {
-                        path: target.to_string_lossy().to_string(),
-                    });
-                }
-                adopt_link_to_target(link, target, reporter)?;
-                plan.adopted_link_to_target = true;
-                Ok(plan)
-            }
-            (true, true) => {
-                let link_is_symlink = link_meta
-                    .as_ref()
-                    .is_some_and(|m| m.file_type().is_symlink());
-                if link_is_symlink {
-                    plan.prepare_symlink_exist(link, target)?;
-                } else {
-                    plan.prepare_both_exist(link, target, reporter)?;
-                }
-                Ok(plan)
-            }
-        }
-    }
-
-    fn prepare_symlink_exist(&mut self, link: &Path, target: &Path) -> Result<(), SymmError> {
-        if symlink_points_to_target(link, target)? {
-            return Ok(());
-        }
-        match select_symlink_conflict_choice()? {
-            SymlinkConflictChoice::Retarget => {
-                let link_staging = staging_path(link, ".__symm_staging__");
-                move_path_with_retry(link, &link_staging, "link")?;
-                self.staged_link = Some(link_staging);
-                Ok(())
-            }
-            SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {
-                message: "用户取消：未执行 add".to_string(),
-            }),
-        }
-    }
-
-    fn prepare_both_exist<F>(
-        &mut self,
-        link: &Path,
-        target: &Path,
-        reporter: &mut F,
-    ) -> Result<(), SymmError>
-    where
-        F: FnMut(MigrationEvent) -> Result<(), SymmError>,
-    {
-        match select_conflict_choice()? {
-            ConflictChoice::KeepLink => {
-                let target_staging = staging_path(target, ".__symm_staging__");
-                move_path_with_retry(target, &target_staging, "target")?;
-                self.staged_target = Some(target_staging);
-                if let Err(e) = adopt_link_to_target(link, target, reporter) {
-                    self.rollback(link, target)?;
-                    return Err(e);
-                }
-                self.adopted_link_to_target = true;
-                Ok(())
-            }
-            ConflictChoice::KeepTarget => {
-                let link_staging = staging_path(link, ".__symm_staging__");
-                move_path_with_retry(link, &link_staging, "link")?;
-                self.staged_link = Some(link_staging);
-                Ok(())
-            }
-            ConflictChoice::Cancel => Err(SymmError::InvalidArgument {
-                message: "用户取消：未执行 add".to_string(),
-            }),
-        }
-    }
-
-    pub fn commit(&self) -> Result<(), SymmError> {
-        if let Some(path) = &self.staged_target {
-            path_ops::remove_path_any(path)?;
-        }
-        if let Some(path) = &self.staged_link {
-            path_ops::remove_path_any(path)?;
-        }
-        Ok(())
-    }
-
-    pub fn rollback(&self, link: &Path, target: &Path) -> Result<(), SymmError> {
-        if self.adopted_link_to_target && target.exists() {
-            if link.exists() {
-                path_ops::remove_path_any(link)?;
-            }
-            migration::move_path_without_progress(target, link).map_err(|e| {
-                SymmError::IoError {
-                    message: format!("回滚失败：无法恢复 link：{e}"),
-                }
-            })?;
-        }
-        if let Some(path) = &self.staged_target
-            && path.exists()
-        {
-            move_path_with_retry(path, target, "target")?;
-        }
-        if let Some(path) = &self.staged_link
-            && path.exists()
-        {
-            if link.exists() {
-                path_ops::remove_path_any(link)?;
-            }
-            move_path_with_retry(path, link, "link")?;
-        }
-        Ok(())
-    }
-}
-
 pub fn resolve_add_conflict<F>(
     link: &Path,
     target: &Path,
     reporter: &mut F,
-) -> Result<AddPreparation, SymmError>
+) -> Result<AddPrepareOutcome, SymmError>
 where
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
-    AddPreparation::prepare(link, target, reporter)
+    let link_meta = fs::symlink_metadata(link).ok();
+    let link_exists = link_meta.is_some();
+    let link_is_symlink = link_meta
+        .as_ref()
+        .is_some_and(|meta| meta.file_type().is_symlink());
+    let target_existed_at_start = target.exists();
+
+    match (link_exists, target_existed_at_start) {
+        (false, false) => Ok(finish_outcome(false, false, false, false)),
+        (false, true) => Ok(finish_outcome(false, true, false, false)),
+        (true, false) => {
+            if link_is_symlink {
+                return Err(SymmError::TargetNotFound {
+                    path: target.to_string_lossy().to_string(),
+                });
+            }
+            adopt_link_to_target(link, target, reporter, true, true)?;
+            Ok(finish_outcome(false, false, false, true))
+        }
+        (true, true) => {
+            if link_is_symlink {
+                prepare_symlink_exist(link, target, target_existed_at_start)
+            } else {
+                prepare_both_exist(link, target, reporter, target_existed_at_start)
+            }
+        }
+    }
+}
+
+fn prepare_symlink_exist(
+    link: &Path,
+    target: &Path,
+    target_existed_at_start: bool,
+) -> Result<AddPrepareOutcome, SymmError> {
+    if symlink_points_to_target(link, target)? {
+        return Ok(finish_outcome(true, target_existed_at_start, false, false));
+    }
+    match select_symlink_conflict_choice()? {
+        SymlinkConflictChoice::Retarget => {
+            link_remover::remove_link(link)?;
+            Ok(finish_outcome(false, target_existed_at_start, false, false))
+        }
+        SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {
+            message: "用户取消：未执行 add".to_string(),
+        }),
+    }
+}
+
+fn prepare_both_exist<F>(
+    link: &Path,
+    target: &Path,
+    reporter: &mut F,
+    target_existed_at_start: bool,
+) -> Result<AddPrepareOutcome, SymmError>
+where
+    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+{
+    match select_conflict_choice()? {
+        ConflictChoice::KeepLink => {
+            path_ops::remove_path_any(target)?;
+            adopt_link_to_target(link, target, reporter, true, true)?;
+            Ok(finish_outcome(false, target_existed_at_start, true, true))
+        }
+        ConflictChoice::KeepTarget => {
+            path_ops::remove_path_any(link)?;
+            Ok(finish_outcome(false, target_existed_at_start, false, false))
+        }
+        ConflictChoice::Cancel => Err(SymmError::InvalidArgument {
+            message: "用户取消：未执行 add".to_string(),
+        }),
+    }
 }
 
 pub fn adopt_link_to_target<F>(
     link: &Path,
     target: &Path,
     reporter: &mut F,
+    link_is_entity: bool,
+    target_known_absent: bool,
 ) -> Result<(), SymmError>
 where
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
-    if target.exists() {
+    if !target_known_absent && target.exists() {
         return Err(SymmError::InvalidArgument {
             message: "接管失败：目标路径已存在".to_string(),
         });
     }
     ensure_target_parent_dir(target)?;
-    let meta = fs::symlink_metadata(link).map_err(|e| SymmError::IoError {
-        message: format!("接管失败：无法读取 link 元数据：{e}"),
-    })?;
-    if meta.file_type().is_symlink() {
-        return Err(SymmError::InvalidArgument {
-            message: "接管失败：link 已经是软链接".to_string(),
-        });
+    if !link_is_entity {
+        let meta = fs::symlink_metadata(link).map_err(|e| SymmError::IoError {
+            message: format!("接管失败：无法读取 link 元数据：{e}"),
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(SymmError::InvalidArgument {
+                message: "接管失败：link 已经是软链接".to_string(),
+            });
+        }
     }
-    let staging = staging_path(link, ".__symm_staging__");
-    move_path_with_retry(link, &staging, "link")?;
-    if let Err(e) = migration::migrate_path(&staging, target, reporter) {
-        let _ = fs::rename(&staging, link);
-        return Err(SymmError::IoError {
-            message: format!("接管失败：无法移动到 target（已回滚）：{e}"),
-        });
-    }
-    Ok(())
+    migration::migrate_path(link, target, reporter).map_err(|e| SymmError::IoError {
+        message: format!("接管失败：无法将 link 迁移到 target：{e}"),
+    })
 }
 
 fn ensure_target_parent_dir(target: &Path) -> Result<(), SymmError> {

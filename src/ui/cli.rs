@@ -33,6 +33,26 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// 内部：提权子进程扫描占用（用户勿直接调用）
+    #[command(hide = true, name = "__elevated-list-locks")]
+    ElevatedListLocks {
+        #[arg(long)]
+        out: PathBuf,
+        path: PathBuf,
+    },
+    /// 内部：提权子进程结束占用（用户勿直接调用）
+    #[command(hide = true, name = "__elevated-kill")]
+    ElevatedKill {
+        #[arg(value_delimiter = ',')]
+        pids: Vec<u32>,
+    },
+    /// 内部：提权子进程创建软链接（仅 Windows，用户勿直接调用）
+    #[cfg(windows)]
+    #[command(hide = true, name = "__elevated-create-link")]
+    ElevatedCreateLink {
+        target: PathBuf,
+        link: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

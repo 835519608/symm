@@ -5,7 +5,7 @@
 ## 项目介绍
 
 - 管理软链接生命周期：创建、更新、查看、删除
-- `add` 支持冲突分支处理、占用探测、事务回滚
+- `add` 支持冲突分支处理、占用探测；失败保留现场由人工处理
 - `rm` 支持“仅删除”或“恢复 target 到 link”两种模式
 - 跨平台支持 Linux / macOS / Windows（Windows 目录支持 junction 回退）
 - 持久化使用 SQLite，按 `link_path` 幂等 upsert
@@ -56,17 +56,19 @@
 
 ```text
 src/
-  bin/symm.rs                   # CLI 入口（Windows 启动前检查管理员权限）
+  bin/symm.rs                   # CLI 入口（含 Windows 按需提权子命令）
   app/service.rs                # 命令分发
   domain/                       # 模型与错误（无平台分支）
-  workflows/                    # add / rm / ls / show / recovery 编排
+  workflows/                    # add / rm / ls / show 编排
   adapters/
-    platform/                   # 唯一平台差异入口（静态分发，无 dyn）
-      admin.rs                  # 是否已提升权限（Windows）
+    platform/                   # OS API（静态分发，无 dyn）
+      privilege.rs / elevate.rs # 是否已提升、按需 UAC（Windows）
       fs/                       # PlatformFs（链接、同卷、迁移、ACL）
-      process/                  # 占用检测、结束进程
-    fs/                         # 通用迁移 / rebase / 复制（无 #[cfg]）
-      migration_service.rs      # migrate、staging、同卷判断
+      process/                  # 占用检测、结束进程（直调 OS）
+    lock/                       # 查锁/杀进程编排（提权子进程、快照）
+    fs/                         # 迁移 / rebase / link 策略（无 #[cfg]）
+      link.rs / link_windows.rs # 建链入口；Windows 按需 UAC
+      migration_service.rs      # migrate、同卷判断
       rebase.rs                 # 软链接路径 rebase
       tree_copy.rs              # 跨盘目录复制 + 进度
     db/ paths/ errors/
@@ -77,7 +79,8 @@ src/
 
 - 业务与 workflow **不**写 `#[cfg(windows)]`；平台差异只在 `adapters/platform/**`。
 - 文件系统入口：`adapters::platform::fs_platform()`（`PlatformFs` trait）。
-- 进程占用入口：`adapters::platform::{list_locking_processes_with_progress, kill_processes}`。
+- 进程占用入口：`adapters::lock::{list_locking_processes_with_progress, kill_processes}`。
+- 建链入口：`adapters::fs::link::{create_link, write_symlink}`。
 - Linux / macOS / Windows 共用同一套 `add` / `rm` 流程，仅底层钩子不同。
 
 ### 依赖方向
@@ -104,14 +107,10 @@ workflowsLayer --> uiLayer[ui]
 
 ```mermaid
 flowchart LR
-cli[CLI 解析] --> guard[Windows 权限检查]
-guard --> dispatch[app/service.rs 分发]
-dispatch --> recoverFlow[workflows/recovery/workflow.rs]
-recoverFlow --> commandDispatch[命令分发]
-commandDispatch --> addFlow[workflows/add/workflow.rs]
-commandDispatch --> rmFlow[workflows/rm/workflow.rs]
-commandDispatch --> lsFlow[workflows/ls/workflow.rs]
-commandDispatch --> showFlow[workflows/show/workflow.rs]
+cli[CLI 解析] --> dispatch[app/service.rs 分发]
+dispatch --> rmFlow[workflows/rm/workflow.rs]
+dispatch --> lsFlow[workflows/ls/workflow.rs]
+dispatch --> showFlow[workflows/show/workflow.rs]
 
 addFlow --> addInfra[adopt + migration_service + repository]
 rmFlow --> rmInfra[migration_service + repository]
@@ -132,14 +131,15 @@ bin/symm.rs
 
 - Linux/macOS：使用系统软链接；同卷用 `dev` 判断是否可 `rename` 快速迁移
 - Windows：优先创建软链接；目录软链接失败时自动降级为 junction；同卷用盘符判断
-- Windows：程序要求**管理员权限**（UAC），用于稳定创建链接、占用检测与迁移
+- Windows：**默认以当前用户运行**；**查占用 / 结束占用** 会通过 UAC 以管理员扫描与杀进程，避免遗漏高权限占用；创建软链接失败时按需 UAC。建议开启「开发者模式」以减少建链提权
+- Linux/macOS：**查占用 / 结束占用** 在非 root 时通过 `sudo` 执行同等提权子命令
 - Windows：跨盘复制目录时可保存/恢复 ACL（`icacls`，失败时降级为不恢复）
 - Windows：`rename` 软链接若遇拒绝访问（os error 5），会重建链接完成迁移
 
 ### 迁移与软链接 rebase
 
 - **同盘目录/文件**：`rename` 到 `target`，再对 `target` 树做单遍 rebase（树内绝对路径软链接改指向新根）
-- **跨盘**：先统计文件总大小，再复制并显示 `已复制 / 总量`；复制时对树内软链接做 rebase
+- **跨盘**：单遍复制，进度为已复制字节与已处理文件数；复制时对树内软链接做 rebase
 - **相对路径**软链接：通常无需改写；**指向树外**的链接保持原目标不变
 
 ## `add` 行为与冲突处理
@@ -152,7 +152,7 @@ bin/symm.rs
   - 更新时默认显示原值，回车保持原样
 - 若 `target` 不存在且 `link` 为实体（非软链接）：执行接管迁移（将 `link` 实体迁移到 `target`，再在 `link` 创建指向 `target` 的链接）
   - 同盘时优先快速移动（`rename`），通常几乎瞬时完成
-  - 跨盘时自动改为复制到 `target` 后删除源路径（复制前统计总大小，进度为「已复制 / 总量」）
+  - 跨盘时自动改为复制到 `target` 后删除源路径（单遍复制，进度为已复制字节与已处理文件数）
   - 迁移期间会持续输出阶段状态
 - 若 `target` 与 `link` 都存在：进入三选一交互
   - 保留 `link`（放弃 `target`）
@@ -163,14 +163,7 @@ bin/symm.rs
   - 若指向其他位置：可选择改为指向新的 `target` 或取消
 - 若 `target` 与 `link` 都不存在：返回错误，不自动创建空目标
 
-以上流程采用 staging + 回滚机制，任一步失败会恢复到操作前状态，避免部分成功导致的数据破坏。
-
-## 启动恢复与分级策略
-
-- 每次命令执行前会先扫描 `operations` 中的 pending 操作
-- 低风险步骤（`db_write/finalize`）自动标记为 failed，并提示直接重试命令
-- 高风险步骤（`staging/migrate/link_change`）要求用户确认（或通过 `SYMM_RECOVERY_HIGH_RISK=confirm|skip` 控制）
-- 当前版本高风险恢复不自动执行文件级破坏性动作，确认后会标记为 failed 并提示人工恢复步骤
+任一步失败即返回错误并停止；中间态由人工处理后再次执行命令。
 
 ### `add` 执行流程图
 
@@ -182,14 +175,13 @@ hasLock -->|否| conflict[冲突解析 adopt]
 hasLock -->|是| unlockChoice{解除占用?}
 unlockChoice -->|取消| failCancel[返回错误]
 unlockChoice -->|继续| conflict
-conflict --> prep[staging 备份]
-prep --> migrate2[迁移 rename/copy]
-migrate2 --> createLink[创建链接]
+conflict --> prep[冲突处理 腾路径/迁移]
+prep --> createLink[创建链接]
 createLink --> upsert[upsert DB]
 upsert --> ok{写库成功?}
-ok -->|是| commit[提交清理 staging]
-ok -->|否| rollback[回滚恢复]
-commit --> done[完成]
+ok -->|是| done[完成]
+ok -->|否| fail[返回错误保留现场]
+fail --> done
 ```
 
 ## `rm` 行为与恢复分支
@@ -200,7 +192,7 @@ commit --> done[完成]
 - 交互选择后续动作（支持环境变量 `SYMM_RM_ACTION`）：
   - `no/delete`：仅删除软链接并删除数据库记录
   - `yes/restore`：将 `target` 恢复回 `link` 路径后，再删除数据库记录
-- 与 `add` 一样使用 staging + 回滚：DB 删除失败或迁移失败会恢复文件系统状态
+- 失败时返回错误并保留现场，由人工处理后重试
 
 ### `rm` 执行流程图
 
@@ -208,16 +200,15 @@ commit --> done[完成]
 flowchart TB
 start[rm selector] --> fetch[查记录]
 fetch --> choose{动作}
-choose -->|仅删除| stageDel[备份 link 到 staging]
-choose -->|恢复| stageRestore[备份 link 到 staging]
-stageDel --> dbDelete1[删除 DB]
-stageRestore --> restore[target -> link 迁移]
+choose -->|仅删除| dbDelete1[删除 DB]
+choose -->|恢复| restore[删 link 后 target 迁回 link]
 restore --> dbDelete[删除 DB]
-dbDelete1 --> ok{成功?}
-dbDelete --> ok
-ok -->|是| commit[提交清理 staging]
-ok -->|否| rollback[回滚恢复]
-commit --> done[完成]
+dbDelete1 --> removeLink[删除 link 软链]
+dbDelete --> ok{成功?}
+removeLink --> ok
+ok -->|是| done[完成]
+ok -->|否| fail[返回错误保留现场]
+fail --> done
 ```
 
 ## 打包与发布（多平台）
@@ -262,7 +253,7 @@ commit --> done[完成]
 - `add` 接管迁移时：
   - 同盘路径优先 `rename`，保留最快路径
   - 跨盘路径使用带进度回调的复制流程，避免终端长时间无反馈
-- `rm` 恢复分支复用同一迁移能力（同盘 rename / 跨盘 copy+delete），并沿用 staging 回滚
+- `rm` 恢复分支复用同一迁移能力（同盘 rename / 跨盘 copy+delete）
 - SQLite 连接默认启用：
   - `busy_timeout=5000`
   - `journal_mode=WAL`

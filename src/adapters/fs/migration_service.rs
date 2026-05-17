@@ -1,10 +1,10 @@
 use crate::adapters::errors::io_map::ioe;
 use crate::adapters::fs::path_ops;
-use crate::adapters::fs::rebase::{rebase_symlinks_in_tree, tree_contains_symlink};
+use crate::adapters::fs::rebase::rebase_symlinks_in_tree;
 use crate::adapters::platform::{PlatformFs, format_relocate_failure, fs_platform};
 use crate::domain::error::SymmError;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub enum MigrationEvent {
@@ -18,7 +18,7 @@ pub enum MigrationEvent {
     },
     Copying {
         copied_bytes: u64,
-        total_bytes: u64,
+        files_copied: u64,
         current_item: Option<String>,
     },
     RemovingSource {
@@ -51,9 +51,7 @@ where
             target: dst.display().to_string(),
         })?;
         fs::rename(src, dst).map_err(ioe)?;
-        if tree_contains_symlink(dst)? {
-            rebase_symlinks_in_tree(dst, src)?;
-        }
+        rebase_symlinks_in_tree(dst, src)?;
         return Ok(());
     }
 
@@ -68,9 +66,11 @@ where
         source: src.display().to_string(),
     })?;
     if let Err(remove_err) = path_ops::remove_path_any(src) {
-        let _ = path_ops::remove_path_any(dst);
         return Err(SymmError::IoError {
-            message: format!("跨磁盘复制完成后无法删除源路径：{remove_err}"),
+            message: format!(
+                "跨磁盘复制已完成但无法删除源路径：{remove_err}（目标已存在于 {}，请人工处理）",
+                dst.display()
+            ),
         });
     }
     Ok(())
@@ -98,50 +98,6 @@ pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {
     SymmError::IoError {
         message: e.to_string(),
     }
-}
-
-pub fn staging_path(path: &Path, suffix: &str) -> PathBuf {
-    let mut p = path.to_path_buf();
-    let file_name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "path".to_string());
-    p.set_file_name(format!("{file_name}{suffix}"));
-    p
-}
-
-pub fn stage_existing_path(
-    path: &Path,
-    suffix: &str,
-    role: &str,
-) -> Result<Option<PathBuf>, SymmError> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => {
-            let staged = staging_path(path, suffix);
-            move_path_with_retry(path, &staged, role)?;
-            Ok(Some(staged))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(SymmError::IoError {
-            message: format!("无法读取 {role} 状态：{e}"),
-        }),
-    }
-}
-
-pub fn rollback_staged_path(
-    path: &Path,
-    staged_path: Option<&Path>,
-    role: &str,
-) -> Result<(), SymmError> {
-    let Some(staged) = staged_path else {
-        return Ok(());
-    };
-    if path.exists() {
-        path_ops::remove_path_any(path)?;
-    }
-    move_path_with_retry(staged, path, role).map_err(|e| SymmError::IoError {
-        message: format!("回滚失败：无法恢复 {role}：{e}"),
-    })
 }
 
 pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
@@ -266,12 +222,15 @@ mod tests {
     }
 
     #[test]
-    fn rebase_skipped_for_tree_without_symlinks() {
+    fn rebase_noop_for_tree_without_symlinks() {
         let temp = tempdir().expect("temp dir");
         let root = temp.path().join("plain");
         fs::create_dir_all(root.join("nested")).expect("dir");
         fs::write(root.join("nested").join("f.txt"), "x").expect("write");
-        assert!(!rebase::tree_contains_symlink(&root).expect("scan"));
         rebase::rebase_symlinks_in_tree(&root, &root).expect("no-op rebase");
+        assert_eq!(
+            fs::read_to_string(root.join("nested").join("f.txt")).expect("read"),
+            "x"
+        );
     }
 }
