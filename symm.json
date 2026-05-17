@@ -1,5 +1,5 @@
 {
-  "version": "0.2.8-test-windows",
+  "version": "0.2.9-test-windows",
   "description": "跨平台软链接管理（CLI + GUI）",
   "homepage": "https://github.com/835519608/symm",
   "license": "MIT",
