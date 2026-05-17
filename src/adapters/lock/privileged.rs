@@ -1,32 +1,81 @@
 //! 查锁/杀进程：通过提权子进程执行（`runas`）；调用方已在 `lock::mod` 完成分流。
 
 use super::ProcInfo;
+use super::elevated_progress::{append_progress, spawn_progress_relay};
 use super::snapshot::{read_snapshot, write_snapshot};
 use crate::adapters::platform::privilege;
-use crate::adapters::platform::process::{PlatformProcess, platform};
+use crate::adapters::platform::process::{LockProbeProgress, PlatformProcess, platform};
 use crate::domain::error::SymmError;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
+pub fn list_locking_processes(
+    path: &Path,
+    mut progress: impl FnMut(LockProbeProgress),
+) -> Result<Vec<ProcInfo>, SymmError> {
     let snapshot = temp_snapshot_path("list");
     let log = temp_snapshot_path("elev-log");
+    let progress_file = temp_snapshot_path("elev-progress");
     if snapshot.exists() {
         let _ = std::fs::remove_file(&snapshot);
     }
     if log.exists() {
         let _ = std::fs::remove_file(&log);
     }
-    if let Err(err) = run_privileged_subcommand([
-        OsStr::new("__elevated-list-locks"),
-        OsStr::new("--out"),
-        snapshot.as_os_str(),
-        OsStr::new("--elevated-log"),
-        log.as_os_str(),
-        path.as_os_str(),
-    ]) {
+    if progress_file.exists() {
+        let _ = std::fs::remove_file(&progress_file);
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let relay = spawn_progress_relay(progress_file.clone(), tx, stop.clone());
+
+    let child = thread::spawn({
+        let snapshot = snapshot.clone();
+        let log = log.clone();
+        let progress_file = progress_file.clone();
+        let path = path.to_path_buf();
+        move || {
+            run_privileged_subcommand([
+                OsStr::new("__elevated-list-locks"),
+                OsStr::new("--out"),
+                snapshot.as_os_str(),
+                OsStr::new("--elevated-log"),
+                log.as_os_str(),
+                OsStr::new("--elevated-progress"),
+                progress_file.as_os_str(),
+                path.as_os_str(),
+            ])
+        }
+    });
+
+    loop {
+        while let Ok(event) = rx.try_recv() {
+            progress(event);
+        }
+        if child.is_finished() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = relay.join();
+    while let Ok(event) = rx.try_recv() {
+        progress(event);
+    }
+
+    let run_result = child.join().map_err(|_| SymmError::IoError {
+        message: "提权扫锁子进程异常退出".to_string(),
+    })?;
+
+    if let Err(err) = run_result {
         return Err(enrich_elevated_error(err, &log));
     }
     if !snapshot.is_file() {
@@ -50,6 +99,7 @@ pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     })?;
     let _ = std::fs::remove_file(&snapshot);
     let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&progress_file);
     Ok(procs)
 }
 
@@ -62,8 +112,17 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
     run_privileged_subcommand([OsStr::new("__elevated-kill"), OsStr::new(&joined)])
 }
 
-pub fn elevated_list_locks_entry(path: &Path, output: &Path) -> Result<(), SymmError> {
-    let procs = platform().list_locking_processes_with_progress(path, &mut |_| {})?;
+pub fn elevated_list_locks_entry(
+    path: &Path,
+    output: &Path,
+    progress_path: Option<&Path>,
+) -> Result<(), SymmError> {
+    let mut report = |event: LockProbeProgress| {
+        if let Some(progress_path) = progress_path {
+            let _ = append_progress(progress_path, &event);
+        }
+    };
+    let procs = platform().list_locking_processes_with_progress(path, &mut report)?;
     write_snapshot(output, &procs)
 }
 

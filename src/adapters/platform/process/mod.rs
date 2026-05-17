@@ -11,7 +11,7 @@ use crate::domain::error::SymmError;
 use std::fmt::{Display, Formatter};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum LockProbeProgress {
     Scanning {
         scanned_files: usize,

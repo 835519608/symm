@@ -42,6 +42,9 @@ pub enum Commands {
         /// 内部：提权子进程错误日志路径
         #[arg(long = "elevated-log", hide = true)]
         elevated_log: Option<PathBuf>,
+        /// 内部：提权子进程进度 JSONL 路径（父进程读取并显示）
+        #[arg(long = "elevated-progress", hide = true)]
+        elevated_progress: Option<PathBuf>,
     },
     /// 内部：提权子进程结束占用（用户勿直接调用）
     #[command(hide = true, name = "__elevated-kill")]

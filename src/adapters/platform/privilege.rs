@@ -46,6 +46,8 @@ where
     for arg in &arg_list {
         cmd.arg(arg);
     }
+    #[cfg(windows)]
+    cmd.show(false);
 
     let status = cmd.status().map_err(map_runas_spawn_error)?;
 

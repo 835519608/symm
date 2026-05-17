@@ -23,7 +23,12 @@ fn run() -> Result<(), symm::domain::error::SymmError> {
             out,
             path,
             elevated_log,
-        } => match symm::adapters::lock::elevated_list_locks_entry(&path, &out) {
+            elevated_progress,
+        } => match symm::adapters::lock::elevated_list_locks_entry(
+            &path,
+            &out,
+            elevated_progress.as_deref(),
+        ) {
             Ok(()) => Ok(()),
             Err(err) => {
                 if let Some(log) = elevated_log {
