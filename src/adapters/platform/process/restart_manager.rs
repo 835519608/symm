@@ -116,7 +116,7 @@ fn query_rm_chunk(paths: &[PathBuf]) -> Result<Vec<RM_PROCESS_INFO>, SymmError> 
 unsafe fn start_session() -> Result<RmSession, SymmError> {
     let mut handle = 0u32;
     let mut key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
-    let result = RmStartSession(&mut handle, 0, windows::core::PWSTR(key.as_mut_ptr()));
+    let result = RmStartSession(&mut handle, Some(0), windows::core::PWSTR(key.as_mut_ptr()));
     win32_ok(result, "RmStartSession")?;
     Ok(RmSession(handle))
 }
@@ -125,7 +125,7 @@ unsafe fn get_process_list(session: u32) -> Result<Vec<RM_PROCESS_INFO>, SymmErr
     let mut needed = 0u32;
     let mut count = 0u32;
     let mut reboot = 0u32;
-    let first = RmGetList(session, &mut needed, &mut count, None, &mut reboot);
+    let first = unsafe { RmGetList(session, &mut needed, &mut count, None, &mut reboot) };
     if first != ERROR_SUCCESS && first != ERROR_MORE_DATA {
         return Err(rm_error(first, "RmGetList（查询大小）"));
     }
@@ -135,13 +135,15 @@ unsafe fn get_process_list(session: u32) -> Result<Vec<RM_PROCESS_INFO>, SymmErr
 
     let mut buffer = vec![RM_PROCESS_INFO::default(); needed as usize];
     count = needed;
-    let second = RmGetList(
-        session,
-        &mut needed,
-        &mut count,
-        Some(buffer.as_mut_ptr()),
-        &mut reboot,
-    );
+    let second = unsafe {
+        RmGetList(
+            session,
+            &mut needed,
+            &mut count,
+            Some(buffer.as_mut_ptr()),
+            &mut reboot,
+        )
+    };
     if second != ERROR_SUCCESS && second != ERROR_MORE_DATA {
         return Err(rm_error(second, "RmGetList"));
     }
@@ -165,7 +167,7 @@ fn format_rm_process(info: &RM_PROCESS_INFO, pid: u32) -> String {
 }
 
 fn path_to_wide_null(path: &Path) -> Result<Vec<u16>, SymmError> {
-    use std::ffi::OsStrExt;
+    use std::os::windows::ffi::OsStrExt;
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     if wide.len() <= 1 {
         return Err(SymmError::IoError {
@@ -190,6 +192,6 @@ fn win32_ok(code: WIN32_ERROR, api: &str) -> Result<(), SymmError> {
 
 fn rm_error(code: WIN32_ERROR, api: &str) -> SymmError {
     SymmError::IoError {
-        message: format!("Restart Manager {api} 失败（Win32 错误 {code}）"),
+        message: format!("Restart Manager {api} 失败（Win32 错误 {}）", code.0),
     }
 }
