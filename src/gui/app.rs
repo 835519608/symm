@@ -147,6 +147,7 @@ impl eframe::App for SymmApp {
             .frame(
                 egui::Frame::none()
                     .fill(theme::BG_WORKSPACE)
+                    .rounding(egui::Rounding::ZERO)
                     .inner_margin(16.0),
             )
             .show(ctx, |ui| match self.state.main_view {

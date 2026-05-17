@@ -29,8 +29,8 @@ pub fn apply(ctx: &Context) {
     visuals.selection.stroke = Stroke::new(1.0, ACCENT);
     visuals.widgets.noninteractive.fg_stroke.color = TEXT_PRIMARY;
     visuals.widgets.inactive.fg_stroke.color = TEXT_PRIMARY;
-    visuals.window_rounding = Rounding::same(f32::from(RADIUS));
-    visuals.menu_rounding = Rounding::same(f32::from(RADIUS));
+    visuals.window_rounding = Rounding::ZERO;
+    visuals.menu_rounding = Rounding::ZERO;
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
@@ -96,8 +96,13 @@ pub fn card_frame() -> Frame {
         .rounding(Rounding::same(f32::from(RADIUS)))
 }
 
+/// 顶栏 / 侧栏 / 底栏：贴边无圆角，避免与中央区之间露出背景缝隙。
 pub fn panel_frame() -> Frame {
-    card_frame().inner_margin(Margin::symmetric(12.0, 8.0))
+    Frame::none()
+        .fill(BG_PANEL)
+        .stroke(Stroke::new(1.0, BORDER))
+        .rounding(Rounding::ZERO)
+        .inner_margin(Margin::symmetric(12.0, 8.0))
 }
 
 pub fn status_color(status: crate::domain::model::LinkStatus) -> Color32 {
