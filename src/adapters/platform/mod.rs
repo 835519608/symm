@@ -6,7 +6,6 @@
 #[cfg(all(not(unix), not(windows)))]
 compile_error!("symm 仅支持 Linux、macOS 与 Windows");
 
-pub mod elevate;
 pub mod fs;
 pub mod privilege;
 pub mod process;

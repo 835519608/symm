@@ -2,7 +2,7 @@
 
 use super::ProcInfo;
 use super::snapshot::{read_snapshot, write_snapshot};
-use crate::adapters::platform::elevate;
+use crate::adapters::platform::privilege;
 use crate::adapters::platform::process::{PlatformProcess, platform};
 use crate::domain::error::SymmError;
 use std::env;
@@ -86,7 +86,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    elevate::run_elevated(args)
+    privilege::spawn_elevated_subcommand(args)
 }
 
 fn temp_snapshot_path(kind: &str) -> PathBuf {

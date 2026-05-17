@@ -1,6 +1,5 @@
 //! Windows：建链失败时按需 UAC（策略层，非 OS API）。
 
-use crate::adapters::platform::elevate;
 use crate::adapters::platform::fs::{
     create_link_direct, infer_link_kind_after_elevated, needs_link_elevation, write_symlink_direct,
 };
@@ -13,7 +12,7 @@ pub fn create_link(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
     try_direct_or_elevate(
         || create_link_direct(target, link),
         || {
-            elevate::run_elevated_link(target, link)?;
+            privilege::spawn_elevated_create_link(target, link)?;
             infer_link_kind_after_elevated(target, link)
         },
     )
@@ -22,7 +21,7 @@ pub fn create_link(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
 pub fn write_symlink(link: &Path, target: &Path) -> Result<(), SymmError> {
     try_direct_or_elevate(
         || write_symlink_direct(link, target),
-        || elevate::run_elevated_link(target, link),
+        || privilege::spawn_elevated_create_link(target, link),
     )
 }
 
