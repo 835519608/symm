@@ -28,10 +28,6 @@ pub fn write_list_table<W: Write>(writer: &mut W, items: &[LinkView]) -> Result<
     writer.write_all(table.as_bytes()).map_err(io_err)
 }
 
-pub fn write_check_table<W: Write>(writer: &mut W, items: &[LinkView]) -> Result<(), SymmError> {
-    write_list_table(writer, items)
-}
-
 pub fn write_json_array_start<W: Write>(writer: &mut W) -> Result<(), SymmError> {
     writer.write_all(b"[").map_err(io_err)
 }

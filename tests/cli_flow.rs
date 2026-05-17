@@ -696,11 +696,7 @@ fn ls_shows_stale_status_when_link_no_longer_symlink() {
     cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "stale-item")
-        .args([
-            "add",
-            &link.to_string_lossy(),
-            &target.to_string_lossy(),
-        ])
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success();
 
@@ -715,13 +711,6 @@ fn ls_shows_stale_status_when_link_no_longer_symlink() {
         .stdout(contains("stale-item"))
         .stdout(contains("stale"))
         .stdout(predicates::str::contains(" ok ").not());
-
-    cmd()
-        .env("SYMM_HOME", &symm_home)
-        .args(["check"])
-        .assert()
-        .success()
-        .stdout(contains("stale-item"));
 }
 
 #[test]

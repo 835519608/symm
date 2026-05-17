@@ -22,9 +22,6 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
         Commands::Show { selector, json } => {
             workflows::show::workflow::run(&conn, selector.as_deref(), json, writer)
         }
-        Commands::Check { json, prune } => {
-            workflows::check::workflow::run(&conn, json, prune, writer)
-        }
         Commands::ElevatedListLocks { .. } | Commands::ElevatedKill { .. } => {
             Err(SymmError::InvalidArgument {
                 message: "内部提权子命令应由 CLI 入口直接处理".to_string(),

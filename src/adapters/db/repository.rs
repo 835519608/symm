@@ -156,15 +156,6 @@ pub fn delete_by_selector(conn: &Connection, selector: &str) -> Result<(), SymmE
     Ok(())
 }
 
-pub fn delete_by_id(conn: &Connection, id: i64) -> Result<bool, SymmError> {
-    let n = conn
-        .execute("DELETE FROM links WHERE id = ?1", params![id])
-        .map_err(|e| SymmError::DbError {
-            message: e.to_string(),
-        })?;
-    Ok(n > 0)
-}
-
 pub fn get_by_selector(conn: &Connection, selector: &str) -> Result<LinkRecord, SymmError> {
     if let Ok(id) = selector.parse::<i64>() {
         if let Ok(record) = get_by_id(conn, id) {

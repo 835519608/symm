@@ -35,14 +35,6 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// 检测库记录与磁盘状态是否一致
-    Check {
-        #[arg(long)]
-        json: bool,
-        /// 从库中删除 stale 记录（路径已非软链；不修改磁盘）
-        #[arg(long)]
-        prune: bool,
-    },
     /// 内部：提权子进程扫描占用（用户勿直接调用）
     #[command(hide = true, name = "__elevated-list-locks")]
     ElevatedListLocks {
