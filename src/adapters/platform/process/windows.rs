@@ -98,19 +98,25 @@ fn terminate_process(pid: u32) -> Result<(), SymmError> {
 unsafe fn query_image_path(process: HANDLE) -> Option<PathBuf> {
     let mut buffer = [0u16; 32_768];
     let mut size = buffer.len() as u32;
-    QueryFullProcessImageNameW(
-        process,
-        PROCESS_NAME_FORMAT(0),
-        windows::core::PWSTR(buffer.as_mut_ptr()),
-        &mut size,
-    )
-    .ok()?;
+    unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_FORMAT(0),
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut size,
+        )
+        .ok()?;
+    }
     let end = buffer.iter().position(|&c| c == 0).unwrap_or(size as usize);
     Some(PathBuf::from(String::from_utf16_lossy(&buffer[..end])))
 }
 
 fn is_explorer_pid(pid: u32) -> bool {
-    process_image_path(pid).is_some_and(|path| path.to_ascii_lowercase().ends_with("explorer.exe"))
+    process_image_path(pid).is_some_and(|path| {
+        path.to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with("explorer.exe")
+    })
 }
 
 fn dismiss_explorer_windows(create_no_window: u32) {
