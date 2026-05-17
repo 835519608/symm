@@ -13,14 +13,18 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
         Commands::Ls {
             json,
             status,
+            all,
             limit,
             offset,
         } => {
             let wanted = status.map(|value| value.to_model());
-            workflows::ls::workflow::run(&conn, json, wanted, limit, offset, writer)
+            workflows::ls::workflow::run(&conn, json, wanted, all, limit, offset, writer)
         }
         Commands::Show { selector, json } => {
-            workflows::show::workflow::run(&conn, &selector, json, writer)
+            workflows::show::workflow::run(&conn, selector.as_deref(), json, writer)
+        }
+        Commands::Check { json, prune } => {
+            workflows::check::workflow::run(&conn, json, prune, writer)
         }
         Commands::ElevatedListLocks { .. } | Commands::ElevatedKill { .. } => {
             Err(SymmError::InvalidArgument {

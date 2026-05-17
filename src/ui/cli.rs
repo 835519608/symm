@@ -16,6 +16,7 @@ pub enum Commands {
         target: PathBuf,
     },
     Rm {
+        /// 记录 ID、name 或 link_path
         selector: String,
     },
     Ls {
@@ -23,15 +24,27 @@ pub enum Commands {
         json: bool,
         #[arg(long)]
         status: Option<StatusArg>,
+        /// 包含 stale/drift 等库内异常记录（默认仅显示仍由 symm 纳管的软链）
+        #[arg(long)]
+        all: bool,
         #[arg(long)]
         limit: Option<u32>,
         #[arg(long, default_value_t = 0)]
         offset: u32,
     },
     Show {
-        selector: String,
+        /// 记录 ID、name 或 link_path；省略则交互选择
+        selector: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+    /// 检测库记录与磁盘状态是否一致
+    Check {
+        #[arg(long)]
+        json: bool,
+        /// 从库中删除 stale 记录（路径已非软链；不修改磁盘）
+        #[arg(long)]
+        prune: bool,
     },
     /// 内部：提权子进程扫描占用（用户勿直接调用）
     #[command(hide = true, name = "__elevated-list-locks")]
@@ -66,6 +79,8 @@ pub enum StatusArg {
     Ok,
     Broken,
     Missing,
+    Stale,
+    Drift,
 }
 
 impl StatusArg {
@@ -74,6 +89,8 @@ impl StatusArg {
             StatusArg::Ok => LinkStatus::Ok,
             StatusArg::Broken => LinkStatus::Broken,
             StatusArg::Missing => LinkStatus::Missing,
+            StatusArg::Stale => LinkStatus::Stale,
+            StatusArg::Drift => LinkStatus::Drift,
         }
     }
 }

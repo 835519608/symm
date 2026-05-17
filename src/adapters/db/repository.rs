@@ -90,13 +90,34 @@ pub fn insert_link(
     }
 }
 
+pub fn get_by_id(conn: &Connection, id: i64) -> Result<LinkRecord, SymmError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
+             FROM links WHERE id = ?1 LIMIT 1",
+        )
+        .map_err(|e| SymmError::DbError {
+            message: e.to_string(),
+        })?;
+
+    stmt.query_row(params![id], map_link_row)
+        .map_err(|e| match e {
+            SqlError::QueryReturnedNoRows => SymmError::NotFound {
+                selector: id.to_string(),
+            },
+            _ => SymmError::DbError {
+                message: e.to_string(),
+            },
+        })
+}
+
 pub fn get_by_link_path(
     conn: &Connection,
     link_path: &str,
 ) -> Result<Option<LinkRecord>, SymmError> {
     let mut stmt = conn
         .prepare(
-            "SELECT name, link_path, target_path, link_kind, created_at, updated_at
+            "SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
              FROM links WHERE link_path = ?1 LIMIT 1",
         )
         .map_err(|e| SymmError::DbError {
@@ -115,6 +136,16 @@ pub fn get_by_link_path(
 }
 
 pub fn delete_by_selector(conn: &Connection, selector: &str) -> Result<(), SymmError> {
+    if let Ok(id) = selector.parse::<i64>() {
+        let deleted = conn
+            .execute("DELETE FROM links WHERE id = ?1", params![id])
+            .map_err(|e| SymmError::DbError {
+                message: e.to_string(),
+            })?;
+        if deleted > 0 {
+            return Ok(());
+        }
+    }
     conn.execute(
         "DELETE FROM links WHERE name = ?1 OR link_path = ?1",
         params![selector],
@@ -125,26 +156,40 @@ pub fn delete_by_selector(conn: &Connection, selector: &str) -> Result<(), SymmE
     Ok(())
 }
 
+pub fn delete_by_id(conn: &Connection, id: i64) -> Result<bool, SymmError> {
+    let n = conn
+        .execute("DELETE FROM links WHERE id = ?1", params![id])
+        .map_err(|e| SymmError::DbError {
+            message: e.to_string(),
+        })?;
+    Ok(n > 0)
+}
+
 pub fn get_by_selector(conn: &Connection, selector: &str) -> Result<LinkRecord, SymmError> {
+    if let Ok(id) = selector.parse::<i64>() {
+        if let Ok(record) = get_by_id(conn, id) {
+            return Ok(record);
+        }
+    }
+
     let mut stmt = conn
         .prepare(
-            "SELECT name, link_path, target_path, link_kind, created_at, updated_at
+            "SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
              FROM links WHERE name = ?1 OR link_path = ?1 LIMIT 1",
         )
         .map_err(|e| SymmError::DbError {
             message: e.to_string(),
         })?;
 
-    let rec = stmt.query_row(params![selector], map_link_row);
-
-    rec.map_err(|e| match e {
-        SqlError::QueryReturnedNoRows => SymmError::NotFound {
-            selector: selector.to_string(),
-        },
-        _ => SymmError::DbError {
-            message: e.to_string(),
-        },
-    })
+    stmt.query_row(params![selector], map_link_row)
+        .map_err(|e| match e {
+            SqlError::QueryReturnedNoRows => SymmError::NotFound {
+                selector: selector.to_string(),
+            },
+            _ => SymmError::DbError {
+                message: e.to_string(),
+            },
+        })
 }
 
 pub fn list_links(conn: &Connection) -> Result<Vec<LinkRecord>, SymmError> {
@@ -158,9 +203,9 @@ pub fn list_links_paginated(
 ) -> Result<Vec<LinkRecord>, SymmError> {
     let mut stmt = conn
         .prepare(
-            "SELECT name, link_path, target_path, link_kind, created_at, updated_at
+            "SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
              FROM links
-             ORDER BY name ASC
+             ORDER BY id ASC
              LIMIT ?1 OFFSET ?2",
         )
         .map_err(|e| SymmError::DbError {
@@ -182,14 +227,15 @@ pub fn list_links_paginated(
 }
 
 fn map_link_row(row: &rusqlite::Row<'_>) -> Result<LinkRecord, SqlError> {
-    let kind_str: String = row.get(3)?;
+    let kind_str: String = row.get(4)?;
     Ok(LinkRecord {
-        name: row.get(0)?,
-        link_path: row.get(1)?,
-        target_path: row.get(2)?,
+        id: row.get(0)?,
+        name: row.get(1)?,
+        link_path: row.get(2)?,
+        target_path: row.get(3)?,
         link_kind: kind_str.parse().unwrap_or(LinkKind::Symlink),
-        created_at: row.get(4)?,
-        updated_at: row.get(5)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 
@@ -225,5 +271,6 @@ mod tests {
             .expect("get")
             .expect("exists");
         assert_eq!(record.name, "demo");
+        assert_eq!(record.id, 1);
     }
 }

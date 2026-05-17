@@ -681,3 +681,77 @@ fn ls_status_filters_broken_and_missing() {
         .stdout(predicates::str::contains("ok-item").not())
         .stdout(predicates::str::contains("broken-item").not());
 }
+
+#[test]
+fn ls_hides_stale_record_until_all_flag() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_stale.txt");
+    let link = data_root.join("link_stale.txt");
+    fs::write(&target, "x").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "stale-item")
+        .args([
+            "add",
+            &link.to_string_lossy(),
+            &target.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    fs::remove_file(&link).expect("remove symlink");
+    fs::write(&link, "no longer symlink").expect("replace with file");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("stale-item").not());
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--all", "--status", "stale"])
+        .assert()
+        .success()
+        .stdout(contains("stale-item"))
+        .stdout(contains("stale"));
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["check"])
+        .assert()
+        .success()
+        .stdout(contains("stale-item"));
+}
+
+#[test]
+fn show_by_numeric_id() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+    let target = data_root.join("target_id.txt");
+    let link = data_root.join("link_id.txt");
+    fs::write(&target, "x").expect("target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "id-demo")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["show", "1", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"id\": 1"))
+        .stdout(contains("\"name\": \"id-demo\""));
+}

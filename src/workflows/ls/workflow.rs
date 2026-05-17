@@ -1,7 +1,7 @@
 use crate::adapters::db::repository;
 use crate::adapters::fs::link_status;
 use crate::domain::error::SymmError;
-use crate::domain::model::LinkStatus;
+use crate::domain::model::{LinkStatus, LinkView};
 use crate::ui::output;
 use crate::workflows::perf;
 use std::io::Write;
@@ -11,16 +11,23 @@ pub fn run<W: Write>(
     conn: &rusqlite::Connection,
     json: bool,
     wanted: Option<LinkStatus>,
+    show_all: bool,
     limit: Option<u32>,
     offset: u32,
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
-    let (scanned, emitted) = if json {
-        stream_ls_json(conn, wanted, limit, offset, writer)?
+    let records = repository::list_links(conn)?;
+    let views = collect_views(records, wanted, show_all, limit, offset);
+    let scanned = views.scanned;
+    let emitted = views.items.len();
+
+    if json {
+        stream_ls_json(&views.items, writer)?;
     } else {
-        stream_ls_table(conn, wanted, limit, offset, writer)?
-    };
+        output::write_list_table(writer, &views.items)?;
+    }
+
     perf::log_perf(
         "ls",
         started.elapsed(),
@@ -32,6 +39,7 @@ pub fn run<W: Write>(
                     .map(|status| status.to_string())
                     .unwrap_or_else(|| "none".to_string()),
             ),
+            ("all", show_all.to_string()),
             (
                 "limit",
                 limit
@@ -46,49 +54,51 @@ pub fn run<W: Write>(
     Ok(())
 }
 
-fn stream_ls_table<W: Write>(
-    conn: &rusqlite::Connection,
-    wanted: Option<LinkStatus>,
-    limit: Option<u32>,
-    offset: u32,
-    writer: &mut W,
-) -> Result<(usize, usize), SymmError> {
-    let records = repository::list_links_paginated(conn, limit, offset)?;
-    output::write_list_header(writer)?;
-    let mut scanned = 0usize;
-    let mut emitted = 0usize;
-    for record in records {
-        scanned += 1;
-        let view = link_status::as_view(record);
-        if wanted.is_none_or(|s| view.status == s) {
-            output::write_list_row(writer, &view)?;
-            emitted += 1;
-        }
-    }
-    Ok((scanned, emitted))
+struct CollectedViews {
+    items: Vec<LinkView>,
+    scanned: usize,
 }
 
-fn stream_ls_json<W: Write>(
-    conn: &rusqlite::Connection,
+fn collect_views(
+    records: Vec<crate::domain::model::LinkRecord>,
     wanted: Option<LinkStatus>,
+    show_all: bool,
     limit: Option<u32>,
     offset: u32,
-    writer: &mut W,
-) -> Result<(usize, usize), SymmError> {
-    let records = repository::list_links_paginated(conn, limit, offset)?;
+) -> CollectedViews {
+    let scanned = records.len();
+    let filtered: Vec<LinkView> = records
+        .into_iter()
+        .map(link_status::as_view)
+        .filter(|view| should_emit(view, wanted, show_all))
+        .collect();
+
+    let start = offset as usize;
+    let end = limit
+        .map(|lim| start.saturating_add(lim as usize))
+        .unwrap_or(filtered.len());
+    let items = filtered
+        .into_iter()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect();
+
+    CollectedViews { items, scanned }
+}
+
+fn should_emit(view: &LinkView, wanted: Option<LinkStatus>, show_all: bool) -> bool {
+    if !show_all && !link_status::visible_in_default_ls(view.status) {
+        return false;
+    }
+    wanted.is_none_or(|status| view.status == status)
+}
+
+fn stream_ls_json<W: Write>(items: &[LinkView], writer: &mut W) -> Result<(), SymmError> {
     output::write_json_array_start(writer)?;
     let mut first = true;
-    let mut scanned = 0usize;
-    let mut emitted = 0usize;
-    for record in records {
-        scanned += 1;
-        let view = link_status::as_view(record);
-        if wanted.is_none_or(|s| view.status == s) {
-            output::write_json_item(writer, &view, first)?;
-            first = false;
-            emitted += 1;
-        }
+    for view in items {
+        output::write_json_item(writer, view, first)?;
+        first = false;
     }
-    output::write_json_array_end(writer)?;
-    Ok((scanned, emitted))
+    output::write_json_array_end(writer)
 }
