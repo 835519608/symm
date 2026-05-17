@@ -9,7 +9,7 @@ use std::path::Path;
 pub fn create_link(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
     #[cfg(windows)]
     {
-        return crate::adapters::fs::link_windows::create_link(target, link);
+        crate::adapters::fs::link_windows::create_link(target, link)
     }
     #[cfg(not(windows))]
     {
@@ -20,7 +20,7 @@ pub fn create_link(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
 pub fn write_symlink(link: &Path, target: &Path) -> Result<(), SymmError> {
     #[cfg(windows)]
     {
-        return crate::adapters::fs::link_windows::write_symlink(link, target);
+        crate::adapters::fs::link_windows::write_symlink(link, target)
     }
     #[cfg(not(windows))]
     {

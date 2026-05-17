@@ -81,7 +81,7 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
 fn write_symlink_at(link: &Path, target: &Path) -> Result<(), SymmError> {
     #[cfg(windows)]
     {
-        return write_symlink_direct(link, target);
+        write_symlink_direct(link, target)
     }
     #[cfg(not(windows))]
     {

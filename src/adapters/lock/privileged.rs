@@ -48,7 +48,7 @@ where
 {
     #[cfg(windows)]
     {
-        return elevate::run_elevated(args);
+        elevate::run_elevated(args)
     }
 
     #[cfg(unix)]
