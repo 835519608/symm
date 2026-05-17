@@ -32,8 +32,8 @@ runs:
           body="${DISPATCH_NOTES}"
         elif git rev-parse "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
           if [ "$(git cat-file -t "refs/tags/${TAG_NAME}")" = "tag" ]; then
-            subject=$(git tag -l --format='%(contents:subject)' "${TAG_NAME}")
-            tag_body=$(git tag -l --format='%(contents:body)' "${TAG_NAME}")
+            subject=$(git for-each-ref --format='%(contents:subject)' "refs/tags/${TAG_NAME}")
+            tag_body=$(git for-each-ref --format='%(contents:body)' "refs/tags/${TAG_NAME}")
             if [ -n "${subject}" ] && [ -n "${tag_body}" ]; then
               body="${subject}"$'\n\n'"${tag_body}"
             elif [ -n "${tag_body}" ]; then
