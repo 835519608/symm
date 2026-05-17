@@ -1,5 +1,7 @@
 //! 平台进程能力：仅 OS API 封装（静态分发）。
 
+#[cfg(windows)]
+mod restart_manager;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]

@@ -1,5 +1,4 @@
-mod restart_manager;
-
+use super::restart_manager;
 use super::{LockProbeProgress, PlatformProcess, ProcInfo};
 use crate::domain::error::SymmError;
 use std::os::windows::process::CommandExt;

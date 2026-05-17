@@ -151,7 +151,7 @@ unsafe fn get_process_list(session: u32) -> Result<Vec<RM_PROCESS_INFO>, SymmErr
 
 fn format_rm_process(info: &RM_PROCESS_INFO, pid: u32) -> String {
     let app = wide_null_to_string(&info.strAppName);
-    if let Some(image) = super::process_image_path(pid) {
+    if let Some(image) = super::windows::process_image_path(pid) {
         if app.is_empty() {
             format!("PID {pid}  {}", image.display())
         } else {
