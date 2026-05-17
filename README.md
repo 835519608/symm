@@ -37,8 +37,8 @@ symm rm <name|link>
 
 ### 质量检查
 
-- 本地：`cargo fmt --all -- --check`
-- 门禁：GitHub Actions 三端矩阵（fmt → clippy → test）
+- 本地：`cargo fmt --all -- --check`（或 `mise run fmt-check`）
+- 门禁：**GitHub Actions** 三端矩阵（`fmt` → `clippy -D warnings` → `test`）；不以本地构建结果为发布依据
 
 ## 数据目录
 
@@ -85,7 +85,7 @@ SYMM_ADD_NAME=my-project symm add ./link ./target
 
 | 取值 | 效果 |
 | :--- | :--- |
-| `unlock`（`kill`、`continue`） | 结束占用进程，确认无占用后继续 `add` |
+| `unlock`（`kill`、`continue`） | 结束占用进程，等待句柄释放后继续 `add` |
 | `cancel`（`abort`） | 不杀进程，取消本次 `add` |
 
 ```bash
@@ -148,12 +148,23 @@ SYMM_PERF_LOG=1 symm ls
 |------|---------------|---------|
 | 建链 | `symlink` | 软链；目录失败可 junction |
 | 同盘判断 | `dev` | 盘符 |
-| 查占用 / 杀进程 | `fuser` / `lsof`；非 root 时 `sudo` 子进程 | `filelocksmith`；非管理员时 UAC 子进程 |
-| 建链提权 | 无 | 失败且需提权时 UAC |
+| 查占用 | `fuser` / `lsof`；非 root 时 **sudo 子进程** | **Restart Manager**；非管理员时 **UAC 子进程**（按迁移目录**全文件清单**注册） |
+| 杀占用进程 | 同上（sudo 子进程） | UAC 子进程 + `TerminateProcess` |
+| 建链提权 | 无 | 仅当普通建链失败且错误需提权时 UAC |
 | 跨盘目录 ACL | — | `icacls` 快照（失败则跳过恢复） |
 | 同盘迁移软链 | `rename` + 树内 rebase | `rename`；拒绝访问时重建链接 |
 
 交互式终端下 Linux/macOS 的 `sudo` 可正常输入密码；无 TTY 的自动化场景可能失败。
+
+### Windows：占用检测与提权（实现说明）
+
+- **主进程**（你运行的 `symm`）保持**当前用户**，迁移/复制/写库不在此提权。
+- **查占用 / 杀进程**：非管理员时通过 [`runas`](https://crates.io/crates/runas) 启动**独立子进程**（`symm __elevated-list-locks` / `__elevated-kill`），UAC 点「是」后子进程内执行 Restart Manager 或结束进程；结果经临时快照文件回传主进程。
+- **扫锁范围**：对 `link` 路径做与迁移一致的 `WalkDir` 收集（普通文件 + 根目录），分批 `RmRegisterResources` / `RmGetList`；**不是**抽样少数文件。
+- **提权失败**：直接报错（含 `--elevated-log` 路径下的子进程日志）；**不会**再在主进程用普通权限重扫一遍。
+- **杀进程后**：短暂等待句柄释放（约 0.8s），**不再**反复扫锁或二次 UAC。
+- **已是管理员终端**：本进程直接调 RM / 杀进程，不启 UAC 子进程。
+- **建链**：仍为先普通用户创建；仅权限不足时再 UAC（`__elevated-create-link`），与扫锁策略不同。
 
 ## 迁移与 rebase
 
@@ -162,6 +173,8 @@ SYMM_PERF_LOG=1 symm ls
 - **相对路径**软链：通常不改写；指向树外的链接保持原目标
 - **跨盘删源失败**：目标已存在，源可能仍在，需人工清理（错误信息会说明）
 
+> **注意**：占用扫描只能发现「有进程注册在 RM 的资源」；迁移阶段仍可能遇到文件锁（`os error 33`），需完全退出相关程序（含托盘/后台）后重试。
+
 ## `add` 流程
 
 执行顺序：**占用检测** → **冲突/接管（adopt）** → **规范化 target** → **建链（若需要）** → **填写 name** → **写库**。
@@ -169,7 +182,7 @@ SYMM_PERF_LOG=1 symm ls
 | 场景 | 行为 |
 |------|------|
 | 同一 `link` 再次执行 | 更新原记录（`ON CONFLICT(link_path)`），非新增行 |
-| `link` 占用 | 可选结束占用进程后重查；取消则退出 |
+| `link` 占用 | UAC/sudo 扫锁 → 可选结束占用 → 等待句柄释放 → 继续；取消则退出 |
 | `link` 为实体且 `target` 不存在 | 将 `link` 迁移到 `target`，再建链指向 `target` |
 | `link` 与 `target` 均存在（link 非软链） | 三选一：保留 link / 保留 target / 取消 |
 | `link` 已是软链且指向 `target` | 跳过建链，仅更新库 |
@@ -179,15 +192,17 @@ SYMM_PERF_LOG=1 symm ls
 
 ```mermaid
 flowchart TB
-start[add] --> lock[占用检测]
+start[add] --> lock[占用检测 UAC/sudo 子进程]
 lock --> locked{有占用?}
 locked -->|是| unlock{解除?}
 unlock -->|否| err1[错误退出]
-unlock -->|是| adopt
-locked -->|否| adopt[冲突/接管 adopt]
+unlock -->|是| kill[结束进程 UAC/sudo]
+kill --> wait[等待句柄释放]
+wait --> adopt[冲突/接管 adopt]
+locked -->|否| adopt
 adopt --> norm[规范化 target]
 norm --> needLink{需新建链?}
-needLink -->|是| create[create_link]
+needLink -->|是| create[create_link 可能再 UAC]
 needLink -->|否| name[name + 写库]
 create --> name
 name --> ok{成功?}
@@ -223,14 +238,20 @@ db2 --> done
 
 ```text
 src/
-  bin/symm.rs              # CLI；内部提权子命令入口
+  bin/symm.rs              # CLI；内部提权子命令（__elevated-*）
   app/service.rs           # 命令分发
   domain/                  # 模型与错误
-  workflows/               # add / rm / ls / show
+  workflows/               # add / rm / ls / show（无平台 cfg）
   adapters/
-    platform/              # OS API（fs / process / privilege / elevate）
-    lock/                  # 查锁、杀进程、提权子进程
-    fs/                    # 迁移、rebase、建链策略
+    platform/
+      fs/                  # 建链、迁移、ACL、同盘判断
+      process/
+        restart_manager.rs # Windows：Restart Manager 扫锁
+        windows.rs         # Windows：杀进程、进程路径
+        unix.rs            # Unix：fuser / lsof
+      privilege.rs         # runas / sudo 提权子进程
+    lock/                  # 占用编排、UAC 快照协议、提示文案
+    fs/                    # 迁移、rebase、建链策略（link_windows）
     db/ paths/
   ui/                      # 交互、进度输出
 ```
@@ -253,6 +274,7 @@ src/
 - 链状态：`symlink_metadata(link)` 不存在 → `missing`；存在但 `target` 不存在 → `broken`
 - SQLite：`busy_timeout=5000`、`WAL`、`synchronous=NORMAL`、`temp_store=MEMORY`
 - 非空 `name` 在库内唯一（空 name 允许多条）
+- Windows 依赖：`windows`（Restart Manager）、`runas`（UAC 子进程）；已移除 `filelocksmith`
 
 ## 打包与发布
 
