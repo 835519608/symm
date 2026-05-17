@@ -7,6 +7,7 @@ use crate::domain::error::SymmError;
 use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -1,7 +1,7 @@
 //! Windows：建链失败时按需 UAC（策略层，非 OS API）。
 
 use crate::adapters::platform::elevate;
-use crate::adapters::platform::fs::windows::{
+use crate::adapters::platform::fs::{
     create_link_direct, infer_link_kind_after_elevated, needs_link_elevation, write_symlink_direct,
 };
 use crate::adapters::platform::privilege;

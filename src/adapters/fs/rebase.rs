@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 use crate::adapters::platform::{PlatformFs, fs_platform};
 
 #[cfg(windows)]
-use crate::adapters::platform::fs::windows::write_symlink_direct;
+use crate::adapters::platform::fs::write_symlink_direct;
 
 pub fn recreate_symlink(
     src_link: &Path,

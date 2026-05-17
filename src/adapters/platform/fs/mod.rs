@@ -37,3 +37,8 @@ pub fn fs() -> &'static Platform {
 pub fn elevated_create_link_entry(target: &Path, link: &Path) -> Result<(), SymmError> {
     windows::elevated_create_link_entry(target, link)
 }
+
+#[cfg(windows)]
+pub(crate) use windows::{
+    create_link_direct, infer_link_kind_after_elevated, needs_link_elevation, write_symlink_direct,
+};

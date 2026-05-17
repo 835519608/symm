@@ -73,7 +73,7 @@ where
 
 pub fn run_elevated_link(target: &Path, link: &Path) -> Result<(), SymmError> {
     run_elevated([
-        "__elevated-create-link",
+        OsStr::new("__elevated-create-link"),
         target.as_os_str(),
         link.as_os_str(),
     ])
