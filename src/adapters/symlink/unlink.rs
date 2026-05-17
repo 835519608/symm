@@ -6,6 +6,9 @@ pub fn unlink(link: &Path) -> Result<(), SymmError> {
     match fs::symlink_metadata(link) {
         Ok(meta) => {
             let file_type = meta.file_type();
+            if !file_type.is_symlink() {
+                return Ok(());
+            }
             if file_type.is_dir() {
                 fs::remove_dir(link).map_err(|e| SymmError::IoError {
                     message: e.to_string(),

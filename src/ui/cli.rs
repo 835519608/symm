@@ -12,8 +12,10 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     Add {
-        link: PathBuf,
-        target: PathBuf,
+        /// 软链接位置；省略则交互填写（可先选库中模板）
+        link: Option<PathBuf>,
+        /// 实体数据位置；省略则交互填写
+        target: Option<PathBuf>,
     },
     Rm {
         /// ls 序号（纯数字）或 name；可多个；省略则交互多选
@@ -58,10 +60,7 @@ pub enum Commands {
     /// 内部：提权子进程创建软链接（仅 Windows，用户勿直接调用）
     #[cfg(windows)]
     #[command(hide = true, name = "__elevated-create-link")]
-    ElevatedCreateLink {
-        target: PathBuf,
-        link: PathBuf,
-    },
+    ElevatedCreateLink { target: PathBuf, link: PathBuf },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

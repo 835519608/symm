@@ -17,6 +17,7 @@ thiserror = "1"
 inquire = "0.7"
 runas = "1.2"
 dunce = "1"
+unicode-width = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [

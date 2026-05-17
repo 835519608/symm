@@ -7,7 +7,7 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
     let conn = crate::adapters::db::repository::open_db()?;
     match command {
         Commands::Add { link, target } => {
-            workflows::add::workflow::run(&conn, &link, &target, writer)
+            workflows::add::workflow::run(&conn, link.as_deref(), target.as_deref(), writer)
         }
         Commands::Rm { selectors } => workflows::rm::workflow::run(&conn, &selectors, writer),
         Commands::Ls {

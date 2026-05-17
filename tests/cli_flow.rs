@@ -789,6 +789,130 @@ fn ls_status_filters_broken_and_missing() {
 }
 
 #[test]
+fn add_without_positional_args_uses_env_paths() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+    let target = data_root.join("target_env.txt");
+    let link = data_root.join("link_env.txt");
+    fs::write(&target, "hello").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_LINK", &link)
+        .env("SYMM_ADD_TARGET", &target)
+        .env("SYMM_ADD_NAME", "env-add")
+        .args(["add"])
+        .assert()
+        .success()
+        .stdout(contains("env-add"));
+}
+
+#[test]
+fn rm_restore_on_stale_falls_back_without_blocking_batch() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target_ok = data_root.join("target_ok.txt");
+    let link_ok = data_root.join("link_ok.txt");
+    fs::write(&target_ok, "ok").expect("write target");
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "ok-item")
+        .args([
+            "add",
+            &link_ok.to_string_lossy(),
+            &target_ok.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    let target_stale = data_root.join("target_stale_batch.txt");
+    let link_stale = data_root.join("link_stale_batch");
+    fs::write(&target_stale, "stale").expect("write target");
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "stale-item")
+        .args([
+            "add",
+            &link_stale.to_string_lossy(),
+            &target_stale.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+    fs::remove_file(&link_stale).expect("remove symlink");
+    fs::create_dir_all(&link_stale).expect("replace with dir");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "restore")
+        .args(["rm", "stale-item", "ok-item"])
+        .assert()
+        .success()
+        .stdout(contains("删除成功"))
+        .stdout(contains("无法恢复 target"));
+
+    assert!(link_stale.exists());
+    assert!(link_ok.exists());
+    assert_eq!(
+        fs::read_to_string(&link_ok).expect("read restored link"),
+        "ok"
+    );
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("stale-item").not())
+        .stdout(predicates::str::contains("ok-item").not());
+}
+
+#[test]
+fn rm_stale_entry_deletes_db_and_keeps_non_symlink_path() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_stale_rm.txt");
+    let link = data_root.join("link_stale_rm");
+    fs::write(&target, "x").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "stale-rm")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    fs::remove_file(&link).expect("remove symlink");
+    fs::create_dir_all(&link).expect("replace with dir");
+    fs::write(link.join("child.txt"), "keep").expect("write child");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "delete")
+        .args(["rm", "stale-rm"])
+        .assert()
+        .success()
+        .stdout(contains("删除成功"))
+        .stdout(contains("将仅删除库记录"));
+
+    assert!(link.join("child.txt").exists());
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("stale-rm").not());
+}
+
+#[test]
 fn ls_shows_stale_status_when_link_no_longer_symlink() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");

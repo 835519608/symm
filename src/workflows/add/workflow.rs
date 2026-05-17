@@ -8,7 +8,7 @@ use crate::adapters::paths::runtime_paths;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
-use crate::ui::interaction::choice;
+use crate::ui::interaction::{add_paths, choice};
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::add::adopt;
 use crate::workflows::perf;
@@ -19,23 +19,24 @@ use std::time::Instant;
 
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
-    link: &Path,
-    target: &Path,
+    link: Option<&Path>,
+    target: Option<&Path>,
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
-    let link_norm = runtime_paths::normalize_link(link);
+    let (link, target) = add_paths::resolve_add_paths(conn, link, target)?;
+    let link_norm = runtime_paths::normalize_link(&link);
     let existing = repository::find_optional(conn, &LinkQuery::link_path_exact(&link_norm))?;
     let mut reporter = MigrationProgressReporter::new(writer);
     ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
-    let prep = adopt::resolve_add_conflict(Path::new(&link_norm), target, &mut |event| {
+    let prep = adopt::resolve_add_conflict(Path::new(&link_norm), &target, &mut |event| {
         reporter.handle_migration_event(event)
     })?;
 
     let target_norm = if prep.skip_target_exists_check {
-        runtime_paths::normalize_target_known_exists(target)?
+        runtime_paths::normalize_target_known_exists(&target)?
     } else {
-        runtime_paths::normalize_target(target)?
+        runtime_paths::normalize_target(&target)?
     };
     let link_kind = if prep.link_exists_at_path {
         existing

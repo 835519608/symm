@@ -2,6 +2,7 @@ use crate::domain::error::SymmError;
 use crate::domain::model::LinkView;
 use serde::Serialize;
 use std::io::Write;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Serialize)]
 struct ErrorPayload<'a> {
@@ -79,14 +80,11 @@ pub fn render_error_json(err: &SymmError) -> String {
 
 fn format_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     let ncol = headers.len();
-    let mut widths = headers
-        .iter()
-        .map(|h| h.chars().count())
-        .collect::<Vec<_>>();
+    let mut widths = headers.iter().map(|h| cell_width(h)).collect::<Vec<_>>();
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
             if i < ncol {
-                widths[i] = widths[i].max(cell.chars().count());
+                widths[i] = widths[i].max(cell_width(cell));
             }
         }
     }
@@ -100,13 +98,21 @@ fn format_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     out
 }
 
+fn cell_width(s: &str) -> usize {
+    s.width()
+}
+
 fn append_row(out: &mut String, cells: &[&str], widths: &[usize], is_header: bool) {
     for (i, cell) in cells.iter().enumerate() {
         if i > 0 {
             out.push(' ');
         }
         let width = widths.get(i).copied().unwrap_or(0);
-        pad_cell(out, cell, width);
+        if is_header {
+            pad_cell_center(out, cell, width);
+        } else {
+            pad_cell_left(out, cell, width);
+        }
     }
     out.push('\n');
     if is_header {
@@ -122,13 +128,22 @@ fn append_row(out: &mut String, cells: &[&str], widths: &[usize], is_header: boo
     }
 }
 
-fn pad_cell(out: &mut String, cell: &str, width: usize) {
-    let len = cell.chars().count();
+fn pad_cell_left(out: &mut String, cell: &str, width: usize) {
     out.push_str(cell);
-    if len < width {
-        for _ in 0..width - len {
-            out.push(' ');
-        }
+    for _ in 0..width.saturating_sub(cell_width(cell)) {
+        out.push(' ');
+    }
+}
+
+fn pad_cell_center(out: &mut String, cell: &str, width: usize) {
+    let pad = width.saturating_sub(cell_width(cell));
+    let left = pad / 2;
+    for _ in 0..left {
+        out.push(' ');
+    }
+    out.push_str(cell);
+    for _ in 0..(pad - left) {
+        out.push(' ');
     }
 }
 
@@ -152,8 +167,14 @@ mod tests {
             ],
         );
         let lines: Vec<_> = table.lines().collect();
-        assert!(lines[0].starts_with("ID"));
-        assert!(lines[2].starts_with("1 "));
-        assert!(lines[3].starts_with("12"));
+        assert_eq!(cell_width(lines[0]), cell_width(lines[2]));
+        assert_eq!(cell_width(lines[0]), cell_width(lines[3]));
+    }
+
+    #[test]
+    fn table_aligns_cjk_headers_with_ascii_cells() {
+        let table = format_table(&["序号", "名称"], &[vec!["1".into(), "demo".into()]]);
+        let lines: Vec<_> = table.lines().collect();
+        assert_eq!(cell_width(lines[0]), cell_width(lines[2]));
     }
 }

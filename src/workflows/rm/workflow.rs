@@ -2,9 +2,10 @@
 use crate::adapters::db::resolve;
 use crate::adapters::db::{LinkQuery, repository};
 use crate::adapters::migrate as migration;
+use crate::adapters::status;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
-use crate::domain::model::LinkRecord;
+use crate::domain::model::{LinkRecord, LinkStatus};
 use crate::ui::interaction::{choice, pick_record};
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::perf;
@@ -22,22 +23,38 @@ pub fn run<W: Write>(
     let records = resolve_records(conn, selectors)?;
     let action = select_rm_action()?;
     let mut labels = Vec::with_capacity(records.len());
+    let mut failures = Vec::new();
     for record in records {
-        labels.push(remove_one(conn, &record, action, writer)?);
+        match remove_one(conn, &record, action, writer) {
+            Ok(label) => labels.push(label),
+            Err(err) => failures.push(format!("{}：{err}", record_label(&record))),
+        }
     }
 
+    if labels.is_empty() {
+        return Err(SymmError::IoError {
+            message: failures.join("\n"),
+        });
+    }
+
+    let action_hint = match action {
+        RmAction::DeleteLinkOnly => "删除成功",
+        RmAction::RestoreTargetToLink if failures.is_empty() => "删除成功并已恢复 target 到 link",
+        RmAction::RestoreTargetToLink => "删除成功（部分条目无法恢复，已改为仅删库）",
+    };
     let summary = if labels.len() == 1 {
         labels[0].clone()
     } else {
         format!("共 {} 条：{}", labels.len(), labels.join("、"))
     };
-    let action_hint = match action {
-        RmAction::DeleteLinkOnly => "删除成功",
-        RmAction::RestoreTargetToLink => "删除成功并已恢复 target 到 link",
-    };
     writeln!(writer, "{action_hint}：{summary}").map_err(|e| SymmError::IoError {
         message: e.to_string(),
     })?;
+    for failure in &failures {
+        writeln!(writer, "失败：{failure}").map_err(|e| SymmError::IoError {
+            message: e.to_string(),
+        })?;
+    }
 
     perf::log_perf(
         "rm",
@@ -82,14 +99,58 @@ fn remove_one<W: Write>(
 ) -> Result<String, SymmError> {
     let link = Path::new(&record.link_path);
     let target = Path::new(&record.target_path);
-    if action == RmAction::RestoreTargetToLink {
-        restore_target_to_link(writer, link, target)?;
+    let link_status = status::for_record(record);
+    let mut action = action;
+
+    if action == RmAction::RestoreTargetToLink
+        && matches!(link_status, LinkStatus::Stale | LinkStatus::Missing)
+    {
+        writeln!(
+            writer,
+            "提示：{} 状态为 {link_status}，无法恢复 target，本条改为仅删库",
+            record.link_path
+        )
+        .map_err(|e| SymmError::IoError {
+            message: e.to_string(),
+        })?;
+        action = RmAction::DeleteLinkOnly;
     }
+
+    match action {
+        RmAction::RestoreTargetToLink => restore_target_to_link(writer, link, target)?,
+        RmAction::DeleteLinkOnly => apply_delete_link_only(writer, record, link, link_status)?,
+    }
+
     repository::delete_one(conn, &LinkQuery::id(record.id))?;
-    if action == RmAction::DeleteLinkOnly {
-        symlink::unlink(link)?;
-    }
     Ok(record_label(record))
+}
+
+fn should_unlink_on_disk(status: LinkStatus) -> bool {
+    matches!(
+        status,
+        LinkStatus::Ok | LinkStatus::Broken | LinkStatus::Drift
+    )
+}
+
+fn apply_delete_link_only<W: Write>(
+    writer: &mut W,
+    record: &LinkRecord,
+    link: &Path,
+    link_status: LinkStatus,
+) -> Result<(), SymmError> {
+    if should_unlink_on_disk(link_status) {
+        symlink::unlink(link)?;
+    } else if link_status == LinkStatus::Stale {
+        writeln!(
+            writer,
+            "提示：{} 已不是软链接，将仅删除库记录（路径仍保留）",
+            record.link_path
+        )
+        .map_err(|e| SymmError::IoError {
+            message: e.to_string(),
+        })?;
+    }
+    Ok(())
 }
 
 fn record_label(record: &LinkRecord) -> String {
