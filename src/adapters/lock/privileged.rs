@@ -16,12 +16,22 @@ use crate::adapters::platform::elevate;
 
 pub fn list_locking_processes(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     let snapshot = temp_snapshot_path("list");
+    // 父进程先建空快照（用户权限），提权子进程只覆写内容，避免在 %TEMP% 新建管理员独占文件导致父进程读不到。
+    write_snapshot(&snapshot, &[])?;
     run_privileged_subcommand([
         OsStr::new("__elevated-list-locks"),
         OsStr::new("--out"),
         snapshot.as_os_str(),
         path.as_os_str(),
     ])?;
+    if !snapshot.is_file() {
+        return Err(SymmError::IoError {
+            message: format!(
+                "提权子进程未写入占用快照「{}」。请确认 UAC 已授权；或改用「以管理员身份运行」的终端执行 symm",
+                snapshot.display()
+            ),
+        });
+    }
     let procs = read_snapshot(&snapshot)?;
     let _ = std::fs::remove_file(&snapshot);
     Ok(procs)

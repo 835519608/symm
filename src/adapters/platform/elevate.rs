@@ -34,10 +34,16 @@ where
         .collect::<Vec<_>>()
         .join(", ");
 
+    let work_dir = exe
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".to_string());
+
     let script = format!(
-        "$p = Start-Process -FilePath {} -ArgumentList @({}) -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode",
+        "$p = Start-Process -FilePath {} -ArgumentList @({}) -WorkingDirectory {} -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode",
         ps_single_quote(&exe.to_string_lossy()),
-        ps_args
+        ps_args,
+        ps_single_quote(&work_dir),
     );
 
     let status = Command::new("powershell")
