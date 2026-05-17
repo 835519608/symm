@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 
+[features]
+default = []
+gui = ["dep:eframe", "dep:egui"]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+eframe = { version = "0.30", optional = true }
+egui = { version = "0.30", optional = true }
 dirs = "5"
 fs_extra = "1.3"
 walkdir = "2"
@@ -29,6 +35,11 @@ windows = { version = "0.61", features = [
 
 [build-dependencies]
 embed-resource = "3.0"
+
+[[bin]]
+name = "symm-gui"
+path = "src/bin/symm-gui.rs"
+required-features = ["gui"]
 
 [dev-dependencies]
 assert_cmd = "2"
