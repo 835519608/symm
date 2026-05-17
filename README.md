@@ -159,7 +159,7 @@ SYMM_PERF_LOG=1 symm ls
 ### Windows：占用检测与提权（实现说明）
 
 - **主进程**（你运行的 `symm`）保持**当前用户**，迁移/复制/写库不在此提权。
-- **查占用 / 杀进程**：非管理员时通过 [`runas`](https://crates.io/crates/runas) 启动**独立子进程**（`symm __elevated-list-locks` / `__elevated-kill`），UAC 点「是」后子进程内执行 Restart Manager 或结束进程；结果经临时快照文件回传主进程。
+- **查占用 / 杀进程**：非管理员时通过 [`runas`](https://crates.io/crates/runas) 启动**独立子进程**（`symm __elevated-list-locks` / `__elevated-kill`），UAC 点「是」后子进程内执行 Restart Manager 或结束进程；结果经临时快照文件回传主进程。子进程**不弹黑窗**（`show(false)`），扫锁进度经临时文件回传并在**主终端**输出。
 - **扫锁范围**：对 `link` 路径做与迁移一致的 `WalkDir` 收集**普通文件**（不注册目录本身；目录无 `\` 结尾会导致 `RmGetList` 错误 5），分批 `RmRegisterResources` / `RmGetList`；单批若遇 `ACCESS_DENIED` 会二分拆分跳过不可查路径。
 - **提权失败**：直接报错（含 `--elevated-log` 路径下的子进程日志）；**不会**再在主进程用普通权限重扫一遍。
 - **杀进程后**：短暂等待句柄释放（约 0.8s），**不再**反复扫锁或二次 UAC。
