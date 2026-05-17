@@ -7,7 +7,8 @@ use std::path::Path;
 
 #[cfg(windows)]
 pub fn is_privileged() -> bool {
-    filelocksmith::is_process_elevated()
+    use windows::Win32::UI::Shell::IsUserAnAdmin;
+    unsafe { IsUserAnAdmin().as_bool() }
 }
 
 #[cfg(unix)]
