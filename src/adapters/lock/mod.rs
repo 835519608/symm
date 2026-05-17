@@ -83,7 +83,7 @@ where
             LockProbeDepth::Deep,
             &mut progress,
         ) {
-            Ok(procs) => return Ok(procs),
+            Ok(procs) => Ok(procs),
             Err(_) => match privileged::list_locking_processes(path) {
                 Ok(procs) => Ok(procs),
                 Err(err) if uac_cancelled_by_user(&err) => Err(err),
@@ -94,9 +94,10 @@ where
                         &mut progress,
                     ) && !procs.is_empty()
                     {
-                        return Ok(procs);
+                        Ok(procs)
+                    } else {
+                        Err(elevated_err)
                     }
-                    Err(elevated_err)
                 }
             },
         }
