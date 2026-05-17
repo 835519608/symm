@@ -40,12 +40,12 @@ fn run() -> Result<(), symm::domain::error::SymmError> {
         Commands::ElevatedKill { pids } => symm::adapters::lock::elevated_kill_entry(&pids),
         #[cfg(windows)]
         Commands::ElevatedCreateLink { target, link } => {
-            symm::adapters::platform::fs::elevated_create_link_entry(&target, &link)
+            symm::adapters::platform::host::elevated_create_link_entry(&target, &link)
         }
         other => {
             let stdout = std::io::stdout();
             let mut lock = stdout.lock();
-            symm::app::service::execute(other, &mut lock)
+            symm::app::dispatch::execute(other, &mut lock)
         }
     }
 }

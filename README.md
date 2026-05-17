@@ -238,9 +238,9 @@ db2 --> done
 
 ```text
 src/
-  bin/symm.rs                    # 入口：用户命令 → app::service；__elevated-* → lock/platform
+  bin/symm.rs                    # 入口：用户命令 → app::dispatch；__elevated-* → lock/platform
   app/
-    service.rs                   # 命令分发（仅 match → workflows）
+    dispatch.rs                  # 命令分发（仅 match → workflows）
   domain/
     model.rs                     # LinkRecord / LinkView / LinkStatus / name 入库规则
     error.rs                     # SymmError
@@ -255,29 +255,29 @@ src/
   adapters/
     db/
       repository.rs              # SQLite 打开、CRUD、list
-      link_query.rs              # 查询条件 DSL（供 repository / 未来 API）
-      selector.rs                # name / ls 序号 → LinkRecord
+      query.rs                   # 查询条件 DSL（供 repository / 未来 API）
+      resolve.rs                 # name / ls 序号 → LinkRecord
     symlink/                     # 建链/写链/删链（唯一入口；Windows UAC 在 windows 子模块）
-      create.rs / remove.rs
+      link.rs / unlink.rs
       windows.rs                 # 仅 Windows cfg
     migrate/                     # 迁移编排（同盘/跨盘/rebase；写链只调 symlink）
-      service.rs / copy.rs / tree_copy.rs / rebase.rs / relocate.rs
+      path.rs / copy_file.rs / copy_dir.rs / rebase.rs / relocate_symlink.rs
     paths/
       home.rs                    # SYMM_HOME、data 目录
       normalize.rs               # 路径规范化辅助
       runtime_paths.rs           # add/rm 用的 link/target 规范化入口
-      path_ops.rs                # 删文件/目录（migrate 与 platform 共用）
+      remove.rs                  # 删文件/目录（migrate 与 platform 共用）
       rebase_paths.rs            # 软链 rebase 路径计算（无 OS 调用）
-    fs/
-      link_status.rs             # 盘上链状态（ok/broken/missing/stale/drift）
+    status/
+      probe.rs                   # 盘上链状态（ok/broken/missing/stale/drift）
     lock/                        # 占用检测/解除编排（文案见 messages.rs）
       mod.rs                     # list_locking_processes / kill_processes
-      privileged.rs              # UAC/sudo 子进程协议
+      elevated.rs                # UAC/sudo 子进程协议
       release.rs / snapshot.rs / elevated_progress.rs
-    errors/io_map.rs             # IO 错误 → SymmError（含 Windows 码映射）
+    errors/io.rs                 # IO 错误 → SymmError（含 Windows 码映射）
     platform/                    # OS API（cfg 集中处）
       privilege.rs               # runas / sudo、是否已提权
-      fs/                        # PlatformFs：建链、迁移、ACL、同盘
+      host/                      # HostFs：建链、迁移、ACL、同盘
       process/
         restart_manager.rs       # Windows Restart Manager
         windows.rs / unix.rs     # 扫锁、杀进程
@@ -285,6 +285,7 @@ src/
     cli.rs                       # clap 定义（含隐藏 __elevated-*）
     output.rs                    # 表格 / JSON / 错误 JSON
     interaction/                 # inquire 菜单、记录选择器
+      pick_record.rs
     progress/migration_reporter.rs
 ```
 
@@ -293,7 +294,7 @@ src/
 ```text
 bin / app  →  workflows  →  adapters（db / symlink / migrate / lock / paths / errors）
                               ↘ platform → domain
-migrate / symlink  →  paths / platform（禁止 platform → migrate/symlink/fs）
+migrate / symlink  →  paths / platform（禁止 platform → migrate/symlink/status）
 paths  →  domain / errors
 ui  →  domain / adapters（仅展示与交互，不含业务 cfg）
 ```
@@ -305,24 +306,24 @@ ui  →  domain / adapters（仅展示与交互，不含业务 cfg）
 | `workflows/**` | 不写 `#[cfg(windows\|unix)]`，不 `use adapters::platform::*`，不依赖 `app::*` |
 | `adapters/migrate/**` | 不新增平台 cfg；不直接 `write_symlink_direct`，写链只调 `symlink::*` |
 | `adapters/symlink/**` | Windows 策略仅在 `windows.rs`；其它文件无 cfg |
-| `adapters/fs/**` | 仅 `link_status`（读盘状态） |
+| `adapters/status/**` | 仅读盘链状态（`probe`） |
 | 平台 / 提权 / 占用文案 | `adapters/platform/**`、`adapters/lock/**`（如 `messages.rs`） |
 | `app/**` | 只做命令分发，不放查询解析等业务 helper |
 | `ui/**` | 交互与输出；`cli.rs` 内 Windows 专用子命令定义可保留 `#[cfg(windows)]` |
 
 对外入口示例：
 
-- 查库 / 选择器：`adapters::db::repository` / `adapters::db::selector`
-- 链状态：`adapters::fs::link_status::status_for` / `as_view`
-- 建链 / 写链 / 删链：`adapters::symlink::{create_link, write_symlink, remove_link}`
+- 查库 / 选择器：`adapters::db::repository` / `adapters::db::resolve`
+- 链状态：`adapters::status::{for_record, to_view}`
+- 建链 / 写链 / 删链：`adapters::symlink::{create_link, write_symlink, unlink}`
 - 迁移：`adapters::migrate::migrate_path` / `move_path_with_retry`
-- 文件系统 OS（同盘/ACL/rename）：`adapters::platform::fs_platform()`（仅 migrate 等编排层）
+- 文件系统 OS（同盘/ACL/rename）：`adapters::platform::host_platform()`（仅 migrate 等编排层）
 - 占用：`adapters::lock::list_locking_processes_with_progress` / `kill_processes`
 
 ## 实现要点
 
 - `ls` / `show`：只查 SQLite，不扫盘；`ls` 支持流式输出与 `--limit` / `--offset`
-- 链状态（`link_status`，仅读盘、不扫全库）：`missing`（link 不存在）→ `stale`（存在但非软链）→ `broken`（target 不存在）→ `drift`（软链指向与库中 target 不一致）→ `ok`
+- 链状态（`status::probe`，仅读盘、不扫全库）：`missing`（link 不存在）→ `stale`（存在但非软链）→ `broken`（target 不存在）→ `drift`（软链指向与库中 target 不一致）→ `ok`
 - SQLite：`busy_timeout=5000`、`WAL`、`synchronous=NORMAL`、`temp_store=MEMORY`
 - 非空 `name` 在库内唯一（空 name 允许多条）
 - Windows 依赖：`windows`（Restart Manager）、`runas`（UAC 子进程）；已移除 `filelocksmith`

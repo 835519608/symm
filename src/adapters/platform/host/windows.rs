@@ -1,6 +1,6 @@
-use super::PlatformFs;
+use super::HostFs;
 use super::error::{RelocateFailure, map_link_io_error};
-use crate::adapters::errors::io_map::ioe;
+use crate::adapters::errors::io::ioe;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use std::fs;
@@ -8,9 +8,9 @@ use std::os::windows::fs::{symlink_dir, symlink_file};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
-pub struct Platform;
+pub struct Host;
 
-impl PlatformFs for Platform {
+impl HostFs for Host {
     fn create_link(&self, target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
         create_link_direct(target, link)
     }

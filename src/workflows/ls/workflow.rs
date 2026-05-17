@@ -1,5 +1,5 @@
 use crate::adapters::db::repository;
-use crate::adapters::fs::link_status;
+use crate::adapters::status;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkStatus, LinkView};
 use crate::ui::output;
@@ -68,7 +68,7 @@ fn collect_views(
         .into_iter()
         .enumerate()
         .map(|(i, record)| {
-            let mut view = link_status::as_view(record);
+            let mut view = status::to_view(record);
             view.index = i as u32 + 1;
             view
         })

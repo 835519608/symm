@@ -1,5 +1,5 @@
-use crate::adapters::errors::io_map::ioe;
-use crate::adapters::paths::{path_ops, rebase_paths};
+use crate::adapters::errors::io::ioe;
+use crate::adapters::paths::{rebase_paths, remove};
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use std::fs;
@@ -67,7 +67,7 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
         if rebased.as_os_str() == raw.as_os_str() {
             continue;
         }
-        path_ops::remove_path_any(link_path)?;
+        remove::remove_any(link_path)?;
         symlink::write_symlink(link_path, &rebased)?;
     }
     Ok(())

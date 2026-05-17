@@ -1,4 +1,4 @@
-use crate::adapters::db::link_query::{LinkQuery, ListOptions, StringMatch};
+use crate::adapters::db::query::{LinkQuery, ListOptions, StringMatch};
 use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkKind, LinkRecord, prepare_link_name_for_storage};
@@ -331,7 +331,7 @@ fn db_err(e: SqlError) -> SymmError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::db::link_query::StringMatch;
+    use crate::adapters::db::query::StringMatch;
 
     #[test]
     fn migrate_upgrades_legacy_table_without_autoincrement() {

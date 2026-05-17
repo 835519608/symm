@@ -1,4 +1,4 @@
-//! 软链 rebase 的路径计算（无 OS 调用，供 `fs::rebase` 与 `platform::fs` 共用）。
+//! 软链 rebase 的路径计算（无 OS 调用，供 `migrate::rebase` 与 `platform::host` 共用）。
 
 use std::path::{Path, PathBuf};
 

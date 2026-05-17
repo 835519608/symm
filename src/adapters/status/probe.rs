@@ -2,7 +2,7 @@ use crate::domain::model::{LinkRecord, LinkStatus, LinkView};
 use std::fs;
 use std::path::Path;
 
-pub fn status_for(record: &LinkRecord) -> LinkStatus {
+pub fn for_record(record: &LinkRecord) -> LinkStatus {
     let link = Path::new(&record.link_path);
     let meta = match fs::symlink_metadata(link) {
         Err(_) => return LinkStatus::Missing,
@@ -21,8 +21,8 @@ pub fn status_for(record: &LinkRecord) -> LinkStatus {
     LinkStatus::Ok
 }
 
-pub fn as_view(record: LinkRecord) -> LinkView {
-    let status = status_for(&record);
+pub fn to_view(record: LinkRecord) -> LinkView {
+    let status = for_record(&record);
     LinkView {
         record,
         index: 0,
@@ -69,7 +69,7 @@ mod tests {
         let target = dir.path().join("target.txt");
         fs::write(&target, "x").expect("target");
         fs::write(&link, "plain file").expect("link");
-        let status = status_for(&record(&link.to_string_lossy(), &target.to_string_lossy()));
+        let status = for_record(&record(&link.to_string_lossy(), &target.to_string_lossy()));
         assert_eq!(status, LinkStatus::Stale);
     }
 
@@ -83,7 +83,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
         #[cfg(windows)]
         std::os::windows::fs::symlink_file(&target, &link).expect("symlink");
-        let status = status_for(&record(&link.to_string_lossy(), &target.to_string_lossy()));
+        let status = for_record(&record(&link.to_string_lossy(), &target.to_string_lossy()));
         assert_eq!(status, LinkStatus::Ok);
     }
 }

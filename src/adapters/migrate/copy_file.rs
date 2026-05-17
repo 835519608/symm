@@ -1,6 +1,6 @@
-use super::service::{MigrationEvent, fs_extra_error};
-use super::tree_copy;
-use crate::adapters::paths::path_ops;
+use super::copy_dir;
+use super::path::{MigrationEvent, fs_extra_error};
+use crate::adapters::paths::remove;
 use crate::domain::error::SymmError;
 use fs_extra::file;
 use std::fs;
@@ -30,8 +30,8 @@ where
             message: format!("无法创建目标目录：{e}"),
         })?;
 
-        if let Err(err) = tree_copy::copy_dir_tree_with_progress(src, dst, reporter) {
-            let _ = path_ops::remove_path_any(dst);
+        if let Err(err) = copy_dir::copy_dir_tree_with_progress(src, dst, reporter) {
+            let _ = remove::remove_any(dst);
             return Err(err);
         }
         return Ok(());
@@ -51,7 +51,7 @@ where
             current_item: src.file_name().map(|s| s.to_string_lossy().to_string()),
         });
     }) {
-        let _ = path_ops::remove_path_any(dst);
+        let _ = remove::remove_any(dst);
         return Err(fs_extra_error(err));
     }
     Ok(())

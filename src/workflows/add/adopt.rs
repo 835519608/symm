@@ -1,6 +1,6 @@
 //! `add` 冲突与接管：直接腾路径并 `migrate_path`，无 staging 旁路文件。
 use crate::adapters::migrate::{self as migration, MigrationEvent};
-use crate::adapters::paths::path_ops;
+use crate::adapters::paths::remove;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::ui::interaction::choice;
@@ -89,7 +89,7 @@ fn prepare_symlink_exist(
     }
     match select_symlink_conflict_choice()? {
         SymlinkConflictChoice::Retarget => {
-            symlink::remove_link(link)?;
+            symlink::unlink(link)?;
             Ok(finish_outcome(false, target_existed_at_start, false, false))
         }
         SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {
@@ -109,12 +109,12 @@ where
 {
     match select_conflict_choice()? {
         ConflictChoice::KeepLink => {
-            path_ops::remove_path_any(target)?;
+            remove::remove_any(target)?;
             adopt_link_to_target(link, target, reporter, true, true)?;
             Ok(finish_outcome(false, target_existed_at_start, true, true))
         }
         ConflictChoice::KeepTarget => {
-            path_ops::remove_path_any(link)?;
+            remove::remove_any(link)?;
             Ok(finish_outcome(false, target_existed_at_start, false, false))
         }
         ConflictChoice::Cancel => Err(SymmError::InvalidArgument {

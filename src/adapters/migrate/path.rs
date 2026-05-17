@@ -1,6 +1,7 @@
-use super::{copy, rebase, relocate};
-use crate::adapters::paths::path_ops;
-use crate::adapters::platform::{PlatformFs, format_relocate_failure, fs_platform};
+use super::relocate_symlink::relocate_symlink;
+use super::{copy_file, rebase};
+use crate::adapters::paths::remove;
+use crate::adapters::platform::{HostFs, format_relocate_failure, host_platform};
 use crate::domain::error::SymmError;
 use std::path::Path;
 
@@ -53,17 +54,17 @@ where
         return Ok(());
     }
 
-    if let Some(acl_file) = fs_platform().snapshot_dir_acl(src)? {
-        copy::copy_path_with_progress(src, dst, reporter)?;
-        let _ = fs_platform().restore_dir_acl(dst, &acl_file);
+    if let Some(acl_file) = host_platform().snapshot_dir_acl(src)? {
+        copy_file::copy_path_with_progress(src, dst, reporter)?;
+        let _ = host_platform().restore_dir_acl(dst, &acl_file);
     } else {
-        copy::copy_path_with_progress(src, dst, reporter)?;
+        copy_file::copy_path_with_progress(src, dst, reporter)?;
     }
 
     reporter(MigrationEvent::RemovingSource {
         source: src.display().to_string(),
     })?;
-    if let Err(remove_err) = path_ops::remove_path_any(src) {
+    if let Err(remove_err) = remove::remove_any(src) {
         return Err(SymmError::IoError {
             message: format!(
                 "跨磁盘复制已完成但无法删除源路径：{remove_err}（目标已存在于 {}，请人工处理）",
@@ -89,13 +90,13 @@ pub fn can_use_fast_move(src: &Path, dst: &Path) -> Result<bool, SymmError> {
         });
     }
 
-    fs_platform().same_volume(src, dst_parent)
+    host_platform().same_volume(src, dst_parent)
 }
 
 pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {
     let message = match e.kind {
         fs_extra::error::ErrorKind::Io(ref io_err) => {
-            crate::adapters::errors::io_map::format_io_error(io_err)
+            crate::adapters::errors::io::format_io_error(io_err)
         }
         _ => e.to_string(),
     };
@@ -103,12 +104,13 @@ pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {
 }
 
 pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
-    match fs_platform().relocate_path(src, dst) {
+    match host_platform().relocate_path(src, dst) {
         Ok(()) => Ok(()),
-        Err(failure) if failure.symlink_needs_recreate => relocate::relocate_symlink(src, dst)
-            .map_err(|inner| SymmError::IoError {
+        Err(failure) if failure.symlink_needs_recreate => {
+            relocate_symlink(src, dst).map_err(|inner| SymmError::IoError {
                 message: format!("无法移动 {role}：{inner}"),
-            }),
+            })
+        }
         Err(failure) => Err(format_relocate_failure(role, failure)),
     }
 }
@@ -116,7 +118,7 @@ pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), Sy
 #[cfg(test)]
 mod tests {
     use super::{MigrationEvent, migrate_path, move_path_without_progress};
-    use crate::adapters::migrate::copy::copy_path_with_progress;
+    use crate::adapters::migrate::copy_file::copy_path_with_progress;
     use crate::adapters::migrate::rebase;
     use crate::domain::error::SymmError;
     use std::fs;

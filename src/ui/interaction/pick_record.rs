@@ -1,12 +1,12 @@
 use crate::adapters::db::repository;
-use crate::adapters::db::selector;
-use crate::adapters::fs::link_status;
+use crate::adapters::db::resolve;
+use crate::adapters::status;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkRecord;
 use inquire::{MultiSelect, Select};
 
 pub fn format_pick_label(index: u32, record: &LinkRecord) -> String {
-    let view = link_status::as_view(record.clone());
+    let view = status::to_view(record.clone());
     format!("#{}  {}  [{}]", index, record.display_name(), view.status)
 }
 
@@ -76,7 +76,7 @@ pub fn pick_many(conn: &rusqlite::Connection) -> Result<Vec<LinkRecord>, SymmErr
         if !seen.insert(index) {
             continue;
         }
-        picked.push(selector::resolve_list_index(conn, index)?);
+        picked.push(resolve::record_at_index(conn, index)?);
     }
     Ok(picked)
 }

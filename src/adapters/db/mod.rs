@@ -1,5 +1,5 @@
-pub mod link_query;
+pub mod query;
 pub mod repository;
-pub mod selector;
+pub mod resolve;
 
-pub use link_query::{LinkQuery, ListOptions, StringMatch};
+pub use query::{LinkQuery, ListOptions, StringMatch};

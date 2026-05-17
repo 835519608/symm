@@ -1,5 +1,5 @@
 use super::{LockProbeProgress, PlatformProcess, ProcInfo};
-use crate::adapters::errors::io_map::io_ctx;
+use crate::adapters::errors::io::io_ctx;
 use crate::domain::error::SymmError;
 use std::path::Path;
 use std::process::Command;

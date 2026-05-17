@@ -1,4 +1,4 @@
-//! 平台文件系统能力：编译期选择实现，静态分发（无 `dyn`）。
+//! 宿主 OS 文件能力：编译期选择实现，静态分发（无 `dyn`）。
 
 mod error;
 
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 pub use error::{RelocateFailure, format_relocate_failure, map_link_io_error};
 
-pub trait PlatformFs {
+pub trait HostFs {
     fn create_link(&self, target: &Path, link: &Path) -> Result<LinkKind, SymmError>;
     fn write_symlink(&self, link: &Path, target: &Path) -> Result<(), SymmError>;
     fn same_volume(&self, a: &Path, b: &Path) -> Result<bool, SymmError>;
@@ -23,12 +23,12 @@ pub trait PlatformFs {
 }
 
 #[cfg(unix)]
-pub use unix::Platform;
+pub use unix::Host;
 #[cfg(windows)]
-pub use windows::Platform;
+pub use windows::Host;
 
-pub fn fs() -> &'static Platform {
-    static INSTANCE: Platform = Platform;
+pub fn host() -> &'static Host {
+    static INSTANCE: Host = Host;
     &INSTANCE
 }
 

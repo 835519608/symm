@@ -2,7 +2,7 @@ use crate::domain::error::SymmError;
 use std::fs;
 use std::path::Path;
 
-pub fn remove_link(link: &Path) -> Result<(), SymmError> {
+pub fn unlink(link: &Path) -> Result<(), SymmError> {
     match fs::symlink_metadata(link) {
         Ok(meta) => {
             let file_type = meta.file_type();

@@ -1,15 +1,15 @@
-use super::PlatformFs;
+use super::HostFs;
 use super::error::{RelocateFailure, map_link_io_error};
-use crate::adapters::errors::io_map::ioe;
+use crate::adapters::errors::io::ioe;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-pub struct Platform;
+pub struct Host;
 
-impl PlatformFs for Platform {
+impl HostFs for Host {
     fn create_link(&self, target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
         symlink(target, link).map_err(map_link_io_error)?;
         Ok(LinkKind::Symlink)

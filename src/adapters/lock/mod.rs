@@ -1,8 +1,8 @@
 //! 文件占用检测与结束进程（编排层；底层 OS 调用在 `platform::process`）。
 
+mod elevated;
 mod elevated_progress;
 mod messages;
-mod privileged;
 mod release;
 mod snapshot;
 mod test_hooks;
@@ -62,7 +62,7 @@ where
 
     #[cfg(windows)]
     {
-        match privileged::list_locking_processes(path, &mut progress) {
+        match elevated::list_locking_processes(path, &mut progress) {
             Ok(procs) => Ok(procs),
             Err(err) if uac_cancelled_by_user(&err) => Err(err),
             Err(elevated_err) => Err(elevated_err),
@@ -71,7 +71,7 @@ where
 
     #[cfg(unix)]
     {
-        privileged::list_locking_processes(path, &mut progress)
+        elevated::list_locking_processes(path, &mut progress)
     }
 }
 
@@ -88,7 +88,7 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
         return platform().kill_processes(pids);
     }
 
-    privileged::kill_processes(pids)
+    elevated::kill_processes(pids)
 }
 
 pub fn elevated_list_locks_entry(
@@ -96,7 +96,7 @@ pub fn elevated_list_locks_entry(
     output: &Path,
     progress_path: Option<&Path>,
 ) -> Result<(), SymmError> {
-    privileged::elevated_list_locks_entry(path, output, progress_path)
+    elevated::elevated_list_locks_entry(path, output, progress_path)
 }
 
 pub fn elevated_kill_entry(pids: &[u32]) -> Result<(), SymmError> {

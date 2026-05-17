@@ -1,11 +1,11 @@
 //! `rm`：删库后删除 link，或将 target 迁回 link 路径。支持多个 selector；省略参数时交互多选。
-use crate::adapters::db::selector;
+use crate::adapters::db::resolve;
 use crate::adapters::db::{LinkQuery, repository};
 use crate::adapters::migrate as migration;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkRecord;
-use crate::ui::interaction::{choice, record_picker};
+use crate::ui::interaction::{choice, pick_record};
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::perf;
 use std::collections::HashSet;
@@ -55,13 +55,13 @@ fn resolve_records(
     selectors: &[String],
 ) -> Result<Vec<LinkRecord>, SymmError> {
     if selectors.is_empty() {
-        return record_picker::pick_many(conn);
+        return pick_record::pick_many(conn);
     }
 
     let mut records = Vec::with_capacity(selectors.len());
     let mut seen_ids = HashSet::new();
     for selector in selectors {
-        let record = selector::resolve_cli_record(conn, selector)?;
+        let record = resolve::record_from_token(conn, selector)?;
         if seen_ids.insert(record.id) {
             records.push(record);
         }
@@ -87,7 +87,7 @@ fn remove_one<W: Write>(
     }
     repository::delete_one(conn, &LinkQuery::id(record.id))?;
     if action == RmAction::DeleteLinkOnly {
-        symlink::remove_link(link)?;
+        symlink::unlink(link)?;
     }
     Ok(record_label(record))
 }
@@ -141,7 +141,7 @@ fn restore_target_to_link<W: Write>(
     link: &Path,
     target: &Path,
 ) -> Result<(), SymmError> {
-    symlink::remove_link(link)?;
+    symlink::unlink(link)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     migration::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)

@@ -1,5 +1,5 @@
 use super::{MigrationEvent, rebase};
-use crate::adapters::errors::io_map::ioe;
+use crate::adapters::errors::io::ioe;
 use crate::domain::error::SymmError;
 use std::fs;
 use std::io::{Read, Write};
