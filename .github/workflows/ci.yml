@@ -9,6 +9,9 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
+      - "symm-manifest.rc"
+      - "symm.manifest"
+      - "assets/**"
       - ".github/workflows/**"
       - ".github/actions/**"
   pull_request:
@@ -18,6 +21,9 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
+      - "symm-manifest.rc"
+      - "symm.manifest"
+      - "assets/**"
       - ".github/workflows/**"
       - ".github/actions/**"
 
