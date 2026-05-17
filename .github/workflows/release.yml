@@ -29,14 +29,8 @@ jobs:
       release_body: ${{ steps.notes.outputs.body }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          fetch-tags: true
       - id: notes
         uses: ./.github/actions/prepare-release-notes
-        with:
-          tag_name: ${{ github.ref_name }}
 
   build-and-release-windows:
     name: 发布产物 (windows-latest)

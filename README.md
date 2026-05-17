@@ -276,23 +276,4 @@ cargo build --release --target <triple>
 
 **打包与 CI**：`release*.yml` 只做 `cargo build --release`，**不重复**跑测试；会先查当前 commit 上 `ci.yml` 三端矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
 
-**Release 变更说明**（相对**上一枚**测试/正式 tag，不要堆砌 commit 标题）：
-
-1. 打 tag 前用 `git log <上一tag>..HEAD --oneline` 回顾区间，写成**功能级**增删改（跨多 commit 时尤其重要）。
-2. 使用**附注 tag**（`-a`），正文会写入 GitHub Release：
-
-```bash
-PREV=v0.2.0-test17   # 或上一枚正式 tag：v0.2.0
-git log "${PREV}"..HEAD --oneline
-
-git tag -a v0.2.0-test18 -m "测试包：Windows 提权修复" -m "$(cat <<'EOF'
-相对 v0.2.0-test17：
-- 新增：…
-- 修复：Windows 下 …
-- 移除：…
-EOF
-)"
-git push origin v0.2.0-test18
-```
-
-轻量 tag（无 `-a`）或空说明会导致打包 workflow 失败。手动触发测试包时可传 `release_notes` 字段。
+**Release 说明**：自动使用 **tag 所指向 commit 的提交说明**（`git log -1`）作为 GitHub Release 正文。打 tag 前把该 commit 的 message 写好即可；跨多 commit 时可在打 tag 前 `git commit --amend` 汇总，或 squash 后再 tag。手动触发测试包时可用 `release_notes` 覆盖。

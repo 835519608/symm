@@ -35,7 +35,7 @@ on:
         type: boolean
         default: true
       release_notes:
-        description: 相对上一测试包的变更说明（手动触发时填写，Markdown）
+        description: 可选，覆盖 Release 正文（默认用 tag 指向 commit 的提交说明）
         type: string
         required: false
 
@@ -56,10 +56,6 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-          fetch-tags: true
 
       - id: meta
         shell: bash
@@ -126,7 +122,6 @@ jobs:
       - id: notes
         uses: ./.github/actions/prepare-release-notes
         with:
-          tag_name: ${{ steps.meta.outputs.release_tag }}
           dispatch_notes: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes || '' }}
 
   build-and-release-windows:
