@@ -1,17 +1,16 @@
 # 测试包：Pre-release，不成为 Latest，不影响正式发布流程。
 #
 # 触发：
-#   - 推送 vX.Y.Z-testN tag（默认三端全打）
-#   - 推送 vX.Y.Z-testN-<platforms>（仅打指定平台，见 plan job）
-#   - 手动 workflow_dispatch（勾选平台）
+#   - 推送测试 tag（见下）或手动 workflow_dispatch（勾选平台）
 #
-# Tag 平台后缀（在 -testN 之后，用 - 连接）：
-#   v0.2.0-test16              → windows + linux + macos
-#   v0.2.0-test16-windows      → 仅 Windows
-#   v0.2.0-test16-linux        → 仅 Linux
-#   v0.2.0-test16-macos        → 仅 macOS
-#   v0.2.0-test16-windows-linux → Windows + Linux
-#   别名：win / mac
+# Tag 命名：vX.Y.Z-test[-<platforms>]（test 后无数字；版本只在 X.Y.Z）
+#   v0.1.0-test                 → 三端
+#   v0.1.0-test-windows         → 仅 Windows
+#   v0.1.0-test-linux           → 仅 Linux
+#   v0.1.0-test-macos           → 仅 macOS
+#   v0.1.0-test-windows-linux   → 多平台组合（别名 win / mac）
+#
+# 版本号：小改动 Z+1（0.1.0→0.1.1）；大变动 Y+1 且 Z 归零（0.1.2→0.2.0）
 #
 # 打包前不重复跑测试：校验当前 commit 上 ci.yml 已成功（见 verify-ci-passed）。
 name: Release Test
@@ -77,11 +76,15 @@ jobs:
             [ "${{ inputs.build_windows }}" = "true" ] && build_windows=true
             [ "${{ inputs.build_linux }}" = "true" ] && build_linux=true
             [ "${{ inputs.build_macos }}" = "true" ] && build_macos=true
-          elif [[ "${RELEASE_TAG}" =~ -test[0-9]+$ ]]; then
+          elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test[0-9] ]]; then
+            echo "::error::测试 tag 格式无效：${RELEASE_TAG}"
+            echo "勿在 test 后加数字（如 v0.1.0-test15）；应使用 vX.Y.Z-test 或 vX.Y.Z-test-windows"
+            exit 1
+          elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test$ ]]; then
             build_windows=true
             build_linux=true
             build_macos=true
-          elif [[ "${RELEASE_TAG}" =~ -test[0-9]+-(.+)$ ]]; then
+          elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test-(.+)$ ]]; then
             suffix="${BASH_REMATCH[1]}"
             IFS='-' read -ra parts <<< "${suffix}"
             for part in "${parts[@]}"; do
@@ -90,18 +93,23 @@ jobs:
                 linux) build_linux=true ;;
                 macos|mac) build_macos=true ;;
                 *)
-                  echo "::warning::未知平台后缀「${part}」，已忽略"
+                  echo "::error::未知平台段「${part}」（tag: ${RELEASE_TAG}）。期望形如 v0.1.0-test-windows 或 v0.1.0-test-windows-linux"
+                  exit 1
                   ;;
               esac
             done
             if ! $build_windows && ! $build_linux && ! $build_macos; then
-              echo "::error::未识别任何平台后缀「${suffix}」"
+              echo "::error::未识别任何平台（tag: ${RELEASE_TAG}）"
               exit 1
             fi
-          else
+          elif [[ "${RELEASE_TAG}" =~ ^test-run- ]]; then
             build_windows=true
             build_linux=true
             build_macos=true
+          else
+            echo "::error::测试 tag 格式无效：${RELEASE_TAG}"
+            echo "期望：vX.Y.Z-test 或 vX.Y.Z-test-<platform(s)>（如 v0.1.1-test-windows）"
+            exit 1
           fi
 
           if ! $build_windows && ! $build_linux && ! $build_macos; then

@@ -267,11 +267,12 @@ cargo build --release --target <triple>
 |----------|------|------|
 | **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | ubuntu / windows / macos：`fmt` → `clippy -D warnings` → `test` |
 | **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，三平台，设为 Latest |
-| **Release Test** | 推送 `vX.Y.Z-testN` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定平台（见下） |
+| **Release Test** | 推送 `vX.Y.Z-test[-平台]` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定平台（见下） |
 
-**Release Test 平台选择**（正式 `release.yml` 仍固定三端全打）：
+**Release Test 平台与版本**（正式 `release.yml` 仍固定三端全打）：
 
-- Tag `vX.Y.Z-testN` → 三端；`vX.Y.Z-testN-windows` / `-linux` / `-macos` 或组合如 `-windows-linux`（`win` / `mac` 别名）
+- Tag：`vX.Y.Z-test`（三端）、`vX.Y.Z-test-windows` / `-test-linux` / `-test-macos`，或多平台如 `vX.Y.Z-test-windows-linux`（`win` / `mac` 别名）。**勿**在 `test` 后加数字（不用 `v0.1.0-test15`）。
+- 版本号只改 `X.Y.Z`：小改动 `Z+1`（`0.1.0→0.1.1`）；大变动 `Y+1` 且 `Z=0`（`0.1.2→0.2.0`）。
 - 手动：`gh workflow run release-test.yml -f build_windows=true -f build_linux=false -f build_macos=false`
 
 **打包与 CI**：`release*.yml` 只做 `cargo build --release`，**不重复**跑测试；会先查当前 commit 上 `ci.yml` 三端矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
