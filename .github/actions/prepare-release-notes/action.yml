@@ -31,9 +31,16 @@ runs:
         if [ -n "${DISPATCH_NOTES}" ]; then
           body="${DISPATCH_NOTES}"
         elif git rev-parse "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
-          object_type=$(git cat-file -t "refs/tags/${TAG_NAME}")
-          if [ "${object_type}" = "tag" ]; then
-            body=$(git cat-file tag "refs/tags/${TAG_NAME}" | sed '1,/^$/d')
+          if [ "$(git cat-file -t "refs/tags/${TAG_NAME}")" = "tag" ]; then
+            subject=$(git tag -l --format='%(contents:subject)' "${TAG_NAME}")
+            tag_body=$(git tag -l --format='%(contents:body)' "${TAG_NAME}")
+            if [ -n "${subject}" ] && [ -n "${tag_body}" ]; then
+              body="${subject}"$'\n\n'"${tag_body}"
+            elif [ -n "${tag_body}" ]; then
+              body="${tag_body}"
+            else
+              body="${subject}"
+            fi
           fi
         fi
 
