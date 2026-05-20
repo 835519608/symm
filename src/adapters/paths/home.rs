@@ -28,10 +28,9 @@ fn data_dir_for_exe_dir(exe_dir: &Path) -> PathBuf {
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n.eq_ignore_ascii_case("cli"))
+        && let Some(app_root) = exe_dir.parent()
     {
-        if let Some(app_root) = exe_dir.parent() {
-            return app_root.join("data");
-        }
+        return app_root.join("data");
     }
     exe_dir.join("data")
 }
