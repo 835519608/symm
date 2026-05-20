@@ -43,7 +43,14 @@ impl DataStore {
         Ok(writer.into_log())
     }
 
-    pub fn remove_link(&mut self, selector: &str, mode: RemoveMode) -> Result<String, SymmError> {
+    pub fn remove_links(
+        &mut self,
+        selectors: &[String],
+        mode: RemoveMode,
+    ) -> Result<String, SymmError> {
+        if selectors.is_empty() {
+            return Ok(String::new());
+        }
         let conn = self.connection_mut()?;
         let mut writer = VecWriter(Vec::new());
         let action = match mode {
@@ -51,7 +58,7 @@ impl DataStore {
             RemoveMode::RestoreTargetToLink => "restore",
         };
         with_env_vars(&[("SYMM_RM_ACTION", action)], || {
-            workflow::run_with_mode(conn, &[selector.to_string()], mode, &mut writer)
+            workflow::run_with_mode(conn, selectors, mode, &mut writer)
         })?;
         Ok(writer.into_log())
     }

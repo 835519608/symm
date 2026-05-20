@@ -29,6 +29,17 @@ pub enum ThemeMode {
     Dark,
 }
 
+impl ThemeMode {
+    /// 循环切换：跟随系统 → 浅色 → 深色 → …
+    pub fn next(self) -> Self {
+        match self {
+            Self::System => Self::Light,
+            Self::Light => Self::Dark,
+            Self::Dark => Self::System,
+        }
+    }
+}
+
 fn default_locale() -> String {
     "zh-CN".to_string()
 }
@@ -46,6 +57,13 @@ mod tests {
         let json = serde_json::to_string(&GuiSettings::default()).expect("serialize");
         let parsed: GuiSettings = serde_json::from_str(&json).expect("parse");
         assert_eq!(parsed, GuiSettings::default());
+    }
+
+    #[test]
+    fn theme_mode_cycles() {
+        assert_eq!(ThemeMode::System.next(), ThemeMode::Light);
+        assert_eq!(ThemeMode::Light.next(), ThemeMode::Dark);
+        assert_eq!(ThemeMode::Dark.next(), ThemeMode::System);
     }
 
     #[test]

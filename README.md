@@ -86,6 +86,18 @@ SYMM_HOME=/var/lib/symm symm ls
 
 ---
 
+### `SYMM_FONT_PATH`（GUI 中文显示）
+
+指定界面用的中日韩字体文件（`.ttf` / `.ttc`）。未设置时按平台自动查找；**WSL** 会尝试 `/mnt/c/Windows/Fonts/` 下的微软雅黑/黑体（无需在 Linux 里 `apt install` 字体）。
+
+```bash
+# WSL 示例（任选其一，路径以本机为准）
+SYMM_FONT_PATH=/mnt/c/Windows/Fonts/msyh.ttc mise run run-gui
+SYMM_FONT_PATH=/mnt/c/Windows/Fonts/simhei.ttf mise run run-gui
+```
+
+---
+
 ### `SYMM_ADD_NAME`
 
 在 `symm add` 成功建链/纳管之后、写入数据库之前，跳过「名称（可选）」输入框。

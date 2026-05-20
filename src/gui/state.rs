@@ -7,7 +7,6 @@ use std::path::PathBuf;
 pub enum MainView {
     #[default]
     Detail,
-    List,
     Add,
 }
 
@@ -40,8 +39,8 @@ pub struct AddForm {
 
 #[derive(Debug, Clone)]
 pub struct RmDialog {
-    pub selector: String,
-    pub display_name: String,
+    pub selectors: Vec<String>,
+    pub summary: String,
     pub mode: RemoveMode,
 }
 
@@ -49,6 +48,7 @@ pub struct RmDialog {
 pub struct AppState {
     pub search: String,
     pub selected_id: Option<i64>,
+    pub checked_ids: HashSet<i64>,
     pub expanded_ids: HashSet<i64>,
     pub main_view: MainView,
     pub sidebar_width: f32,
@@ -57,7 +57,6 @@ pub struct AppState {
     pub db_error: Option<String>,
     pub theme: ThemePreference,
     pub locale: String,
-    pub settings_open: bool,
     pub add_form: AddForm,
     pub rm_dialog: Option<RmDialog>,
     pub busy: bool,
@@ -93,7 +92,8 @@ impl LinkSnapshot {
         (symlink, junction)
     }
 
-    pub fn filtered<'a>(&'a self, search: &str) -> Vec<&'a LinkView> {
+    /// 按名称（显示名 / 库内 name）实时过滤。
+    pub fn filtered_by_name<'a>(&'a self, search: &str) -> Vec<&'a LinkView> {
         let q = search.trim().to_lowercase();
         let mut out: Vec<&LinkView> = self
             .views
@@ -103,8 +103,7 @@ impl LinkSnapshot {
                     return true;
                 }
                 v.display_name().to_lowercase().contains(&q)
-                    || v.link_path.to_lowercase().contains(&q)
-                    || v.target_path.to_lowercase().contains(&q)
+                    || (!v.name.is_empty() && v.name.to_lowercase().contains(&q))
             })
             .collect();
         out.sort_by_key(|v| v.display_name());
@@ -122,6 +121,7 @@ impl Default for AppState {
         Self {
             search: String::new(),
             selected_id: None,
+            checked_ids: HashSet::new(),
             expanded_ids: HashSet::new(),
             main_view: MainView::Detail,
             sidebar_width: 280.0,
@@ -130,7 +130,6 @@ impl Default for AppState {
             db_error: None,
             theme: ThemePreference::System,
             locale: crate::domain::gui_settings::GuiSettings::default().locale,
-            settings_open: false,
             add_form: AddForm::default(),
             rm_dialog: None,
             busy: false,

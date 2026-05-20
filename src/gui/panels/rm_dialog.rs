@@ -1,3 +1,4 @@
+use crate::domain::model::LinkView;
 use crate::gui::state::{AppState, RmDialog};
 use crate::gui::theme;
 use crate::gui::widgets::{primary_button, subtle_button};
@@ -28,7 +29,7 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
         .open(&mut open)
         .show(ctx, |ui| {
             ui.label(
-                RichText::new(format!("确定删除「{}」？", dialog.display_name))
+                RichText::new(format!("确定删除「{}」？", dialog.summary))
                     .strong()
                     .color(theme::primary_text(ui)),
             );
@@ -77,10 +78,36 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
     action
 }
 
-pub fn open_rm_dialog(state: &mut AppState, selector: String, display_name: String) {
+pub fn open_rm_dialog(state: &mut AppState, view: &LinkView) {
+    let selector = selector_for(view);
     state.rm_dialog = Some(RmDialog {
-        selector,
-        display_name,
+        selectors: vec![selector],
+        summary: view.display_name(),
         mode: RemoveMode::DeleteLinkOnly,
     });
+}
+
+pub fn open_rm_dialog_batch(state: &mut AppState, views: &[&LinkView]) {
+    if views.is_empty() {
+        return;
+    }
+    let selectors: Vec<String> = views.iter().map(|v| selector_for(v)).collect();
+    let summary = if views.len() == 1 {
+        views[0].display_name()
+    } else {
+        format!("{} 等 {} 条链接", views[0].display_name(), views.len())
+    };
+    state.rm_dialog = Some(RmDialog {
+        selectors,
+        summary,
+        mode: RemoveMode::DeleteLinkOnly,
+    });
+}
+
+fn selector_for(view: &LinkView) -> String {
+    if view.name.is_empty() {
+        view.id.to_string()
+    } else {
+        view.name.clone()
+    }
 }

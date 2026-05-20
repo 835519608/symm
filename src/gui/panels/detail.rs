@@ -1,22 +1,36 @@
 use crate::domain::model::LinkView;
-use crate::gui::panels::rm_dialog::open_rm_dialog;
-use crate::gui::state::AppState;
 use crate::gui::theme;
-use crate::gui::widgets::{card, card_header, subtle_button};
+use crate::gui::widgets::{card, card_header};
 use egui::{RichText, Ui};
 
 pub fn show_detail_empty(ui: &mut Ui) {
+    let dark = theme::is_dark_ui(ui);
     ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() * 0.35);
+        ui.add_space(ui.available_height() * 0.32);
+        let size = egui::vec2(56.0, 56.0);
+        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        ui.painter().rect(
+            rect,
+            egui::Rounding::same(16.0),
+            theme::control_hover(dark),
+            egui::Stroke::NONE,
+        );
+        crate::gui::widgets::paint_icon(
+            ui,
+            rect.shrink2(egui::Vec2::splat(14.0)),
+            crate::gui::widgets::Icon::Detail,
+            theme::text_muted(dark),
+        );
+        ui.add_space(14.0);
         ui.label(
             RichText::new("在左侧选择一条链接以查看详情")
-                .size(14.0)
+                .size(15.0)
                 .color(theme::secondary_text(ui)),
         );
     });
 }
 
-pub fn show_detail(ui: &mut Ui, state: &mut AppState, view: &LinkView) {
+pub fn show_detail(ui: &mut Ui, view: &LinkView) {
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             ui.label(
@@ -42,18 +56,6 @@ pub fn show_detail(ui: &mut Ui, state: &mut AppState, view: &LinkView) {
             detail_row(ui, "目标路径", view.target_path.clone());
             detail_row(ui, "序号", view.index.to_string());
             detail_row(ui, "ID", view.id.to_string());
-        });
-
-        ui.add_space(theme::SPACING);
-        ui.horizontal(|ui| {
-            if subtle_button(ui, "删除此链接…").clicked() {
-                let selector = if view.name.is_empty() {
-                    view.id.to_string()
-                } else {
-                    view.name.clone()
-                };
-                open_rm_dialog(state, selector, view.display_name());
-            }
         });
     });
 }

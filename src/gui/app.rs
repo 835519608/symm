@@ -2,15 +2,16 @@ use crate::domain::gui_settings::GuiSettings;
 use crate::gui::data::{self, DataStore};
 use crate::gui::icon;
 use crate::gui::panels::{
-    AddAction, FooterAction, RmDialogAction, SidebarAction, TopBarAction, open_rm_dialog, show_add,
-    show_detail, show_detail_empty, show_footer, show_list, show_rm_dialog, show_settings_window,
-    show_sidebar, show_top_bar, validate_add_form,
+    AddAction, FooterAction, RmDialogAction, SidebarAction, TopBarAction, open_rm_dialog_batch,
+    show_add, show_detail, show_detail_empty, show_footer, show_rm_dialog, show_sidebar,
+    show_top_bar, validate_add_form,
 };
 use crate::gui::settings_store::{self, from_state};
 use crate::gui::state::{AppState, LinkSnapshot, MainView};
 use crate::gui::theme::{self, ThemePreference};
 use crate::gui::util::open_path;
 use eframe::CreationContext;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 pub fn run() -> eframe::Result<()> {
@@ -92,11 +93,11 @@ impl SymmApp {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
                 self.state.db_error = None;
+                let valid: HashSet<i64> = self.snapshot.views.iter().map(|v| v.id).collect();
+                self.state.checked_ids.retain(|id| valid.contains(id));
+                self.state.expanded_ids.retain(|id| valid.contains(id));
                 if self.state.selected_id.is_some()
-                    && self
-                        .snapshot
-                        .selected_view(self.state.selected_id)
-                        .is_none()
+                    && !valid.contains(&self.state.selected_id.unwrap())
                 {
                     self.state.selected_id = None;
                 }
@@ -123,17 +124,18 @@ impl SymmApp {
         }
     }
 
-    fn begin_rm(&mut self) {
-        let Some(view) = self.snapshot.selected_view(self.state.selected_id) else {
-            self.toast("请先在左侧选择要删除的链接", 240);
+    fn begin_rm_checked(&mut self) {
+        let views: Vec<_> = self
+            .state
+            .checked_ids
+            .iter()
+            .filter_map(|id| self.snapshot.views.iter().find(|v| v.id == *id))
+            .collect();
+        if views.is_empty() {
+            self.toast("请先勾选要删除的链接", 240);
             return;
-        };
-        let selector = if view.name.is_empty() {
-            view.id.to_string()
-        } else {
-            view.name.clone()
-        };
-        open_rm_dialog(&mut self.state, selector, view.display_name());
+        }
+        open_rm_dialog_batch(&mut self.state, &views);
     }
 
     fn confirm_rm(&mut self) {
@@ -141,12 +143,13 @@ impl SymmApp {
             return;
         };
         self.state.busy = true;
-        match self.store.remove_link(&dialog.selector, dialog.mode) {
+        match self.store.remove_links(&dialog.selectors, dialog.mode) {
             Ok(log) => {
                 self.state.rm_dialog = None;
                 self.needs_reload = true;
                 self.state.selected_id = None;
-                self.state.main_view = MainView::List;
+                self.state.checked_ids.clear();
+                self.state.main_view = MainView::Detail;
                 let msg = if log.is_empty() {
                     "已删除".to_string()
                 } else {
@@ -185,7 +188,7 @@ impl SymmApp {
                 form.target_path.clear();
                 form.name.clear();
                 self.needs_reload = true;
-                self.state.main_view = MainView::List;
+                self.state.main_view = MainView::Detail;
                 self.toast("链接已创建", 300);
             }
             Err(err) => {
@@ -196,29 +199,8 @@ impl SymmApp {
     }
 
     fn handle_top_bar(&mut self, action: TopBarAction) {
-        match action {
-            TopBarAction::ListAll => {
-                self.needs_reload = true;
-                self.state.main_view = MainView::List;
-                self.toast("已刷新列表", 180);
-            }
-            TopBarAction::ShowDetail => {
-                if self.state.selected_id.is_some() {
-                    self.state.main_view = MainView::Detail;
-                } else {
-                    self.toast("请先在左侧选择一条链接", 240);
-                }
-            }
-            TopBarAction::AddLink => {
-                self.state.main_view = MainView::Add;
-            }
-            TopBarAction::Remove => {
-                self.begin_rm();
-            }
-            TopBarAction::ToggleSettings => {
-                self.state.settings_open = !self.state.settings_open;
-            }
-            TopBarAction::None => {}
+        if action == TopBarAction::AddLink {
+            self.state.main_view = MainView::Add;
         }
     }
 }
@@ -236,7 +218,6 @@ impl eframe::App for SymmApp {
             ctx.request_repaint();
         }
 
-        show_settings_window(ctx, &mut self.state);
         self.persist_settings_if_changed();
 
         match show_rm_dialog(ctx, &mut self.state) {
@@ -244,81 +225,91 @@ impl eframe::App for SymmApp {
             RmDialogAction::Cancel | RmDialogAction::None => {}
         }
 
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            let frame = theme::panel_frame(ui);
-            frame.show(ui, |ui| {
-                let action = show_top_bar(ui, &self.state);
-                self.handle_top_bar(action);
-            });
-        });
+        let dark = self.state.theme.is_dark();
 
-        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
-            let frame = theme::panel_frame(ui).inner_margin(egui::Margin::symmetric(12.0, 4.0));
-            let footer_action = frame.show(ui, |ui| show_footer(ui, &self.state, &self.snapshot));
-            if footer_action.inner == FooterAction::OpenDataDir
-                && let Some(home) = &self.state.data_home
-            {
-                let _ = open_path(home);
-            }
-        });
+        egui::TopBottomPanel::top("top_bar")
+            .frame(theme::top_bar_frame(dark))
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                let action = show_top_bar(ui, &self.state);
+                if action == TopBarAction::CycleTheme {
+                    self.state.theme = self.state.theme.next();
+                    theme::apply(ctx, self.state.theme);
+                    self.last_theme = self.state.theme;
+                } else {
+                    self.handle_top_bar(action);
+                }
+            });
+
+        egui::TopBottomPanel::bottom("footer")
+            .frame(theme::footer_frame(dark))
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                theme::paint_hairline(ui, false);
+                let footer_action = show_footer(ui, &self.state, &self.snapshot);
+                if footer_action == FooterAction::OpenDataDir
+                    && let Some(home) = &self.state.data_home
+                {
+                    let _ = open_path(home);
+                }
+            });
 
         egui::SidePanel::left("sidebar")
             .resizable(true)
             .default_width(self.state.sidebar_width)
-            .width_range(220.0..=480.0)
+            .width_range(240.0..=480.0)
+            .frame(theme::sidebar_frame(dark))
+            .show_separator_line(false)
             .show(ctx, |ui| {
-                let frame = theme::panel_frame(ui);
-                frame
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                    .show(ui, |ui| {
-                        let action = show_sidebar(ui, &mut self.state, &self.snapshot);
-                        if action == SidebarAction::Refresh {
-                            self.needs_reload = true;
-                            self.toast("已刷新", 180);
-                        }
-                    });
+                let action = show_sidebar(ui, &mut self.state, &self.snapshot);
+                match action {
+                    SidebarAction::Refresh => {
+                        self.needs_reload = true;
+                        self.toast("已刷新", 180);
+                    }
+                    SidebarAction::DeleteChecked => self.begin_rm_checked(),
+                    SidebarAction::None => {}
+                }
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::Frame::none()
-                .fill(theme::workspace_fill(ui))
-                .inner_margin(16.0)
-                .show(ui, |ui| {
-                    if self.state.busy {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label("处理中…");
-                        });
-                        ui.add_space(8.0);
-                    }
-                    if let Some(err) = &self.state.db_error {
-                        ui.colored_label(
-                            theme::status_color(crate::domain::model::LinkStatus::Missing),
-                            err,
-                        );
-                        ui.add_space(8.0);
-                    }
-                    match self.state.main_view {
-                        MainView::List => {
-                            show_list(ui, &mut self.state, &self.snapshot);
-                        }
-                        MainView::Add => {
-                            if show_add(ui, &mut self.state) == AddAction::Submit {
-                                self.submit_add();
-                            }
-                        }
-                        MainView::Detail => {
-                            if let Some(view) =
-                                self.snapshot.selected_view(self.state.selected_id).cloned()
-                            {
-                                show_detail(ui, &mut self.state, &view);
-                            } else {
-                                show_detail_empty(ui);
-                            }
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(theme::workspace_color(dark))
+                    .inner_margin(20.0),
+            )
+            .show(ctx, |ui| {
+                if self.state.busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("处理中…");
+                    });
+                    ui.add_space(8.0);
+                }
+                if let Some(err) = &self.state.db_error {
+                    ui.colored_label(
+                        theme::status_color(crate::domain::model::LinkStatus::Missing),
+                        err,
+                    );
+                    ui.add_space(8.0);
+                }
+                match self.state.main_view {
+                    MainView::Add => {
+                        if show_add(ui, &mut self.state) == AddAction::Submit {
+                            self.submit_add();
                         }
                     }
-                });
-        });
+                    MainView::Detail => {
+                        if let Some(view) =
+                            self.snapshot.selected_view(self.state.selected_id).cloned()
+                        {
+                            show_detail(ui, &view);
+                        } else {
+                            show_detail_empty(ui);
+                        }
+                    }
+                }
+            });
 
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
     }
