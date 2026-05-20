@@ -12,22 +12,16 @@
     }
   },
   "bin": [
-    [
-      "symm.exe",
-      "symm"
-    ],
-    [
-      "cli/symm-cli.exe",
-      "symm-cli"
-    ]
+    ["symm.exe", "symm"],
+    ["cli/symm-cli.exe", "symm-cli"]
   ],
   "shortcuts": [
-    [
-      "symm.exe",
-      "symm"
-    ]
+    ["symm.exe", "symm"]
   ],
   "persist": "data",
+  "env_set": {
+    "SYMM_HOME": "$dir\\data"
+  },
   "checkver": {
     "github": "835519608/symm",
     "regex": "v([\\w.-]+)$",

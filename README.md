@@ -61,6 +61,7 @@ symm rm <name|link>
 ## 数据目录
 
 - **默认**：可执行文件同级 `data/`，库文件为 `symm.db`（仅 `links` 表）
+- **CLI 在 `cli/` 子目录**（Scoop / 便携 zip）：自动使用应用根目录的 `data/`，与 `symm.exe`（GUI）共用同一库
 - **覆盖**：设置 `SYMM_HOME` 指向其它目录（见下文）
 
 ## 环境变量
@@ -75,8 +76,9 @@ symm rm <name|link>
 
 指定 symm **存放数据库的目录**（目录下会有 `symm.db`）。
 
-- **默认**：可执行文件所在目录下的 `data/`
+- **默认**：可执行文件所在目录下的 `data/`；`cli/symm-cli.exe` 时使用上一级的 `data/`
 - **注意**：不同 `SYMM_HOME` 对应不同的链接库，互不影响
+- **Scoop**：manifest 已设置 `SYMM_HOME=$dir\data`，与 `persist: data` 一致
 
 ```bash
 SYMM_HOME=/var/lib/symm symm ls

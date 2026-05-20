@@ -21,6 +21,10 @@ pub fn ensure_link_not_locked<W: Write>(
     reporter: &mut MigrationProgressReporter<'_, W>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查链接是否被占用：{}", link.display()))?;
+    if !link.exists() {
+        reporter.write_line("链接路径尚不存在，跳过占用检测")?;
+        return Ok(());
+    }
     for notice in pre_scan_notices() {
         reporter.write_line(notice)?;
     }

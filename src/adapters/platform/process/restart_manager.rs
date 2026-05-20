@@ -47,6 +47,11 @@ fn collect_resource_paths(
     root: &Path,
     progress: &mut impl FnMut(super::LockProbeProgress),
 ) -> Result<Vec<PathBuf>, SymmError> {
+    // link 尚不存在时无文件可注册，等价于无占用（add 会在该路径创建软链）。
+    if !root.exists() {
+        return Ok(vec![]);
+    }
+
     let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     if root.is_file() {
         return Ok(vec![root]);
@@ -55,9 +60,15 @@ fn collect_resource_paths(
     let mut paths = Vec::new();
     let mut files_seen = 0usize;
     for entry in WalkDir::new(&root).follow_links(false) {
-        let entry = entry.map_err(|e| SymmError::IoError {
-            message: format!("收集占用检测路径失败：{e}"),
-        })?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) if skippable_walk_error(&err) => continue,
+            Err(err) => {
+                return Err(SymmError::IoError {
+                    message: format!("收集占用检测路径失败：{err}"),
+                });
+            }
+        };
         let path = entry.path();
         if path == root {
             continue;
@@ -75,6 +86,17 @@ fn collect_resource_paths(
         }
     }
     Ok(paths)
+}
+
+/// 单个子路径不可读/已消失时跳过（Chrome 配置目录等常见），避免整次扫描失败。
+fn skippable_walk_error(err: &walkdir::Error) -> bool {
+    let Some(io) = err.io_error() else {
+        return false;
+    };
+    matches!(
+        io.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+    )
 }
 
 fn list_processes_for_resources(

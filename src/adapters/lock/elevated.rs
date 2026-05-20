@@ -134,12 +134,24 @@ fn enrich_elevated_error(err: SymmError, log: &Path) -> SymmError {
     if detail.is_empty() {
         return err;
     }
+    if elevated_log_indicates_io_failure(detail) {
+        return SymmError::IoError {
+            message: format!("占用扫描失败：{detail}"),
+        };
+    }
     match err {
         SymmError::PermissionDenied { message } => SymmError::PermissionDenied {
             message: format!("{message}（子进程日志：{detail}）"),
         },
         other => other,
     }
+}
+
+fn elevated_log_indicates_io_failure(detail: &str) -> bool {
+    detail.contains("收集占用检测路径失败")
+        || detail.contains("IoError")
+        || detail.contains("IO 错误")
+        || detail.contains("IO error")
 }
 
 fn run_privileged_subcommand<I, S>(args: I) -> Result<(), SymmError>
