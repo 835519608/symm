@@ -1,13 +1,13 @@
 {
-  "version": "0.2.13-test-windows",
+  "version": "0.1.0",
   "description": "跨平台软链接管理（CLI + GUI）",
   "homepage": "https://github.com/835519608/symm",
   "license": "MIT",
   "notes": "安装：scoop bucket add symm https://github.com/835519608/symm && scoop install symm/symm。根目录 symm.exe（GUI）；CLI 为 cli/symm-cli.exe。version 由发版 CI 根据 tag 自动同步。",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/835519608/symm/releases/download/v0.2.13-test-windows/symm-portable-windows-x64.zip",
-      "hash": "f1a7cee3ffdae74f98dd7445a6df829cdc392e2c30fc2fd31afd2fb79c97bf23",
+      "url": "https://github.com/835519608/symm/releases/download/v0.1.0/symm-portable-windows-x64.zip",
+      "hash": "2ef30ade130d395b4d9d0d73cdcfa849ef472fa898793abbc768f0359ac8834f",
       "extract_dir": "symm"
     }
   },
