@@ -86,15 +86,18 @@ SYMM_HOME=/var/lib/symm symm ls
 
 ---
 
-### `SYMM_FONT_PATH`（GUI 中文显示）
+### GUI 字体（内嵌）
 
-指定界面用的中日韩字体文件（`.ttf` / `.ttc`）。未设置时按平台自动查找；**WSL** 会尝试 `/mnt/c/Windows/Fonts/` 下的微软雅黑/黑体（无需在 Linux 里 `apt install` 字体）。
+`symm` 图形界面将 **Noto Sans SC**（中文）与 **Phosphor Regular**（图标）打进二进制，不依赖系统已安装字体。
+
+首次本地构建 GUI 前需下载 Noto 文件：
 
 ```bash
-# WSL 示例（任选其一，路径以本机为准）
-SYMM_FONT_PATH=/mnt/c/Windows/Fonts/msyh.ttc mise run run-gui
-SYMM_FONT_PATH=/mnt/c/Windows/Fonts/simhei.ttf mise run run-gui
+scripts/fetch-gui-font.sh
+mise run run-gui
 ```
+
+详见 `assets/fonts/README.md`。
 
 ---
 

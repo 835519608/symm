@@ -1,0 +1,9 @@
+name: Fetch GUI embedded font
+description: 下载 Noto Sans SC Subset OTF，供 GUI 内嵌编译
+
+runs:
+  using: composite
+  steps:
+    - name: 下载 Noto Sans SC
+      shell: bash
+      run: bash scripts/fetch-gui-font.sh

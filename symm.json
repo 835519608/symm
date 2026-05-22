@@ -31,11 +31,7 @@
   "env_set": {
     "SYMM_HOME": "$dir\\data"
   },
-  "checkver": {
-    "github": "835519608/symm",
-    "regex": "v([\\w.-]+)$",
-    "pre_release": true
-  },
+  "checkver": "github",
   "autoupdate": {
     "architecture": {
       "64bit": {

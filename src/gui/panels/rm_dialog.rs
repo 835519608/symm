@@ -1,9 +1,9 @@
 use crate::domain::model::LinkView;
+use crate::gui::i18n::GuiTexts;
 use crate::gui::state::{AppState, RmDialog};
-use crate::gui::theme;
-use crate::gui::widgets::{primary_button, subtle_button};
+use crate::gui::theme::{self, rich_section};
+use crate::gui::widgets::{ModalOptions, ModalSize, button, button_row, show_modal};
 use crate::workflows::rm::workflow::RemoveMode;
-use egui::RichText;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RmDialogAction {
@@ -17,43 +17,60 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
         return RmDialogAction::None;
     };
 
+    let t = state.texts();
+    let p = theme::resolve(state.theme, state.color_scheme);
     let mut open = true;
     let mut action = RmDialogAction::None;
     let mut mode = dialog.mode;
+    let modal_id = egui::Id::new("rm_dialog");
 
-    egui::Window::new("删除链接")
-        .collapsible(false)
-        .resizable(false)
-        .default_width(400.0)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.label(
-                RichText::new(format!("确定删除「{}」？", dialog.summary))
-                    .strong()
-                    .color(theme::primary_text(ui)),
-            );
-            ui.add_space(8.0);
+    let Some(modal) = show_modal(
+        ctx,
+        modal_id,
+        &p,
+        ModalOptions::new(t.rm_dialog_title(), ModalSize::fit_content(400.0)),
+        &mut open,
+        |ui| {
+            ui.label(rich_section(&t.rm_confirm_prompt(&dialog.summary), p.text));
+            ui.add_space(12.0);
             ui.radio_value(
                 &mut mode,
                 RemoveMode::DeleteLinkOnly,
-                "只删除软链与数据库记录",
+                t.rm_mode_delete_only(),
             );
             ui.radio_value(
                 &mut mode,
                 RemoveMode::RestoreTargetToLink,
-                "删除软链，并把目标移回链接位置",
+                t.rm_mode_restore(),
             );
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if primary_button(ui, "确认删除").clicked() {
+            ui.add_space(14.0);
+            button_row(ui, |ui| {
+                if button(ui)
+                    .icon(crate::gui::icons::Icon::Trash)
+                    .label(t.confirm_delete())
+                    .show()
+                    .clicked()
+                {
                     action = RmDialogAction::Confirm;
                 }
-                if subtle_button(ui, "取消").clicked() {
+                if button(ui)
+                    .icon(crate::gui::icons::Icon::Clear)
+                    .label(t.cancel())
+                    .tip(t.cancel())
+                    .show()
+                    .clicked()
+                {
                     action = RmDialogAction::Cancel;
                 }
             });
-        });
+        },
+    ) else {
+        return RmDialogAction::None;
+    };
+
+    if modal.dismissed_by_backdrop {
+        action = RmDialogAction::Cancel;
+    }
 
     if let Some(d) = state.rm_dialog.as_mut() {
         d.mode = mode;
@@ -64,9 +81,7 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
     }
 
     match action {
-        RmDialogAction::Cancel => {
-            state.rm_dialog = None;
-        }
+        RmDialogAction::Cancel => state.rm_dialog = None,
         RmDialogAction::Confirm => {
             if let Some(d) = state.rm_dialog.as_mut() {
                 d.mode = mode;
@@ -91,11 +106,12 @@ pub fn open_rm_dialog_batch(state: &mut AppState, views: &[&LinkView]) {
     if views.is_empty() {
         return;
     }
+    let t = GuiTexts::new(state.locale);
     let selectors: Vec<String> = views.iter().map(|v| selector_for(v)).collect();
     let summary = if views.len() == 1 {
         views[0].display_name()
     } else {
-        format!("{} 等 {} 条链接", views[0].display_name(), views.len())
+        t.rm_batch_summary(&views[0].display_name(), views.len())
     };
     state.rm_dialog = Some(RmDialog {
         selectors,

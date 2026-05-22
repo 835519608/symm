@@ -1,7 +1,15 @@
-mod button;
-mod card;
-mod icons;
+//! GUI 控件层：页面只组合参数，样式集中在此维护。
 
-pub use button::{icon_button, search_field, toolbar_button};
-pub use card::{card, card_header, primary_button, subtle_button};
-pub use icons::{Icon, paint_icon};
+mod button;
+mod form;
+mod layout;
+mod modal;
+mod nav;
+mod scroll;
+
+pub use button::button;
+pub use form::{labeled_field, path_field, path_field_with_hints, search_field, text_field};
+pub use layout::{button_row, card, detail_field, empty_hint, form_page, page_heading};
+pub use modal::{ModalOptions, ModalSize, show_modal};
+pub use nav::settings_nav;
+pub use scroll::vertical_when_overflow;

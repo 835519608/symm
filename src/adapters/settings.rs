@@ -83,8 +83,10 @@ mod tests {
         let path = dir.path().join(SETTINGS_FILE_NAME);
         let settings = GuiSettings {
             theme: ThemeMode::Dark,
-            locale: "en".to_string(),
+            locale: crate::domain::gui_settings::Locale::En,
+            color_scheme: crate::domain::gui_settings::ColorScheme::Ocean,
             sidebar_width: 320.0,
+            font_size_pt: 16.0,
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);

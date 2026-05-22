@@ -1,4 +1,7 @@
 /target
+/assets/fonts/*.otf
+/assets/fonts/*.ttf
+/assets/fonts/*.ttc
 /docs
 /.cursor
 /.skill-compass

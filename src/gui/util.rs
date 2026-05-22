@@ -1,41 +1,7 @@
-use crate::domain::error::SymmError;
 use std::io::Write;
-use std::path::{Path, PathBuf};
-
-pub fn open_path(path: &Path) -> Result<(), SymmError> {
-    open_str(&path.to_string_lossy())
-}
-
-pub fn open_str(path: &str) -> Result<(), SymmError> {
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(path)
-            .spawn()
-            .map_err(|e| SymmError::IoError {
-                message: e.to_string(),
-            })?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| SymmError::IoError {
-                message: e.to_string(),
-            })?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| SymmError::IoError {
-                message: e.to_string(),
-            })?;
-    }
-    Ok(())
-}
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 pub struct VecWriter(pub Vec<u8>);
 
@@ -56,10 +22,42 @@ impl VecWriter {
     }
 }
 
-pub fn pick_file() -> Option<PathBuf> {
-    rfd::FileDialog::new().pick_file()
+/// 一次打开系统选择器：macOS 可在同一对话框中选文件或文件夹；其它平台为原生「打开」对话框。
+pub fn pick_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(path) = pick_path_macos() {
+            return Some(path);
+        }
+    }
+    rfd::FileDialog::new().set_title("选择路径").pick_file()
 }
 
-pub fn pick_folder() -> Option<PathBuf> {
-    rfd::FileDialog::new().pick_folder()
+#[cfg(target_os = "macos")]
+fn pick_path_macos() -> Option<PathBuf> {
+    let script = r#"
+ObjC.import("AppKit");
+var panel = $.NSOpenPanel.openPanel;
+panel.setTitle("选择路径");
+panel.setCanChooseFiles(true);
+panel.setCanChooseDirectories(true);
+panel.setAllowsMultipleSelection(false);
+panel.setPrompt("选择");
+if (panel.runModal() === $.NSFileHandlingPanelOKButton) {
+    panel.URL.path.js;
+}
+"#;
+    let out = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", script])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
 }

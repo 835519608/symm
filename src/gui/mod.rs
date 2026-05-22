@@ -3,7 +3,10 @@
 mod app;
 mod data;
 mod env;
+mod fonts;
+mod i18n;
 mod icon;
+mod icons;
 mod panels;
 mod settings_store;
 mod state;

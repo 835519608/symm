@@ -17,6 +17,9 @@ runs:
       with:
         semver: ${{ inputs.release_semver }}
 
+    - name: 下载 GUI 内嵌字体
+      uses: ./.github/actions/fetch-gui-font
+
     - name: 构建 release（CLI + GUI）
       shell: bash
       run: cargo build --release --features gui --bin symm --bin symm-cli

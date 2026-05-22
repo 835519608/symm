@@ -1,5 +1,4 @@
 use crate::adapters::db::repository;
-use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
 use crate::gui::env::{with_add_policies, with_env_vars};
 use crate::gui::state::{AddConflictPolicy, AddLockPolicy, LinkSnapshot};
@@ -18,12 +17,15 @@ impl DataStore {
         Self { conn: None }
     }
 
+    pub fn invalidate(&mut self) {
+        self.conn = None;
+    }
+
     pub fn reload(&mut self) -> Result<LinkSnapshot, SymmError> {
         let conn = self.connection_mut()?;
         let collected = list_views::collect_all(conn, None, None, 0)?;
         Ok(LinkSnapshot {
             views: collected.items,
-            scanned: collected.scanned,
         })
     }
 
@@ -69,8 +71,4 @@ impl DataStore {
         }
         Ok(self.conn.as_mut().expect("connection"))
     }
-}
-
-pub fn data_home_display() -> Result<String, SymmError> {
-    runtime_paths::data_home().map(|p| p.display().to_string())
 }
