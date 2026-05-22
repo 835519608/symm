@@ -87,6 +87,7 @@ mod tests {
             color_scheme: crate::domain::gui_settings::ColorScheme::Ocean,
             sidebar_width: 320.0,
             font_size_pt: 16.0,
+            data_dir: None,
         };
         save_to(&path, &settings).expect("save");
         assert_eq!(load_from(&path), settings);
