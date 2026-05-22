@@ -5,8 +5,8 @@ use crate::gui::theme::{
     self, SIDEBAR_PANEL_ID, rich_body, rich_body_muted, rich_section, rich_small,
 };
 use crate::gui::widgets::{
-    ModalOptions, ModalSize, button, button_row, labeled_field, path_field_with_hints,
-    settings_nav, show_modal,
+    ModalOptions, ModalSize, PathBrowse, PathFieldHints, button, button_row, labeled_field,
+    path_field_with_hints, settings_nav, show_modal,
 };
 use egui::Ui;
 use std::path::PathBuf;
@@ -206,10 +206,14 @@ fn appearance_page(
         p,
         t.settings_data_dir(),
         &mut draft.data_dir,
-        t.browse(),
-        t.settings_data_dir_browse_tip(),
-        t.settings_data_dir_hint(),
-        t.settings_data_dir_note(),
+        PathBrowse {
+            label: t.browse(),
+            tip: t.settings_data_dir_browse_tip(),
+        },
+        PathFieldHints {
+            hint: t.settings_data_dir_hint(),
+            note: t.settings_data_dir_note(),
+        },
     ) {
         draft.data_dir = path.display().to_string();
     }
@@ -218,7 +222,7 @@ fn appearance_page(
 fn about_page(ui: &mut Ui, p: &theme::UiPalette, t: &crate::gui::i18n::GuiTexts) {
     ui.label(rich_section(t.settings_about_heading(), p.text));
     ui.add_space(8.0);
-    ui.label(rich_body(&t.settings_about_tagline(), p.text_muted));
+    ui.label(rich_body(t.settings_about_tagline(), p.text_muted));
     ui.add_space(12.0);
     ui.label(rich_body_muted(
         &format!(
@@ -235,7 +239,7 @@ pub fn apply_data_dir(data_dir: &str) -> Result<PathBuf, String> {
     let trimmed = data_dir.trim();
     if trimmed.is_empty() {
         crate::gui::env::sync_symm_home("");
-        return Ok(crate::adapters::paths::runtime_paths::data_home().map_err(|e| e.to_string())?);
+        return crate::adapters::paths::runtime_paths::data_home().map_err(|e| e.to_string());
     }
     let path = PathBuf::from(trimmed);
     crate::gui::env::ensure_data_dir(&path).map_err(|e| e.to_string())?;

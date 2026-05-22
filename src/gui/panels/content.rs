@@ -3,8 +3,8 @@ use crate::gui::icons::Icon;
 use crate::gui::state::{AddConflictPolicy, AddForm, AddLockPolicy, AppState, MainView};
 use crate::gui::theme;
 use crate::gui::widgets::{
-    button, button_row, card, detail_field, empty_hint, form_page, page_heading, path_field,
-    text_field, vertical_when_overflow,
+    PathBrowse, button, button_row, card, detail_field, empty_hint, form_page, page_heading,
+    path_field, text_field, vertical_when_overflow,
 };
 use egui::{CollapsingHeader, Ui};
 use std::path::PathBuf;
@@ -49,31 +49,21 @@ fn show_add_form(
     page_heading(ui, p, t.add_heading(), Some(t.add_subtitle()));
     ui.add_space(12.0);
 
-    if let Some(path) = path_field(
-        ui,
-        &p,
-        t.link_path_label(),
-        &mut form.link_path,
-        t.browse(),
-        t.browse_tip(),
-    ) {
+    let browse = PathBrowse {
+        label: t.browse(),
+        tip: t.browse_tip(),
+    };
+    if let Some(path) = path_field(ui, p, t.link_path_label(), &mut form.link_path, browse) {
         form.link_path = path.display().to_string();
     }
     ui.add_space(8.0);
-    if let Some(path) = path_field(
-        ui,
-        &p,
-        t.target_path_label(),
-        &mut form.target_path,
-        t.browse(),
-        t.browse_tip(),
-    ) {
+    if let Some(path) = path_field(ui, p, t.target_path_label(), &mut form.target_path, browse) {
         form.target_path = path.display().to_string();
     }
     ui.add_space(8.0);
     text_field(
         ui,
-        &p,
+        p,
         t.name_optional_label(),
         &mut form.name,
         Some(t.name_hint()),

@@ -95,39 +95,41 @@ pub fn text_field(
     text_input_row(ui, value, hint);
 }
 
+/// 路径行「浏览」按钮文案。
+#[derive(Clone, Copy)]
+pub struct PathBrowse<'a> {
+    pub label: &'a str,
+    pub tip: &'a str,
+}
+
+/// 路径行占位提示与底部说明（设置页数据目录等）。
+#[derive(Clone, Copy)]
+pub struct PathFieldHints<'a> {
+    pub hint: &'a str,
+    pub note: &'a str,
+}
+
 /// 路径行：标签 + 输入框 + 浏览按钮；选中路径时返回 `Some`。
 pub fn path_field(
     ui: &mut Ui,
     p: &theme::UiPalette,
     label: &str,
     value: &mut String,
-    browse_label: &str,
-    browse_tip: &str,
+    browse: PathBrowse<'_>,
 ) -> Option<std::path::PathBuf> {
-    path_field_inner(ui, p, label, value, browse_label, browse_tip, None, None)
+    path_field_inner(ui, p, label, value, browse, None)
 }
 
-/// 路径行 + 占位提示 + 底部说明（设置页数据目录等）。
+/// 路径行 + 占位提示 + 底部说明。
 pub fn path_field_with_hints(
     ui: &mut Ui,
     p: &theme::UiPalette,
     label: &str,
     value: &mut String,
-    browse_label: &str,
-    browse_tip: &str,
-    hint: &str,
-    note: &str,
+    browse: PathBrowse<'_>,
+    hints: PathFieldHints<'_>,
 ) -> Option<std::path::PathBuf> {
-    path_field_inner(
-        ui,
-        p,
-        label,
-        value,
-        browse_label,
-        browse_tip,
-        Some(hint),
-        Some(note),
-    )
+    path_field_inner(ui, p, label, value, browse, Some(hints))
 }
 
 fn path_field_inner(
@@ -135,15 +137,14 @@ fn path_field_inner(
     p: &theme::UiPalette,
     label: &str,
     value: &mut String,
-    browse_label: &str,
-    browse_tip: &str,
-    hint: Option<&str>,
-    note: Option<&str>,
+    browse: PathBrowse<'_>,
+    hints: Option<PathFieldHints<'_>>,
 ) -> Option<std::path::PathBuf> {
     field_label(ui, p, label);
-    let picked = path_input_row(ui, value, browse_label, browse_tip, hint);
-    if let Some(note) = note {
-        ui.label(rich_body_muted(note, p.text_muted));
+    let hint = hints.map(|h| h.hint);
+    let picked = path_input_row(ui, value, browse.label, browse.tip, hint);
+    if let Some(h) = hints {
+        ui.label(rich_body_muted(h.note, p.text_muted));
     }
     picked
 }

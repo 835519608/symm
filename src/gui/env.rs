@@ -54,7 +54,7 @@ pub fn sync_symm_home(data_dir: &str) {
     let trimmed = data_dir.trim();
     unsafe {
         if trimmed.is_empty() {
-            let _ = env::remove_var("SYMM_HOME");
+            env::remove_var("SYMM_HOME");
         } else {
             env::set_var("SYMM_HOME", trimmed);
         }

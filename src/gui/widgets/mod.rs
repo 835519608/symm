@@ -8,7 +8,10 @@ mod nav;
 mod scroll;
 
 pub use button::button;
-pub use form::{labeled_field, path_field, path_field_with_hints, search_field, text_field};
+pub use form::{
+    PathBrowse, PathFieldHints, labeled_field, path_field, path_field_with_hints, search_field,
+    text_field,
+};
 pub use layout::{button_row, card, detail_field, empty_hint, form_page, page_heading};
 pub use modal::{ModalOptions, ModalSize, show_modal};
 pub use nav::settings_nav;
