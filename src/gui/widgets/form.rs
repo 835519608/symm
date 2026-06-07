@@ -1,9 +1,11 @@
 use crate::gui::fonts::icon_font_id;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, rich_body_muted, typography_from_ui};
+#[cfg(not(target_os = "macos"))]
+use crate::gui::util::pick_path_file;
 #[cfg(target_os = "macos")]
 use crate::gui::util::pick_path_file_or_folder;
-use crate::gui::util::{pick_path_file, pick_path_folder};
+use crate::gui::util::pick_path_folder;
 use egui::{Align, Layout, RichText, TextEdit, Ui, WidgetInfo, WidgetType};
 
 const FORM_ROW_MIN_W: f32 = 120.0;
@@ -212,10 +214,11 @@ pub struct PathBrowse<'a> {
     pub label: &'a str,
     pub tip: &'a str,
     pub pick: PathPickMode,
+    #[cfg(not(target_os = "macos"))]
     pub pick_file: &'a str,
     pub pick_folder: &'a str,
     /// macOS 统一选择器菜单项（其它平台可传空串）。
-    #[allow(dead_code)]
+    #[cfg(target_os = "macos")]
     pub pick_unified: &'a str,
 }
 
@@ -263,8 +266,10 @@ mod tests {
             label: "浏览",
             tip: "",
             pick: PathPickMode::FileOrFolder,
+            #[cfg(not(target_os = "macos"))]
             pick_file: "文件",
             pick_folder: "文件夹",
+            #[cfg(target_os = "macos")]
             pick_unified: "选择",
         };
 

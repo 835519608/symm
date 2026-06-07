@@ -40,8 +40,10 @@ pub fn show_add_dialog(ctx: &egui::Context, state: &mut AppState) -> AddDialogAc
         label: t.browse(),
         tip: t.browse_tip(),
         pick: PathPickMode::FileOrFolder,
+        #[cfg(not(target_os = "macos"))]
         pick_file: t.browse_pick_file(),
         pick_folder: t.browse_pick_folder(),
+        #[cfg(target_os = "macos")]
         pick_unified: t.browse_tip(),
     };
 
@@ -210,8 +212,10 @@ mod tests {
             label: t.browse(),
             tip: t.browse_tip(),
             pick: PathPickMode::FileOrFolder,
+            #[cfg(not(target_os = "macos"))]
             pick_file: t.browse_pick_file(),
             pick_folder: t.browse_pick_folder(),
+            #[cfg(target_os = "macos")]
             pick_unified: t.browse_tip(),
         };
 

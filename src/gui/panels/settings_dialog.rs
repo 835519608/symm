@@ -272,8 +272,10 @@ fn appearance_page(
                             label: t.browse(),
                             tip: t.settings_data_dir_browse_tip(),
                             pick: PathPickMode::FolderOnly,
+                            #[cfg(not(target_os = "macos"))]
                             pick_file: t.browse_pick_file(),
                             pick_folder: t.browse_pick_folder(),
+                            #[cfg(target_os = "macos")]
                             pick_unified: t.browse_pick_folder(),
                         },
                         Some(t.settings_data_dir_hint()),

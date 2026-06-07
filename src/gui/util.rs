@@ -23,6 +23,7 @@ impl VecWriter {
 }
 
 /// 选择文件（返回文件路径）。
+#[cfg(not(target_os = "macos"))]
 pub fn pick_path_file() -> Option<PathBuf> {
     rfd::FileDialog::new().set_title("选择文件").pick_file()
 }

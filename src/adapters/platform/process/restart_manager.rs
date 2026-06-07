@@ -73,7 +73,7 @@ pub fn list_locking_processes_for_path(
         if entry.file_type().is_file() {
             chunk.push(path.to_path_buf());
             files_seen += 1;
-            if files_seen % SCAN_PROGRESS_EVERY_FILES == 0 {
+            if files_seen.is_multiple_of(SCAN_PROGRESS_EVERY_FILES) {
                 progress(super::LockProbeProgress::Scanning {
                     scanned_files: files_seen,
                     current: path.to_path_buf(),
