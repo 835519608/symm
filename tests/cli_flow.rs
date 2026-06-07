@@ -3,6 +3,7 @@ use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::Value;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 
 fn cmd() -> Command {
@@ -745,13 +746,27 @@ fn add_existing_broken_symlink_can_retarget() {
         fs::read_to_string(&link).expect("read retargeted link"),
         "new"
     );
-    cmd()
+    let ls_output = cmd()
         .env("SYMM_HOME", &symm_home)
         .args(["ls", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"name\":\"broken-retarget\""))
-        .stdout(contains(new_target.to_string_lossy().to_string()));
+        .get_output()
+        .stdout
+        .clone();
+    let ls_text = String::from_utf8(ls_output).expect("ls stdout should be valid utf-8 json");
+    let ls_json: Value = serde_json::from_str(&ls_text).expect("ls output should be json");
+    let items = ls_json.as_array().expect("ls json should be an array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "broken-retarget");
+
+    let actual_target = items[0]["target_path"]
+        .as_str()
+        .expect("target_path should be a string");
+    assert_eq!(
+        dunce::canonicalize(Path::new(actual_target)).expect("canonicalize stored target"),
+        dunce::canonicalize(&new_target).expect("canonicalize new target")
+    );
 }
 
 #[test]
