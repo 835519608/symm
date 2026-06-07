@@ -8,7 +8,8 @@
 /.scratch
 /CLAUDE.md
 /CONTEXT.md
-mise.toml
+.mise.toml
 packaging/windows/dist/
 packaging/windows/staging/
 packaging/portable/staging/
+AGENTS.md

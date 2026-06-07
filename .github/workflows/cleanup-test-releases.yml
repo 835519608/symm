@@ -1,13 +1,12 @@
 # 定时清理测试 Pre-release：全库只保留发布时间最新的一条 *-test* Release（含 tag）。
 #
-# 调度：每日北京时间 01:00（cron 使用 Asia/Shanghai）。
+# 调度：每日北京时间 01:00（GitHub Actions cron 使用 UTC，即前一日 17:00 UTC）。
 # 手动：gh workflow run cleanup-test-releases.yml
 name: Cleanup Test Releases
 
 on:
   schedule:
-    - cron: "0 1 * * *"
-      timezone: Asia/Shanghai
+    - cron: "0 17 * * *"
   workflow_dispatch:
 
 permissions:
@@ -31,7 +30,7 @@ jobs:
               --jq '
                 [.[]
                   | select(.isPrerelease)
-                  | select(.tagName | test("-test"))
+                  | select(.tagName | test("-test|^test-run-"))
                 ]
                 | sort_by(.publishedAt)
                 | reverse
@@ -45,7 +44,7 @@ jobs:
               --jq '
                 [.[]
                   | select(.isPrerelease)
-                  | select(.tagName | test("-test"))
+                  | select(.tagName | test("-test|^test-run-"))
                 ]
                 | sort_by(.publishedAt)
                 | reverse
@@ -63,7 +62,7 @@ jobs:
             --jq '
               [.[]
                 | select(.isPrerelease)
-                | select(.tagName | test("-test"))
+                  | select(.tagName | test("-test|^test-run-"))
               ]
               | sort_by(.publishedAt)
               | reverse

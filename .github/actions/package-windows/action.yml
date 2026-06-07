@@ -3,7 +3,7 @@ description: 从发版 tag 写入版本号，构建安装包 / zip / SHA256SUMS
 
 inputs:
   release_version:
-    description: 完整发布版本（如 0.2.7-test），用于 Scoop 资源路径
+    description: 完整发布版本（如 0.2.7-test），用于 Release 资源路径
     required: true
   release_semver:
     description: Cargo / 安装包显示用 X.Y.Z
@@ -50,9 +50,15 @@ runs:
     - name: 生成 SHA256SUMS
       shell: pwsh
       run: |
-        $hash = (Get-FileHash "symm-portable-windows-x64.zip" -Algorithm SHA256).Hash.ToLower()
-        "${hash}  symm-portable-windows-x64.zip" | Set-Content -Path "SHA256SUMS" -Encoding ascii -NoNewline
-        Add-Content -Path "SHA256SUMS" -Value "" -Encoding ascii
+        $files = @(
+          "packaging/windows/dist/symm-setup-windows-x64.exe",
+          "symm-portable-windows-x64.zip"
+        )
+        $lines = foreach ($file in $files) {
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $file -Leaf)"
+        }
+        $lines | Set-Content -Path "SHA256SUMS" -Encoding ascii
 
     - name: 复制发布文件到工作区根目录
       shell: pwsh

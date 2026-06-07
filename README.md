@@ -40,17 +40,17 @@
 ### 构建与运行
 
 ```bash
-cargo build --release
-# 产物：target/release/symm（Windows 为 symm.exe）
+cargo build --release --features gui --bin symm --bin symm-cli
+# 产物：target/release/symm（GUI）和 target/release/symm-cli（CLI）
 ```
 
 ### 常用命令
 
 ```bash
-symm add <link> <target>
-symm ls [--status ok|broken|missing|stale|drift] [--json] [--limit N] [--offset N]
-symm show <name|link> [--json]
-symm rm <name|link>
+symm-cli add <link> <target>
+symm-cli ls [--status ok|broken|missing|stale|drift] [--json] [--limit N] [--offset N]
+symm-cli show <name|link> [--json]
+symm-cli rm <name|link>
 ```
 
 ### 质量检查
@@ -61,7 +61,7 @@ symm rm <name|link>
 ## 数据目录
 
 - **默认**：可执行文件同级 `data/`，库文件为 `symm.db`（仅 `links` 表）
-- **CLI 在 `cli/` 子目录**（Scoop / 便携 zip）：自动使用应用根目录的 `data/`，与 `symm.exe`（GUI）共用同一库
+- **CLI 在 `cli/` 子目录**（安装包 / 便携 zip）：自动使用应用根目录的 `data/`，与 `symm.exe`（GUI）共用同一库
 - **覆盖**：设置 `SYMM_HOME` 指向其它目录（见下文）
 
 ## 环境变量
@@ -78,10 +78,9 @@ symm rm <name|link>
 
 - **默认**：可执行文件所在目录下的 `data/`；`cli/symm-cli.exe` 时使用上一级的 `data/`
 - **注意**：不同 `SYMM_HOME` 对应不同的链接库，互不影响
-- **Scoop**：manifest 已设置 `SYMM_HOME=$dir\data`，与 `persist: data` 一致
 
 ```bash
-SYMM_HOME=/var/lib/symm symm ls
+SYMM_HOME=/var/lib/symm symm-cli ls
 ```
 
 ---
@@ -103,13 +102,13 @@ mise run run-gui
 
 ### `SYMM_ADD_NAME`
 
-在 `symm add` 成功建链/纳管之后、写入数据库之前，跳过「名称（可选）」输入框。
+在 `symm-cli add` 成功建链/纳管之后、写入数据库之前，跳过「名称（可选）」输入框。
 
-- `name` 是给人看的别名（如 `symm show demo`、`symm rm demo`），可留空；**非空** `name` 在库内必须唯一
+- `name` 是给人看的别名（如 `symm-cli show demo`、`symm-cli rm demo`），可留空；**非空** `name` 在库内必须唯一
 - 更新已有 `link` 时若不设置此变量，提示框会默认带上原来的 `name`，回车即可保持不变
 
 ```bash
-SYMM_ADD_NAME=my-project symm add ./link ./target
+SYMM_ADD_NAME=my-project symm-cli add ./link ./target
 ```
 
 ---
@@ -124,7 +123,7 @@ SYMM_ADD_NAME=my-project symm add ./link ./target
 | `cancel`（`abort`） | 不杀进程，取消本次 `add` |
 
 ```bash
-SYMM_ADD_LOCK_CHOICE=unlock symm add ./busy-link ./target
+SYMM_ADD_LOCK_CHOICE=unlock symm-cli add ./busy-link ./target
 ```
 
 ---
@@ -156,7 +155,7 @@ SYMM_ADD_LOCK_CHOICE=unlock symm add ./busy-link ./target
 
 ### `SYMM_RM_ACTION`
 
-在 `symm rm` 查到记录之后，代替「是否把目标移回链接位置」的菜单。
+在 `symm-cli rm` 查到记录之后，代替「是否把目标移回链接位置」的菜单。
 
 | 取值 | 效果 |
 | :--- | :--- |
@@ -164,7 +163,7 @@ SYMM_ADD_LOCK_CHOICE=unlock symm add ./busy-link ./target
 | `restore` / `yes` / `y` | **恢复再删库**：删软链 → 将 target 迁回 link → 删库记录 |
 
 ```bash
-SYMM_RM_ACTION=delete symm rm my-link
+SYMM_RM_ACTION=delete symm-cli rm my-link
 ```
 
 ---
@@ -174,7 +173,7 @@ SYMM_RM_ACTION=delete symm rm my-link
 调试时在 **stderr** 输出各命令耗时（前缀 `[symm-perf]`），不影响命令结果。设为 `1` 或非 `0`/`false`/`no` 的值即开启。
 
 ```bash
-SYMM_PERF_LOG=1 symm ls
+SYMM_PERF_LOG=1 symm-cli ls
 ```
 
 ## 平台差异
@@ -194,7 +193,7 @@ SYMM_PERF_LOG=1 symm ls
 ### Windows：占用检测与提权（实现说明）
 
 - **主进程**（你运行的 `symm`）保持**当前用户**，迁移/复制/写库不在此提权。
-- **查占用 / 杀进程**：非管理员时通过 [`runas`](https://crates.io/crates/runas) 启动**独立子进程**（`symm __elevated-list-locks` / `__elevated-kill`），UAC 点「是」后子进程内执行 Restart Manager 或结束进程；结果经临时快照文件回传主进程。子进程**不弹黑窗**（`show(false)`），扫锁进度经临时文件回传并在**主终端**输出。
+- **查占用 / 杀进程**：非管理员时通过 [`runas`](https://crates.io/crates/runas) 启动**独立子进程**（`symm-cli __elevated-list-locks` / `__elevated-kill`），UAC 点「是」后子进程内执行 Restart Manager 或结束进程；结果经临时快照文件回传主进程。子进程**不弹黑窗**（`show(false)`），扫锁进度经临时文件回传并在**主终端**输出。
 - **扫锁范围**：对 `link` 路径做与迁移一致的 `WalkDir` 收集**普通文件**（不注册目录本身；目录无 `\` 结尾会导致 `RmGetList` 错误 5），分批 `RmRegisterResources` / `RmGetList`；单批若遇 `ACCESS_DENIED` 会二分拆分跳过不可查路径。
 - **提权失败**：直接报错（含 `--elevated-log` 路径下的子进程日志）；**不会**再在主进程用普通权限重扫一遍。
 - **杀进程后**：短暂等待句柄释放（约 0.8s），**不再**反复扫锁或二次 UAC。
@@ -371,15 +370,15 @@ ui  →  domain（及 migrate 进度事件类型）；交互选记录由 workflo
 
 ## 打包与发布
 
-各平台：`cargo build --release`，产物在 `target/release/`。
+各平台：`cargo build --release --features gui --bin symm --bin symm-cli`，产物在 `target/release/`。
 
-可选安装：`install -m 755 target/release/symm /usr/local/bin/symm`（或 `~/.local/bin`）。
+可选安装：`install -m 755 target/release/symm-cli /usr/local/bin/symm-cli`（或 `~/.local/bin`）。
 
 交叉编译示例：
 
 ```bash
 rustup target add x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc
-cargo build --release --target <triple>
+cargo build --release --features gui --bin symm --bin symm-cli --target <triple>
 ```
 
 ## GitHub Actions
@@ -389,7 +388,7 @@ cargo build --release --target <triple>
 | **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | ubuntu / windows / macos：`fmt` → `clippy -D warnings` → `test` |
 | **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，三平台，设为 Latest |
 | **Release Test** | 推送 `vX.Y.Z-test[-平台]` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定平台（见下） |
-| **Cleanup Test Releases** | 每日北京时间 01:00 或手动触发 | 删除旧测试 Pre-release，**仅保留发布时间最新的一条** `*-test*` |
+| **Cleanup Test Releases** | 每日北京时间 01:00（17:00 UTC）或手动触发 | 删除旧测试 Pre-release，**仅保留发布时间最新的一条** `*-test*` |
 
 **Release Test 平台与版本**（正式 `release.yml` 仍固定三端全打）：
 
@@ -397,6 +396,6 @@ cargo build --release --target <triple>
 - 版本号只改 `X.Y.Z`：小改动 `Z+1`（`0.1.0→0.1.1`）；大变动 `Y+1` 且 `Z=0`（`0.1.2→0.2.0`）。
 - 手动：`gh workflow run release-test.yml -f build_windows=true -f build_linux=false -f build_macos=false`
 
-**打包与 CI**：`release*.yml` 只做 `cargo build --release`，**不重复**跑测试；会先查当前 commit 上 `ci.yml` 三端矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
+**打包与 CI**：`release*.yml` 只做发布构建（`cargo build --release --features gui --bin symm --bin symm-cli`），**不重复**跑测试；会先查当前 commit 上 `ci.yml` 三端矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
 
 **Release 说明**：自动使用 **tag 所指向 commit 的提交说明**（`git log -1`）作为 GitHub Release 正文。打 tag 前把该 commit 的 message 写好即可；跨多 commit 时可在打 tag 前 `git commit --amend` 汇总，或 squash 后再 tag。手动触发测试包时可用 `release_notes` 覆盖。

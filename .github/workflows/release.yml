@@ -37,21 +37,6 @@ jobs:
       - id: notes
         uses: ./.github/actions/prepare-release-notes
 
-  sync-scoop-manifest:
-    name: 同步 Scoop manifest 版本
-    needs: [prepare-release, build-and-release-windows]
-    if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-      - uses: ./.github/actions/sync-scoop-manifest
-        with:
-          release_version: ${{ needs.prepare-release.outputs.release_version }}
-
   build-and-release-windows:
     name: 发布产物 (windows-latest)
     needs: prepare-release
@@ -114,10 +99,10 @@ jobs:
           make_latest: true
 
   build-and-release-macos:
-    name: 发布产物 (macos-latest)
+    name: 发布产物 (macos-15-intel)
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - name: 检出代码
         uses: actions/checkout@v5

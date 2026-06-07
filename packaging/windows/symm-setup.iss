@@ -43,7 +43,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [CustomMessages]
 chinesesimplified.WelcomeLabel2=将把 symm（图形界面）与 symm-cli（命令行）解压到您选择的文件夹。%n%n根目录为 symm.exe；CLI 在 cli 子目录。不写入注册表。
-chinesesimplified.FinishedLabel=安装完成。双击 symm.exe 或从开始菜单启动；命令行请使用 cli\symm-cli.exe（或 Scoop 的 symm-cli）。
+chinesesimplified.FinishedLabel=安装完成。双击 symm.exe 或从开始菜单启动；命令行请使用 cli\symm-cli.exe。
 english.WelcomeLabel2=This will extract symm (GUI) and symm-cli into the folder you choose.%n%nNo registry entries are created.
 english.FinishedLabel=Launch symm.exe from the Start menu or desktop. For CLI, run cli\symm-cli.exe.
 

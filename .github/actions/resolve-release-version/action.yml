@@ -8,7 +8,7 @@ inputs:
 
 outputs:
   version:
-    description: 去掉 v 前缀，用于 Scoop / Release 资源路径
+    description: 去掉 v 前缀，用于 Release 资源路径
     value: ${{ steps.resolve.outputs.version }}
   semver:
     description: X.Y.Z，用于 Cargo.toml 与安装包显示版本
@@ -29,10 +29,11 @@ runs:
         if [[ "${version}" =~ ^test-run- ]]; then
           semver="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
           version="${semver}"
-        elif [[ "${version}" =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+        elif [[ "${version}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
           semver="${BASH_REMATCH[1]}"
         else
-          semver="${version}"
+          echo "::error::Invalid release tag '${tag}'. Expected vX.Y.Z or vX.Y.Z-suffix."
+          exit 1
         fi
         echo "version=${version}" >> "$GITHUB_OUTPUT"
         echo "semver=${semver}" >> "$GITHUB_OUTPUT"
