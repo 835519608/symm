@@ -344,6 +344,7 @@ impl GuiTexts {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn browse_pick_file(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "选择文件",
