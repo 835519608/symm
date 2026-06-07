@@ -4,6 +4,7 @@ use crate::adapters::paths::remove;
 use crate::adapters::platform::{HostFs, format_relocate_failure, host_platform};
 use crate::domain::error::SymmError;
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum MigrationEvent {
@@ -18,20 +19,10 @@ pub enum MigrationEvent {
     Copying {
         copied_bytes: u64,
         files_copied: u64,
-        current_item: Option<String>,
+        current_item: Option<Arc<str>>,
     },
     RemovingSource {
         source: String,
-    },
-    CreatingLink {
-        link: String,
-        target: String,
-    },
-    PersistingDb {
-        link: String,
-    },
-    Done {
-        link: String,
     },
 }
 
@@ -56,7 +47,7 @@ where
 
     if let Some(acl_file) = host_platform().snapshot_dir_acl(src)? {
         copy_file::copy_path_with_progress(src, dst, reporter)?;
-        let _ = host_platform().restore_dir_acl(dst, &acl_file);
+        host_platform().restore_dir_acl(dst, &acl_file)?;
     } else {
         copy_file::copy_path_with_progress(src, dst, reporter)?;
     }
@@ -126,7 +117,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[cfg(unix)]
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt, symlink};
 
     #[cfg(windows)]
     fn symlink_file(target: &Path, link: &Path) {
@@ -228,6 +219,25 @@ mod tests {
             !dst.exists(),
             "partial destination should be cleaned when copy aborts"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_path_with_progress_preserves_file_mode() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src.sh");
+        let dst = temp.path().join("dst.sh");
+        fs::write(&src, "#!/bin/sh\n").expect("write source");
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).expect("chmod source");
+
+        copy_path_with_progress(&src, &dst, &mut |_event| Ok(())).expect("copy file");
+
+        let mode = fs::metadata(&dst)
+            .expect("dst metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o755);
     }
 
     #[test]

@@ -30,14 +30,14 @@ fn finish_outcome(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConflictChoice {
+pub(crate) enum ConflictChoice {
     KeepLink,
     KeepTarget,
     Cancel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SymlinkConflictChoice {
+pub(crate) enum SymlinkConflictChoice {
     Retarget,
     Cancel,
 }
@@ -46,6 +46,19 @@ pub fn resolve_add_conflict<F>(
     link: &Path,
     target: &Path,
     reporter: &mut F,
+) -> Result<AddPrepareOutcome, SymmError>
+where
+    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+{
+    resolve_add_conflict_with_choices(link, target, reporter, None, None)
+}
+
+pub(crate) fn resolve_add_conflict_with_choices<F>(
+    link: &Path,
+    target: &Path,
+    reporter: &mut F,
+    conflict_choice: Option<ConflictChoice>,
+    symlink_conflict_choice: Option<SymlinkConflictChoice>,
 ) -> Result<AddPrepareOutcome, SymmError>
 where
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
@@ -71,9 +84,20 @@ where
         }
         (true, true) => {
             if link_is_symlink {
-                prepare_symlink_exist(link, target, target_existed_at_start)
+                prepare_symlink_exist(
+                    link,
+                    target,
+                    target_existed_at_start,
+                    symlink_conflict_choice,
+                )
             } else {
-                prepare_both_exist(link, target, reporter, target_existed_at_start)
+                prepare_both_exist(
+                    link,
+                    target,
+                    reporter,
+                    target_existed_at_start,
+                    conflict_choice,
+                )
             }
         }
     }
@@ -83,11 +107,16 @@ fn prepare_symlink_exist(
     link: &Path,
     target: &Path,
     target_existed_at_start: bool,
+    explicit_choice: Option<SymlinkConflictChoice>,
 ) -> Result<AddPrepareOutcome, SymmError> {
     if symlink_points_to_target(link, target)? {
         return Ok(finish_outcome(true, target_existed_at_start, false, false));
     }
-    match select_symlink_conflict_choice()? {
+    let choice = match explicit_choice {
+        Some(choice) => choice,
+        None => select_symlink_conflict_choice()?,
+    };
+    match choice {
         SymlinkConflictChoice::Retarget => {
             symlink::unlink(link)?;
             Ok(finish_outcome(false, target_existed_at_start, false, false))
@@ -103,11 +132,16 @@ fn prepare_both_exist<F>(
     target: &Path,
     reporter: &mut F,
     target_existed_at_start: bool,
+    explicit_choice: Option<ConflictChoice>,
 ) -> Result<AddPrepareOutcome, SymmError>
 where
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
-    match select_conflict_choice()? {
+    let choice = match explicit_choice {
+        Some(choice) => choice,
+        None => select_conflict_choice()?,
+    };
+    match choice {
         ConflictChoice::KeepLink => {
             remove::remove_any(target)?;
             adopt_link_to_target(link, target, reporter, true, true)?;
@@ -239,9 +273,10 @@ fn symlink_points_to_target(link: &Path, target: &Path) -> Result<bool, SymmErro
         })?;
         parent.join(pointed)
     };
-    let resolved_canonical = fs::canonicalize(&resolved).map_err(|e| SymmError::IoError {
-        message: format!("无法解析 link 指向路径：{e}"),
-    })?;
+    let resolved_canonical = match fs::canonicalize(&resolved) {
+        Ok(path) => path,
+        Err(_) => return Ok(false),
+    };
     let target_canonical = fs::canonicalize(target).map_err(|e| SymmError::IoError {
         message: format!("无法解析 target 路径：{e}"),
     })?;

@@ -49,26 +49,35 @@ fn links_table_needs_autoincrement_upgrade(conn: &Connection) -> Result<bool, Sy
 }
 
 fn migrate_links_to_autoincrement(conn: &Connection) -> Result<(), SymmError> {
-    conn.execute_batch(
-        "CREATE TABLE links__autoinc (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL DEFAULT '',
-            link_path TEXT NOT NULL UNIQUE,
-            target_path TEXT NOT NULL,
-            link_kind TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
-        );
-        INSERT INTO links__autoinc(
-            id, name, link_path, target_path, link_kind, created_at, updated_at
-        )
-        SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
-        FROM links;
-        DROP TABLE links;
-        ALTER TABLE links__autoinc RENAME TO links;",
-    )
-    .map_err(db_err)?;
-    create_link_indexes(conn)
+    match conn.execute_batch(
+        "BEGIN IMMEDIATE;
+         DROP TABLE IF EXISTS links__autoinc;
+         CREATE TABLE links__autoinc (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL DEFAULT '',
+             link_path TEXT NOT NULL UNIQUE,
+             target_path TEXT NOT NULL,
+             link_kind TEXT NOT NULL,
+             created_at INTEGER NOT NULL,
+             updated_at INTEGER NOT NULL
+         );
+         INSERT INTO links__autoinc(
+             id, name, link_path, target_path, link_kind, created_at, updated_at
+         )
+         SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
+         FROM links;
+         DROP TABLE links;
+         ALTER TABLE links__autoinc RENAME TO links;
+         CREATE UNIQUE INDEX IF NOT EXISTS ux_links_link_path ON links(link_path);
+         CREATE UNIQUE INDEX IF NOT EXISTS ux_links_name_nonempty ON links(name) WHERE name <> '';
+         COMMIT;",
+    ) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK; DROP TABLE IF EXISTS links__autoinc;");
+            Err(db_err(err))
+        }
+    }
 }
 
 fn create_link_indexes(conn: &Connection) -> Result<(), SymmError> {
@@ -118,5 +127,42 @@ mod tests {
         let record = repository::find_one(&conn, &LinkQuery::link_path_exact("/tmp/legacy"))
             .expect("by path");
         assert_eq!(record.id, 99);
+    }
+
+    #[test]
+    fn autoincrement_upgrade_rolls_back_on_copy_failure() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        conn.execute_batch(
+            "CREATE TABLE links (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                link_path TEXT NOT NULL,
+                target_path TEXT NOT NULL,
+                link_kind TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            INSERT INTO links(id, name, link_path, target_path, link_kind, created_at, updated_at)
+            VALUES
+                (1, 'a', '/tmp/dup', '/tmp/t1', 'symlink', 1, 1),
+                (2, 'b', '/tmp/dup', '/tmp/t2', 'symlink', 2, 2);",
+        )
+        .expect("legacy duplicate schema");
+
+        migrate(&conn).expect_err("duplicate link_path should fail migration");
+
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM links", [], |row| row.get(0))
+            .expect("old links table should remain");
+        assert_eq!(rows, 2);
+
+        let temp_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'links__autoinc'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sqlite_master query");
+        assert_eq!(temp_exists, 0);
     }
 }

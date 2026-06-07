@@ -17,7 +17,7 @@ impl PlatformProcess for Platform {
     {
         progress(LockProbeProgress::Querying {
             batch: 1,
-            total_batches: 1,
+            total_batches: Some(1),
         });
         list_locking_processes_direct(path)
     }

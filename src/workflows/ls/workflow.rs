@@ -1,6 +1,5 @@
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkStatus;
-use crate::domain::model::LinkView;
 use crate::ui::output;
 use crate::workflows::list_views;
 use crate::workflows::perf;
@@ -16,15 +15,13 @@ pub fn run<W: Write>(
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
-    let views = list_views::collect_all(conn, wanted, limit, offset)?;
-    let scanned = views.scanned;
-    let emitted = views.items.len();
-
-    if json {
-        stream_json(&views.items, writer)?;
+    let (scanned, emitted) = if json {
+        let stats = stream_json(conn, wanted, limit, offset, writer)?;
+        (stats.scanned, stats.emitted)
     } else {
-        output::write_list_table(writer, &views.items)?;
-    }
+        let stats = stream_table(conn, wanted, limit, offset, writer)?;
+        (stats.scanned, stats.emitted)
+    };
 
     perf::log_perf(
         "ls",
@@ -51,12 +48,33 @@ pub fn run<W: Write>(
     Ok(())
 }
 
-fn stream_json<W: Write>(items: &[LinkView], writer: &mut W) -> Result<(), SymmError> {
+fn stream_table<W: Write>(
+    conn: &rusqlite::Connection,
+    wanted: Option<LinkStatus>,
+    limit: Option<u32>,
+    offset: u32,
+    writer: &mut W,
+) -> Result<list_views::ViewStreamStats, SymmError> {
+    output::write_list_table_header(writer)?;
+    list_views::for_each_view(conn, wanted, limit, offset, |view| {
+        output::write_list_table_item(writer, &view)
+    })
+}
+
+fn stream_json<W: Write>(
+    conn: &rusqlite::Connection,
+    wanted: Option<LinkStatus>,
+    limit: Option<u32>,
+    offset: u32,
+    writer: &mut W,
+) -> Result<list_views::ViewStreamStats, SymmError> {
     output::write_json_array_start(writer)?;
     let mut first = true;
-    for view in items {
-        output::write_json_item(writer, view, first)?;
+    let stats = list_views::for_each_view(conn, wanted, limit, offset, |view| {
+        output::write_json_item(writer, &view, first)?;
         first = false;
-    }
-    output::write_json_array_end(writer)
+        Ok(())
+    })?;
+    output::write_json_array_end(writer)?;
+    Ok(stats)
 }

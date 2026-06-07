@@ -11,6 +11,13 @@ pub struct MigrationProgressReporter<'a, W: Write> {
     last_copy_snapshot: Option<(u64, u64)>,
 }
 
+#[derive(Debug, Clone)]
+pub enum WorkflowProgressEvent {
+    CreatingLink { link: String, target: String },
+    PersistingDb { link: String },
+    Done { link: String },
+}
+
 impl<'a, W: Write> MigrationProgressReporter<'a, W> {
     pub fn new(writer: &'a mut W) -> Self {
         Self {
@@ -43,13 +50,18 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
             MigrationEvent::RemovingSource { source } => {
                 self.write_line(&format!("正在删除源：{source}"))
             }
-            MigrationEvent::CreatingLink { link, target } => {
+        }
+    }
+
+    pub fn handle_workflow_event(&mut self, event: WorkflowProgressEvent) -> Result<(), SymmError> {
+        match event {
+            WorkflowProgressEvent::CreatingLink { link, target } => {
                 self.write_line(&format!("正在创建软链：{link} → {target}"))
             }
-            MigrationEvent::PersistingDb { link } => {
+            WorkflowProgressEvent::PersistingDb { link } => {
                 self.write_line(&format!("正在保存记录：{link}"))
             }
-            MigrationEvent::Done { link } => self.write_line(&format!("完成：{link}")),
+            WorkflowProgressEvent::Done { link } => self.write_line(&format!("完成：{link}")),
         }
     }
 
@@ -68,7 +80,11 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
                 batch,
                 total_batches,
             } => {
-                let _ = self.write_line(&format!("正在查询占用进程：{batch}/{total_batches}"));
+                let message = match total_batches {
+                    Some(total) => format!("正在查询占用进程：{batch}/{total}"),
+                    None => format!("正在查询占用进程：第 {batch} 批"),
+                };
+                let _ = self.write_line(&message);
             }
         }
     }

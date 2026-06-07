@@ -1,5 +1,4 @@
 //! `rm`：删库后删除 link，或将 target 迁回 link 路径。支持多个 selector；省略参数时交互多选。
-use crate::adapters::db::resolve;
 use crate::adapters::db::{LinkQuery, repository};
 use crate::adapters::migrate;
 use crate::adapters::status;
@@ -10,7 +9,7 @@ use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::perf;
 use crate::workflows::select;
-use std::collections::HashSet;
+use crate::workflows::selector;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
@@ -102,14 +101,7 @@ fn resolve_records(
         return select::pick_many_records(conn);
     }
 
-    let mut records = Vec::with_capacity(selectors.len());
-    let mut seen_ids = HashSet::new();
-    for selector in selectors {
-        let record = resolve::record_from_token(conn, selector)?;
-        if seen_ids.insert(record.id) {
-            records.push(record);
-        }
-    }
+    let records = selector::records_from_tokens(conn, selectors)?;
     if records.is_empty() {
         return Err(SymmError::InvalidArgument {
             message: "未指定要删除的记录".to_string(),
@@ -130,7 +122,10 @@ fn remove_one<W: Write>(
     let mut action = action;
 
     if action == RmAction::RestoreTargetToLink
-        && matches!(link_status, LinkStatus::Stale | LinkStatus::Missing)
+        && matches!(
+            link_status,
+            LinkStatus::Broken | LinkStatus::Stale | LinkStatus::Missing
+        )
     {
         writeln!(
             writer,

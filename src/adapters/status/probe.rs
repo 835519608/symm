@@ -37,7 +37,12 @@ fn symlink_target_matches(link: &Path, expected: &Path) -> bool {
     if actual == expected {
         return true;
     }
-    match (dunce::canonicalize(&actual), dunce::canonicalize(expected)) {
+    let actual = if actual.is_absolute() {
+        actual
+    } else {
+        link.parent().unwrap_or_else(|| Path::new("")).join(actual)
+    };
+    match (dunce::canonicalize(actual), dunce::canonicalize(expected)) {
         (Ok(a), Ok(e)) => a == e,
         _ => false,
     }

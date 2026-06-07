@@ -11,6 +11,10 @@ pub fn data_home() -> Result<PathBuf, SymmError> {
         return Ok(p);
     }
 
+    default_data_home()
+}
+
+pub fn default_data_home() -> Result<PathBuf, SymmError> {
     let exe = std::env::current_exe().map_err(|e| SymmError::IoError {
         message: format!("无法获取可执行文件路径：{e}"),
     })?;
@@ -22,7 +26,7 @@ pub fn data_home() -> Result<PathBuf, SymmError> {
     Ok(p)
 }
 
-/// 可执行文件旁 `data/`；CLI 在 `cli/` 子目录时（Scoop / 便携 zip）用应用根目录的 `data/`。
+/// 可执行文件旁 `data/`；CLI 在 `cli/` 子目录时（安装包 / 便携 zip）用应用根目录的 `data/`。
 fn data_dir_for_exe_dir(exe_dir: &Path) -> PathBuf {
     if exe_dir
         .file_name()

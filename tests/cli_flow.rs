@@ -54,6 +54,46 @@ fn add_then_ls_then_show_then_rm() {
 }
 
 #[test]
+fn add_normalizes_lexically_equivalent_link_paths() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+    let target = data_root.join("target.txt");
+    fs::write(&target, "hello").expect("write target");
+
+    cmd()
+        .current_dir(&data_root)
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "first")
+        .args(["add", "link.txt", "target.txt"])
+        .assert()
+        .success();
+
+    cmd()
+        .current_dir(&data_root)
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "second")
+        .args(["add", "./link.txt", "target.txt"])
+        .assert()
+        .success();
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).expect("json stdout");
+    let json: Value = serde_json::from_str(&text).expect("ls json");
+    let items = json.as_array().expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "second");
+}
+
+#[test]
 fn rm_by_list_index_after_delete_middle_row() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
@@ -85,6 +125,43 @@ fn rm_by_list_index_after_delete_middle_row() {
         .assert()
         .success()
         .stdout(contains("名称: c"));
+}
+
+#[test]
+fn rm_multiple_list_indices_deletes_requested_rows() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    for name in ["a", "b", "c"] {
+        let target = data_root.join(format!("target_{name}.txt"));
+        let link = data_root.join(format!("link_{name}.txt"));
+        fs::write(&target, "x").expect("write target");
+        cmd()
+            .env("SYMM_HOME", &symm_home)
+            .env("SYMM_ADD_NAME", name)
+            .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+            .assert()
+            .success();
+    }
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "delete")
+        .args(["rm", "1", "3"])
+        .assert()
+        .success()
+        .stdout(contains("共 2 条"));
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"b\""))
+        .stdout(predicates::str::contains("\"name\":\"a\"").not())
+        .stdout(predicates::str::contains("\"name\":\"c\"").not());
 }
 
 #[test]
@@ -212,6 +289,41 @@ fn ls_json_and_show_json_work() {
         .success()
         .stdout(contains("\"name\": \"demo2\""))
         .stdout(contains("\"status\": \"ok\""));
+}
+
+#[test]
+fn ls_json_limit_and_offset_stream_requested_page() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    for name in ["first", "second", "third"] {
+        let target = data_root.join(format!("target_{name}.txt"));
+        let link = data_root.join(format!("link_{name}.txt"));
+        fs::write(&target, "x").expect("write target");
+        cmd()
+            .env("SYMM_HOME", &symm_home)
+            .env("SYMM_ADD_NAME", name)
+            .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+            .assert()
+            .success();
+    }
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json", "--limit", "1", "--offset", "1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).expect("json stdout");
+    let json: Value = serde_json::from_str(&text).expect("ls json");
+    let items = json.as_array().expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["index"], 2);
+    assert_eq!(items[0]["name"], "second");
 }
 
 #[test]
@@ -593,6 +705,56 @@ fn add_when_link_is_locked_and_unlock_still_leaves_locks_fails() {
 }
 
 #[test]
+fn add_existing_broken_symlink_can_retarget() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let old_target = data_root.join("old_broken_target.txt");
+    let new_target = data_root.join("new_retarget_target.txt");
+    let link = data_root.join("broken_retarget_link.txt");
+    fs::write(&old_target, "old").expect("write old target");
+    fs::write(&new_target, "new").expect("write new target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "broken-retarget")
+        .args([
+            "add",
+            &link.to_string_lossy(),
+            &old_target.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+    fs::remove_file(&old_target).expect("break existing symlink");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "broken-retarget")
+        .env("SYMM_ADD_SYMLINK_CONFLICT_CHOICE", "retarget")
+        .args([
+            "add",
+            &link.to_string_lossy(),
+            &new_target.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(&link).expect("read retargeted link"),
+        "new"
+    );
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"broken-retarget\""))
+        .stdout(contains(new_target.to_string_lossy().to_string()));
+}
+
+#[test]
 fn add_with_invalid_conflict_choice_env_fails_fast() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
@@ -730,6 +892,7 @@ fn ls_status_filters_broken_and_missing() {
     let link_ok = data_root.join("link_ok.txt");
     let link_broken = data_root.join("link_broken.txt");
     let link_missing = data_root.join("link_missing.txt");
+    let link_missing_2 = data_root.join("link_missing_2.txt");
     fs::write(&target_ok, "ok").expect("write target ok");
     fs::write(&target_broken, "broken").expect("write target broken");
 
@@ -766,8 +929,20 @@ fn ls_status_filters_broken_and_missing() {
         .assert()
         .success();
 
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "missing-item-2")
+        .args([
+            "add",
+            &link_missing_2.to_string_lossy(),
+            &target_ok.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
     fs::remove_file(&target_broken).expect("remove broken target");
     fs::remove_file(&link_missing).expect("remove missing link");
+    fs::remove_file(&link_missing_2).expect("remove second missing link");
 
     cmd()
         .env("SYMM_HOME", &symm_home)
@@ -786,6 +961,22 @@ fn ls_status_filters_broken_and_missing() {
         .stdout(contains("missing-item"))
         .stdout(predicates::str::contains("ok-item").not())
         .stdout(predicates::str::contains("broken-item").not());
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args([
+            "ls", "--json", "--status", "missing", "--limit", "1", "--offset", "1",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).expect("json stdout");
+    let json: Value = serde_json::from_str(&text).expect("ls status json");
+    let items = json.as_array().expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "missing-item-2");
 }
 
 #[test]
@@ -869,6 +1060,45 @@ fn rm_restore_on_stale_falls_back_without_blocking_batch() {
         .success()
         .stdout(predicates::str::contains("stale-item").not())
         .stdout(predicates::str::contains("ok-item").not());
+}
+
+#[test]
+fn rm_restore_on_broken_falls_back_to_delete_record_only() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_broken_restore.txt");
+    let link = data_root.join("link_broken_restore.txt");
+    fs::write(&target, "payload").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "broken-restore")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+    fs::remove_file(&target).expect("remove target to break symlink");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "restore")
+        .args(["rm", "broken-restore"])
+        .assert()
+        .success()
+        .stdout(contains("无法移回目标"));
+
+    assert!(
+        fs::symlink_metadata(&link).is_err(),
+        "broken link should be removed by delete-record fallback"
+    );
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("broken-restore").not());
 }
 
 #[test]

@@ -20,6 +20,7 @@ use windows::core::PCWSTR;
 /// 单次 RM 会话注册的资源上限（路径过多时分批）。
 const RM_REGISTER_CHUNK: usize = 512;
 const RM_GETLIST_MAX_RETRIES: u32 = 6;
+const SCAN_PROGRESS_EVERY_FILES: usize = 64;
 
 struct RmSession(u32);
 
@@ -35,30 +36,23 @@ pub fn list_locking_processes_for_path(
     root: &Path,
     mut progress: impl FnMut(super::LockProbeProgress),
 ) -> Result<Vec<ProcInfo>, SymmError> {
-    let resources = collect_resource_paths(root, &mut progress)?;
-    if resources.is_empty() {
-        return Ok(vec![]);
-    }
-    let total_batches = resources.len().div_ceil(RM_REGISTER_CHUNK);
-    list_processes_for_resources(&resources, total_batches, &mut progress)
-}
-
-fn collect_resource_paths(
-    root: &Path,
-    progress: &mut impl FnMut(super::LockProbeProgress),
-) -> Result<Vec<PathBuf>, SymmError> {
     // link 尚不存在时无文件可注册，等价于无占用（add 会在该路径创建软链）。
     if !root.exists() {
         return Ok(vec![]);
     }
 
+    let self_pid = std::process::id();
+    let mut by_pid: HashMap<u32, ProcInfo> = HashMap::new();
+
     let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     if root.is_file() {
-        return Ok(vec![root]);
+        query_and_merge_chunk(&[root], 1, &mut progress, self_pid, &mut by_pid)?;
+        return Ok(sorted_processes(by_pid));
     }
 
-    let mut paths = Vec::new();
+    let mut chunk = Vec::with_capacity(RM_REGISTER_CHUNK);
     let mut files_seen = 0usize;
+    let mut batch = 0usize;
     for entry in WalkDir::new(&root).follow_links(false) {
         let entry = match entry {
             Ok(entry) => entry,
@@ -77,15 +71,32 @@ fn collect_resource_paths(
             continue;
         }
         if entry.file_type().is_file() {
-            paths.push(path.to_path_buf());
+            chunk.push(path.to_path_buf());
             files_seen += 1;
-            progress(super::LockProbeProgress::Scanning {
-                scanned_files: files_seen,
-                current: path.to_path_buf(),
-            });
+            if files_seen % SCAN_PROGRESS_EVERY_FILES == 0 {
+                progress(super::LockProbeProgress::Scanning {
+                    scanned_files: files_seen,
+                    current: path.to_path_buf(),
+                });
+            }
+            if chunk.len() >= RM_REGISTER_CHUNK {
+                batch += 1;
+                query_and_merge_chunk(&chunk, batch, &mut progress, self_pid, &mut by_pid)?;
+                chunk.clear();
+            }
         }
     }
-    Ok(paths)
+    if let Some(last) = chunk.last() {
+        progress(super::LockProbeProgress::Scanning {
+            scanned_files: files_seen,
+            current: last.clone(),
+        });
+    }
+    if !chunk.is_empty() {
+        batch += 1;
+        query_and_merge_chunk(&chunk, batch, &mut progress, self_pid, &mut by_pid)?;
+    }
+    Ok(sorted_processes(by_pid))
 }
 
 /// 单个子路径不可读/已消失时跳过（Chrome 配置目录等常见），避免整次扫描失败。
@@ -99,34 +110,34 @@ fn skippable_walk_error(err: &walkdir::Error) -> bool {
     )
 }
 
-fn list_processes_for_resources(
-    paths: &[PathBuf],
-    total_batches: usize,
+fn query_and_merge_chunk(
+    chunk: &[PathBuf],
+    batch: usize,
     progress: &mut impl FnMut(super::LockProbeProgress),
-) -> Result<Vec<ProcInfo>, SymmError> {
-    let self_pid = std::process::id();
-    let mut by_pid: HashMap<u32, ProcInfo> = HashMap::new();
-
-    for (batch_idx, chunk) in paths.chunks(RM_REGISTER_CHUNK).enumerate() {
-        progress(super::LockProbeProgress::Querying {
-            batch: batch_idx + 1,
-            total_batches,
-        });
-        for info in query_rm_chunk(chunk)? {
-            let pid = info.Process.dwProcessId;
-            if pid == 0 || pid == self_pid {
-                continue;
-            }
-            by_pid.entry(pid).or_insert_with(|| ProcInfo {
-                pid,
-                display: format_rm_process(&info, pid),
-            });
+    self_pid: u32,
+    by_pid: &mut HashMap<u32, ProcInfo>,
+) -> Result<(), SymmError> {
+    progress(super::LockProbeProgress::Querying {
+        batch,
+        total_batches: None,
+    });
+    for info in query_rm_chunk(chunk)? {
+        let pid = info.Process.dwProcessId;
+        if pid == 0 || pid == self_pid {
+            continue;
         }
+        by_pid.entry(pid).or_insert_with(|| ProcInfo {
+            pid,
+            display: format_rm_process(&info, pid),
+        });
     }
+    Ok(())
+}
 
+fn sorted_processes(by_pid: HashMap<u32, ProcInfo>) -> Vec<ProcInfo> {
     let mut out: Vec<_> = by_pid.into_values().collect();
     out.sort_by_key(|p| p.pid);
-    Ok(out)
+    out
 }
 
 fn query_rm_chunk(paths: &[PathBuf]) -> Result<Vec<RM_PROCESS_INFO>, SymmError> {

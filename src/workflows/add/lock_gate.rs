@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LockResolutionAction {
+pub(crate) enum LockResolutionAction {
     UnlockAll,
     Cancel,
 }
@@ -19,6 +19,14 @@ enum LockResolutionAction {
 pub fn ensure_link_not_locked<W: Write>(
     link: &Path,
     reporter: &mut MigrationProgressReporter<'_, W>,
+) -> Result<(), SymmError> {
+    ensure_link_not_locked_with_choice(link, reporter, None)
+}
+
+pub(crate) fn ensure_link_not_locked_with_choice<W: Write>(
+    link: &Path,
+    reporter: &mut MigrationProgressReporter<'_, W>,
+    explicit_action: Option<LockResolutionAction>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查链接是否被占用：{}", link.display()))?;
     if !link.exists() {
@@ -38,7 +46,10 @@ pub fn ensure_link_not_locked<W: Write>(
         return Ok(());
     }
     reporter.write_line("检测到占用，请选择是否结束占用进程")?;
-    let action = select_lock_resolution_action(&procs)?;
+    let action = match explicit_action {
+        Some(action) => action,
+        None => select_lock_resolution_action(&procs)?,
+    };
     if action == LockResolutionAction::Cancel {
         return Err(SymmError::InvalidArgument {
             message: format!("链接位置仍被占用，已取消：{}", link.display()),

@@ -2,6 +2,8 @@ pub mod add;
 pub mod list_views;
 pub mod ls;
 pub mod perf;
+pub mod pick_list;
 pub mod rm;
 pub mod select;
+pub mod selector;
 pub mod show;

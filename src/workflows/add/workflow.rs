@@ -1,16 +1,70 @@
 use crate::adapters::db::{LinkQuery, repository};
-use crate::adapters::migrate::MigrationEvent;
 use crate::adapters::paths::runtime_paths;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
-use crate::ui::progress::migration_reporter::MigrationProgressReporter;
+use crate::ui::progress::migration_reporter::{MigrationProgressReporter, WorkflowProgressEvent};
 use crate::workflows::add::{adopt, lock_gate, paths};
 use crate::workflows::perf;
 use inquire::Text;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddLockChoice {
+    Unlock,
+    Cancel,
+}
+
+impl From<AddLockChoice> for lock_gate::LockResolutionAction {
+    fn from(value: AddLockChoice) -> Self {
+        match value {
+            AddLockChoice::Unlock => Self::UnlockAll,
+            AddLockChoice::Cancel => Self::Cancel,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddConflictChoice {
+    KeepLink,
+    KeepTarget,
+    Cancel,
+}
+
+impl From<AddConflictChoice> for adopt::ConflictChoice {
+    fn from(value: AddConflictChoice) -> Self {
+        match value {
+            AddConflictChoice::KeepLink => Self::KeepLink,
+            AddConflictChoice::KeepTarget => Self::KeepTarget,
+            AddConflictChoice::Cancel => Self::Cancel,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddSymlinkConflictChoice {
+    Retarget,
+    Cancel,
+}
+
+impl From<AddSymlinkConflictChoice> for adopt::SymlinkConflictChoice {
+    fn from(value: AddSymlinkConflictChoice) -> Self {
+        match value {
+            AddSymlinkConflictChoice::Retarget => Self::Retarget,
+            AddSymlinkConflictChoice::Cancel => Self::Cancel,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AddWorkflowOptions<'a> {
+    pub name: Option<&'a str>,
+    pub lock_choice: Option<AddLockChoice>,
+    pub conflict_choice: Option<AddConflictChoice>,
+    pub symlink_conflict_choice: Option<AddSymlinkConflictChoice>,
+}
 
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
@@ -20,7 +74,7 @@ pub fn run<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let (link, target) = paths::resolve_add_paths(conn, link, target)?;
-    execute_add(conn, &link, &target, None, writer)?;
+    execute_add(conn, &link, &target, AddWorkflowOptions::default(), writer)?;
     perf::log_perf(
         "add",
         started.elapsed(),
@@ -40,8 +94,27 @@ pub fn run_named<W: Write>(
     name: Option<&str>,
     writer: &mut W,
 ) -> Result<(), SymmError> {
+    run_with_options(
+        conn,
+        link,
+        target,
+        AddWorkflowOptions {
+            name,
+            ..Default::default()
+        },
+        writer,
+    )
+}
+
+pub fn run_with_options<W: Write>(
+    conn: &rusqlite::Connection,
+    link: &Path,
+    target: &Path,
+    options: AddWorkflowOptions<'_>,
+    writer: &mut W,
+) -> Result<(), SymmError> {
     let started = Instant::now();
-    execute_add(conn, link, target, name, writer)?;
+    execute_add(conn, link, target, options, writer)?;
     let link_norm = runtime_paths::normalize_link(link);
     let target_norm = runtime_paths::normalize_target(target)?;
     perf::log_perf(
@@ -56,16 +129,24 @@ fn execute_add<W: Write>(
     conn: &rusqlite::Connection,
     link: &Path,
     target: &Path,
-    name: Option<&str>,
+    options: AddWorkflowOptions<'_>,
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let link_norm = runtime_paths::normalize_link(link);
     let existing = repository::find_optional(conn, &LinkQuery::link_path_exact(&link_norm))?;
     let mut reporter = MigrationProgressReporter::new(writer);
-    lock_gate::ensure_link_not_locked(Path::new(&link_norm), &mut reporter)?;
-    let prep = adopt::resolve_add_conflict(Path::new(&link_norm), target, &mut |event| {
-        reporter.handle_migration_event(event)
-    })?;
+    lock_gate::ensure_link_not_locked_with_choice(
+        Path::new(&link_norm),
+        &mut reporter,
+        options.lock_choice.map(Into::into),
+    )?;
+    let prep = adopt::resolve_add_conflict_with_choices(
+        Path::new(&link_norm),
+        target,
+        &mut |event| reporter.handle_migration_event(event),
+        options.conflict_choice.map(Into::into),
+        options.symlink_conflict_choice.map(Into::into),
+    )?;
 
     let target_norm = if prep.skip_target_exists_check {
         runtime_paths::normalize_target_known_exists(target)?
@@ -78,7 +159,7 @@ fn execute_add<W: Write>(
             .map(|r| r.link_kind)
             .unwrap_or(LinkKind::Symlink)
     } else {
-        reporter.handle_migration_event(MigrationEvent::CreatingLink {
+        reporter.handle_workflow_event(WorkflowProgressEvent::CreatingLink {
             link: link_norm.clone(),
             target: target_norm.clone(),
         })?;
@@ -86,8 +167,8 @@ fn execute_add<W: Write>(
     };
 
     let default_name = existing.as_ref().map(|r| r.name.as_str()).unwrap_or("");
-    let name_input = resolve_add_name(default_name, name)?;
-    reporter.handle_migration_event(MigrationEvent::PersistingDb {
+    let name_input = resolve_add_name(default_name, options.name)?;
+    reporter.handle_workflow_event(WorkflowProgressEvent::PersistingDb {
         link: link_norm.clone(),
     })?;
     let name = repository::insert_link(conn, &name_input, &link_norm, &target_norm, link_kind)?;
@@ -96,7 +177,7 @@ fn execute_add<W: Write>(
             "名称「{name_input}」已改为「{name}」（纯数字名称会自动加前缀，避免与序号查询混淆）"
         ))?;
     }
-    reporter.handle_migration_event(MigrationEvent::Done {
+    reporter.handle_workflow_event(WorkflowProgressEvent::Done {
         link: link_norm.clone(),
     })?;
     let display_name = if name.is_empty() {

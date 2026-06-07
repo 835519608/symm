@@ -19,7 +19,7 @@ pub enum LockProbeProgress {
     },
     Querying {
         batch: usize,
-        total_batches: usize,
+        total_batches: Option<usize>,
     },
 }
 

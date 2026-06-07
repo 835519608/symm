@@ -163,7 +163,9 @@ pub fn find_one(conn: &Connection, query: &LinkQuery) -> Result<LinkRecord, Symm
         0 => Err(SymmError::NotFound {
             selector: query.describe(),
         }),
-        1 => Ok(rows.into_iter().next().expect("len checked")),
+        1 => rows.into_iter().next().ok_or_else(|| SymmError::NotFound {
+            selector: query.describe(),
+        }),
         n => Err(SymmError::InvalidArgument {
             message: format!(
                 "查询条件匹配到 {n} 条记录，请缩小范围：{}",
@@ -206,12 +208,74 @@ pub fn list_links(conn: &Connection) -> Result<Vec<LinkRecord>, SymmError> {
     find_all(conn, &LinkQuery::default(), ListOptions::default())
 }
 
+pub fn for_each_link<F>(conn: &Connection, mut f: F) -> Result<(), SymmError>
+where
+    F: FnMut(LinkRecord) -> Result<bool, SymmError>,
+{
+    let mut stmt = conn
+        .prepare(&format!("{SELECT_ROW} ORDER BY id ASC"))
+        .map_err(db_err)?;
+    let mut rows = stmt.query([]).map_err(db_err)?;
+    while let Some(row) = rows.next().map_err(db_err)? {
+        let record = map_link_row(row).map_err(db_err)?;
+        if !f(record)? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn for_each_link_paginated<F>(
+    conn: &Connection,
+    limit: Option<u32>,
+    offset: u32,
+    mut f: F,
+) -> Result<(), SymmError>
+where
+    F: FnMut(LinkRecord) -> Result<bool, SymmError>,
+{
+    let limit = limit.unwrap_or(u32::MAX);
+    let sql = format!("{SELECT_ROW} ORDER BY id ASC LIMIT ?1 OFFSET ?2");
+    let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+    let mut rows = stmt
+        .query(params![limit as i64, offset as i64])
+        .map_err(db_err)?;
+    while let Some(row) = rows.next().map_err(db_err)? {
+        let record = map_link_row(row).map_err(db_err)?;
+        if !f(record)? {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn count_links(conn: &Connection) -> Result<usize, SymmError> {
+    conn.query_row("SELECT COUNT(*) FROM links", [], |row| row.get::<_, i64>(0))
+        .map(|count| count.max(0) as usize)
+        .map_err(db_err)
+}
+
 pub fn list_links_paginated(
     conn: &Connection,
     limit: Option<u32>,
     offset: u32,
 ) -> Result<Vec<LinkRecord>, SymmError> {
     find_all(conn, &LinkQuery::default(), ListOptions { limit, offset })
+}
+
+pub fn list_index_for_id(conn: &Connection, id: i64) -> Result<Option<u32>, SymmError> {
+    let count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM links WHERE id <= ?1",
+            params![id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(db_err)?;
+    if count == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(count as u32))
+    }
 }
 
 fn map_link_row(row: &rusqlite::Row<'_>) -> Result<LinkRecord, SqlError> {

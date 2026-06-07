@@ -7,6 +7,10 @@ pub fn data_home() -> Result<PathBuf, SymmError> {
     super::home::data_home()
 }
 
+pub fn default_data_home() -> Result<PathBuf, SymmError> {
+    super::home::default_data_home()
+}
+
 pub fn db_path() -> Result<PathBuf, SymmError> {
     super::home::db_path()
 }

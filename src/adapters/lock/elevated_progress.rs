@@ -2,8 +2,8 @@
 
 use crate::adapters::platform::process::LockProbeProgress;
 use crate::domain::error::SymmError;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,28 +12,63 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 const PROGRESS_MARKER: &str = "symm-lock-progress-v1";
+const FLUSH_EVERY_EVENTS: usize = 32;
 
-pub fn append_progress(path: &Path, event: &LockProbeProgress) -> Result<(), SymmError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
-            message: format!("无法创建进度目录：{e}"),
-        })?;
+#[cfg(test)]
+fn append_progress(path: &Path, event: &LockProbeProgress) -> Result<(), SymmError> {
+    let mut appender = ProgressAppender::new(path)?;
+    appender.append(event)?;
+    appender.finish()
+}
+
+pub struct ProgressAppender {
+    writer: BufWriter<File>,
+    pending: usize,
+}
+
+impl ProgressAppender {
+    pub fn new(path: &Path) -> Result<Self, SymmError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
+                message: format!("无法创建进度目录：{e}"),
+            })?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| SymmError::IoError {
+                message: format!("无法写入占用检测进度：{e}"),
+            })?;
+        let is_empty = file.metadata().map(|m| m.len()).unwrap_or(0) == 0;
+        let mut writer = BufWriter::new(file);
+        if is_empty {
+            writeln!(writer, "{PROGRESS_MARKER}").map_err(io_err)?;
+            writer.flush().map_err(io_err)?;
+        }
+        Ok(Self { writer, pending: 0 })
     }
-    let line = serde_json::to_string(event).map_err(|e| SymmError::IoError {
-        message: format!("无法序列化占用检测进度：{e}"),
-    })?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| SymmError::IoError {
-            message: format!("无法写入占用检测进度：{e}"),
+
+    pub fn append(&mut self, event: &LockProbeProgress) -> Result<(), SymmError> {
+        let line = serde_json::to_string(event).map_err(|e| SymmError::IoError {
+            message: format!("无法序列化占用检测进度：{e}"),
         })?;
-    if file.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
-        writeln!(file, "{PROGRESS_MARKER}").map_err(io_err)?;
+        writeln!(self.writer, "{line}").map_err(io_err)?;
+        self.pending += 1;
+        if self.pending == 1 || self.pending >= FLUSH_EVERY_EVENTS {
+            self.flush()?;
+        }
+        Ok(())
     }
-    writeln!(file, "{line}").map_err(io_err)?;
-    file.flush().map_err(io_err)
+
+    pub fn finish(mut self) -> Result<(), SymmError> {
+        self.flush()
+    }
+
+    fn flush(&mut self) -> Result<(), SymmError> {
+        self.pending = 0;
+        self.writer.flush().map_err(io_err)
+    }
 }
 
 pub fn spawn_progress_relay(
@@ -44,17 +79,19 @@ pub fn spawn_progress_relay(
     thread::spawn(move || {
         let mut offset = 0u64;
         let mut header_seen = false;
+        let mut pending = String::new();
         while !stop.load(Ordering::Relaxed) {
-            relay_once(&path, &mut offset, &mut header_seen, &tx);
+            relay_once(&path, &mut offset, &mut pending, &mut header_seen, &tx);
             thread::sleep(Duration::from_millis(80));
         }
-        relay_once(&path, &mut offset, &mut header_seen, &tx);
+        relay_once(&path, &mut offset, &mut pending, &mut header_seen, &tx);
     })
 }
 
 fn relay_once(
     path: &Path,
     offset: &mut u64,
+    pending: &mut String,
     header_seen: &mut bool,
     tx: &Sender<LockProbeProgress>,
 ) {
@@ -62,16 +99,32 @@ fn relay_once(
         return;
     };
     let len = meta.len();
+    if len < *offset {
+        *offset = 0;
+        pending.clear();
+        *header_seen = false;
+    }
     if len <= *offset {
         return;
     }
-    let Ok(bytes) = fs::read(path) else {
+    let Ok(mut file) = File::open(path) else {
         return;
     };
-    let slice = &bytes[*offset as usize..];
+    if file.seek(SeekFrom::Start(*offset)).is_err() {
+        return;
+    }
+    let mut text = String::new();
+    if file.read_to_string(&mut text).is_err() {
+        return;
+    };
     *offset = len;
-    let text = String::from_utf8_lossy(slice);
-    for line in text.lines() {
+    pending.push_str(&text);
+    let Some(consume_to) = pending.rfind('\n').map(|pos| pos + 1) else {
+        return;
+    };
+    let tail = pending[consume_to..].to_string();
+    let complete = &pending[..consume_to];
+    for line in complete.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -86,6 +139,7 @@ fn relay_once(
             let _ = tx.send(event);
         }
     }
+    *pending = tail;
 }
 
 fn io_err(e: std::io::Error) -> SymmError {
@@ -104,7 +158,7 @@ mod tests {
         let file = NamedTempFile::new().expect("temp");
         let event = LockProbeProgress::Querying {
             batch: 2,
-            total_batches: 5,
+            total_batches: Some(5),
         };
         append_progress(file.path(), &event).expect("write");
         let content = fs::read_to_string(file.path()).expect("read");
@@ -114,7 +168,7 @@ mod tests {
             parsed,
             LockProbeProgress::Querying {
                 batch: 2,
-                total_batches: 5
+                total_batches: Some(5)
             }
         ));
     }

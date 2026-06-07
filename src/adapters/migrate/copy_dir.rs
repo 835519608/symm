@@ -1,9 +1,14 @@
-use super::{MigrationEvent, rebase};
+use super::{
+    MigrationEvent,
+    copy_file::{COPY_BUFFER_SIZE, copy_permissions},
+    rebase,
+};
 use crate::adapters::errors::io::ioe;
 use crate::domain::error::SymmError;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use walkdir::WalkDir;
 
 pub fn copy_dir_tree_with_progress<F>(
@@ -17,6 +22,7 @@ where
     let mut copied_bytes: u64 = 0;
     let mut files_copied: u64 = 0;
     let mut deferred_symlinks: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut buf = vec![0u8; COPY_BUFFER_SIZE];
 
     for entry in WalkDir::new(src).follow_links(false) {
         let entry = entry.map_err(|e| SymmError::IoError {
@@ -45,15 +51,23 @@ where
 
         if file_type.is_file() {
             ensure_parent_dir(&dst_path)?;
-            copied_bytes =
-                copy_file_with_progress(src_path, &dst_path, copied_bytes, files_copied, reporter)?;
+            let current_item = src_path
+                .file_name()
+                .map(|s| Arc::<str>::from(s.to_string_lossy()));
+            copied_bytes = copy_file_with_progress(
+                src_path,
+                &dst_path,
+                copied_bytes,
+                files_copied,
+                current_item.clone(),
+                &mut buf,
+                reporter,
+            )?;
             files_copied += 1;
             reporter(MigrationEvent::Copying {
                 copied_bytes,
                 files_copied,
-                current_item: src_path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string()),
+                current_item,
             })?;
         }
     }
@@ -67,7 +81,7 @@ where
             files_copied,
             current_item: dst_link
                 .file_name()
-                .map(|s| s.to_string_lossy().to_string()),
+                .map(|s| Arc::<str>::from(s.to_string_lossy())),
         })?;
     }
 
@@ -86,6 +100,8 @@ fn copy_file_with_progress<F>(
     dst: &Path,
     mut copied_bytes: u64,
     files_copied: u64,
+    current_item: Option<Arc<str>>,
+    buf: &mut [u8],
     reporter: &mut F,
 ) -> Result<u64, SymmError>
 where
@@ -94,11 +110,8 @@ where
     let mut reader = fs::File::open(src).map_err(ioe)?;
     let mut writer = fs::File::create(dst).map_err(ioe)?;
 
-    let current_item = src.file_name().map(|s| s.to_string_lossy().to_string());
-
-    let mut buf = vec![0u8; 8 * 1024 * 1024];
     loop {
-        let n = reader.read(&mut buf).map_err(ioe)?;
+        let n = reader.read(buf).map_err(ioe)?;
         if n == 0 {
             break;
         }
@@ -111,6 +124,7 @@ where
         })?;
     }
     writer.flush().map_err(ioe)?;
+    copy_permissions(src, dst)?;
     Ok(copied_bytes)
 }
 

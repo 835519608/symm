@@ -1,9 +1,9 @@
 //! `add` 无参或缺参时：可选从库中选模板，再交互填写链接 / 目标路径。
 
-use crate::adapters::db::pick_list;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkRecord;
 use crate::ui::interaction::pick_record;
+use crate::workflows::pick_list;
 use inquire::Text;
 use std::path::{Path, PathBuf};
 
@@ -36,10 +36,12 @@ pub fn resolve_add_paths(
         target = Some(prompt_path("真实文件/目录在哪（目标路径）", default)?);
     }
 
-    Ok((
-        link.expect("link resolved"),
-        target.expect("target resolved"),
-    ))
+    match (link, target) {
+        (Some(link), Some(target)) => Ok((link, target)),
+        _ => Err(SymmError::InvalidArgument {
+            message: "链接路径和目标路径不能为空".to_string(),
+        }),
+    }
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {
@@ -53,6 +55,9 @@ fn env_path(key: &str) -> Option<PathBuf> {
 fn pick_optional_template(conn: &rusqlite::Connection) -> Result<Option<LinkRecord>, SymmError> {
     let entries = pick_list::list_entries(conn)?;
     if entries.is_empty() {
+        return Ok(None);
+    }
+    if entries.is_truncated() {
         return Ok(None);
     }
 

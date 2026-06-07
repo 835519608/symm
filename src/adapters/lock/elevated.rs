@@ -1,7 +1,7 @@
 //! 查锁/杀进程：通过提权子进程执行（`runas`）；调用方已在 `lock::mod` 完成分流。
 
 use super::ProcInfo;
-use super::elevated_progress::{append_progress, spawn_progress_relay};
+use super::elevated_progress::{ProgressAppender, spawn_progress_relay};
 use super::snapshot::{read_snapshot, write_snapshot};
 use crate::adapters::platform::privilege;
 use crate::adapters::platform::process::{LockProbeProgress, PlatformProcess, platform};
@@ -119,12 +119,17 @@ pub fn elevated_list_locks_entry(
     output: &Path,
     progress_path: Option<&Path>,
 ) -> Result<(), SymmError> {
+    let mut progress_appender = progress_path.map(ProgressAppender::new).transpose()?;
     let mut report = |event: LockProbeProgress| {
-        if let Some(progress_path) = progress_path {
-            let _ = append_progress(progress_path, &event);
+        if let Some(appender) = progress_appender.as_mut() {
+            let _ = appender.append(&event);
         }
     };
-    let procs = platform().list_locking_processes_with_progress(path, &mut report)?;
+    let result = platform().list_locking_processes_with_progress(path, &mut report);
+    if let Some(appender) = progress_appender {
+        appender.finish()?;
+    }
+    let procs = result?;
     write_snapshot(output, &procs)
 }
 

@@ -1,10 +1,14 @@
 use super::copy_dir;
-use super::path::{MigrationEvent, fs_extra_error};
+use super::path::MigrationEvent;
+use crate::adapters::errors::io::ioe;
 use crate::adapters::paths::remove;
 use crate::domain::error::SymmError;
-use fs_extra::file;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::Arc;
+
+pub(crate) const COPY_BUFFER_SIZE: usize = 1024 * 1024;
 
 pub fn copy_path_with_progress<F>(src: &Path, dst: &Path, reporter: &mut F) -> Result<(), SymmError>
 where
@@ -43,16 +47,48 @@ where
         })?;
     }
 
-    let options = file::CopyOptions::new();
-    if let Err(err) = file::copy_with_progress(src, dst, &options, |info| {
-        let _ = reporter(MigrationEvent::Copying {
-            copied_bytes: info.copied_bytes,
-            files_copied: 1,
-            current_item: src.file_name().map(|s| s.to_string_lossy().to_string()),
-        });
-    }) {
+    let current_item = src
+        .file_name()
+        .map(|s| Arc::<str>::from(s.to_string_lossy()));
+    let mut buf = vec![0u8; COPY_BUFFER_SIZE];
+    if let Err(err) = copy_file_buffered(src, dst, current_item, &mut buf, reporter) {
         let _ = remove::remove_any(dst);
-        return Err(fs_extra_error(err));
+        return Err(err);
     }
     Ok(())
+}
+
+fn copy_file_buffered<F>(
+    src: &Path,
+    dst: &Path,
+    current_item: Option<Arc<str>>,
+    buf: &mut [u8],
+    reporter: &mut F,
+) -> Result<(), SymmError>
+where
+    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+{
+    let mut reader = fs::File::open(src).map_err(ioe)?;
+    let mut writer = fs::File::create(dst).map_err(ioe)?;
+    let mut copied_bytes = 0u64;
+    loop {
+        let n = reader.read(buf).map_err(ioe)?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n]).map_err(ioe)?;
+        copied_bytes = copied_bytes.saturating_add(n as u64);
+        reporter(MigrationEvent::Copying {
+            copied_bytes,
+            files_copied: 1,
+            current_item: current_item.clone(),
+        })?;
+    }
+    writer.flush().map_err(ioe)?;
+    copy_permissions(src, dst)
+}
+
+pub(crate) fn copy_permissions(src: &Path, dst: &Path) -> Result<(), SymmError> {
+    let permissions = fs::metadata(src).map_err(ioe)?.permissions();
+    fs::set_permissions(dst, permissions).map_err(ioe)
 }
