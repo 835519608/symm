@@ -69,11 +69,70 @@ jobs:
           prerelease: false
           make_latest: true
 
-  build-and-release-linux:
-    name: 发布产物 (ubuntu-latest)
+  build-and-release-windows-extra:
+    name: 发布产物 (windows-${{ matrix.arch }})
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: windows-11-arm
+            build_target: ""
+            portable_name: symm-portable-windows-arm64.zip
+            checksum_name: SHA256SUMS-windows-arm64
+          - arch: x86
+            runner: windows-latest
+            build_target: i686-pc-windows-msvc
+            portable_name: symm-portable-windows-x86.zip
+            checksum_name: SHA256SUMS-windows-x86
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: Windows 便携包
+        uses: ./.github/actions/package-windows
+        with:
+          release_version: ${{ needs.prepare-release.outputs.release_version }}
+          release_semver: ${{ needs.prepare-release.outputs.release_semver }}
+          build_target: ${{ matrix.build_target }}
+          portable_name: ${{ matrix.portable_name }}
+          checksum_name: ${{ matrix.checksum_name }}
+          build_installer: "false"
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          body: ${{ needs.prepare-release.outputs.release_body }}
+          files: |
+            ${{ matrix.portable_name }}
+            ${{ matrix.checksum_name }}
+          prerelease: false
+          make_latest: true
+
+  build-and-release-linux:
+    name: 发布产物 (linux-${{ matrix.arch }})
+    needs: prepare-release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+            archive_name: symm-portable-linux-x64.zip
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            archive_name: symm-portable-linux-arm64.zip
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -87,22 +146,32 @@ jobs:
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
-          archive_name: symm-portable-linux-x64.zip
+          archive_name: ${{ matrix.archive_name }}
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
       - name: 上传到 GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ needs.prepare-release.outputs.release_body }}
-          files: symm-portable-linux-x64.zip
+          files: ${{ matrix.archive_name }}
           prerelease: false
           make_latest: true
 
   build-and-release-macos:
-    name: 发布产物 (macos-15-intel)
+    name: 发布产物 (macos-${{ matrix.arch }})
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+            archive_name: symm-portable-macos-x64.zip
+          - arch: arm64
+            runner: macos-15
+            archive_name: symm-portable-macos-arm64.zip
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -116,13 +185,13 @@ jobs:
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
-          archive_name: symm-portable-macos-x64.zip
+          archive_name: ${{ matrix.archive_name }}
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
       - name: 上传到 GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ needs.prepare-release.outputs.release_body }}
-          files: symm-portable-macos-x64.zip
+          files: ${{ matrix.archive_name }}
           prerelease: false
           make_latest: true

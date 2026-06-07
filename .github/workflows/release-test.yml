@@ -4,10 +4,10 @@
 #   - 推送测试 tag（见下）或手动 workflow_dispatch（勾选平台）
 #
 # Tag 命名：vX.Y.Z-test[-<platforms>]（test 后无数字；版本只在 X.Y.Z）
-#   v0.1.0-test                 → 三端
-#   v0.1.0-test-windows         → 仅 Windows
-#   v0.1.0-test-linux           → 仅 Linux
-#   v0.1.0-test-macos           → 仅 macOS
+#   v0.1.0-test                 → 全平台全架构
+#   v0.1.0-test-windows         → 仅 Windows 全架构
+#   v0.1.0-test-linux           → 仅 Linux 全架构
+#   v0.1.0-test-macos           → 仅 macOS 全架构
 #   v0.1.0-test-windows-linux   → 多平台组合（别名 win / mac）
 #
 # 版本号：小改动 Z+1（0.1.0→0.1.1）；大变动 Y+1 且 Z 归零（0.1.2→0.2.0）
@@ -176,11 +176,74 @@ jobs:
           make_latest: false
           generate_release_notes: false
 
+  build-and-release-windows-extra:
+    name: 测试包 (windows-${{ matrix.arch }})
+    needs: plan
+    if: needs.plan.outputs.build_windows == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: windows-11-arm
+            build_target: ""
+            portable_name: symm-portable-windows-arm64.zip
+            checksum_name: SHA256SUMS-windows-arm64
+          - arch: x86
+            runner: windows-latest
+            build_target: i686-pc-windows-msvc
+            portable_name: symm-portable-windows-x86.zip
+            checksum_name: SHA256SUMS-windows-x86
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: Windows 便携包
+        uses: ./.github/actions/package-windows
+        with:
+          release_version: ${{ needs.plan.outputs.release_version }}
+          release_semver: ${{ needs.plan.outputs.release_semver }}
+          build_target: ${{ matrix.build_target }}
+          portable_name: ${{ matrix.portable_name }}
+          checksum_name: ${{ matrix.checksum_name }}
+          build_installer: "false"
+
+      - name: 上传到 GitHub Release（测试）
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.plan.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          name: Test ${{ needs.plan.outputs.release_tag }}
+          body: ${{ needs.plan.outputs.release_body }}
+          files: |
+            ${{ matrix.portable_name }}
+            ${{ matrix.checksum_name }}
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+
   build-and-release-linux:
-    name: 测试包 (ubuntu-latest)
+    name: 测试包 (linux-${{ matrix.arch }})
     needs: plan
     if: needs.plan.outputs.build_linux == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+            archive_name: symm-portable-linux-x64.zip
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            archive_name: symm-portable-linux-arm64.zip
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -194,7 +257,7 @@ jobs:
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
-          archive_name: symm-portable-linux-x64.zip
+          archive_name: ${{ matrix.archive_name }}
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传到 GitHub Release（测试）
@@ -204,16 +267,26 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Test ${{ needs.plan.outputs.release_tag }}
           body: ${{ needs.plan.outputs.release_body }}
-          files: symm-portable-linux-x64.zip
+          files: ${{ matrix.archive_name }}
           prerelease: true
           make_latest: false
           generate_release_notes: false
 
   build-and-release-macos:
-    name: 测试包 (macos-15-intel)
+    name: 测试包 (macos-${{ matrix.arch }})
     needs: plan
     if: needs.plan.outputs.build_macos == 'true'
-    runs-on: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+            archive_name: symm-portable-macos-x64.zip
+          - arch: arm64
+            runner: macos-15
+            archive_name: symm-portable-macos-arm64.zip
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -227,7 +300,7 @@ jobs:
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
-          archive_name: symm-portable-macos-x64.zip
+          archive_name: ${{ matrix.archive_name }}
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传到 GitHub Release（测试）
@@ -237,7 +310,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Test ${{ needs.plan.outputs.release_tag }}
           body: ${{ needs.plan.outputs.release_body }}
-          files: symm-portable-macos-x64.zip
+          files: ${{ matrix.archive_name }}
           prerelease: true
           make_latest: false
           generate_release_notes: false

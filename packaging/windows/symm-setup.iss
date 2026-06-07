@@ -6,10 +6,14 @@
 #define AppVersion "0.1.0"
 #endif
 
+#ifndef BuildDir
 #define BuildDir "..\..\target\release"
+#endif
 #define MyAppName "symm"
 #define MyAppPublisher "symm"
+#ifndef MyOutputBase
 #define MyOutputBase "symm-setup-windows-x64"
+#endif
 
 [Setup]
 AppId={{7C9E2A41-5B8D-4F1E-9C3A-2D6E8F0B1A4C}

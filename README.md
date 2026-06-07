@@ -370,32 +370,46 @@ ui  →  domain（及 migrate 进度事件类型）；交互选记录由 workflo
 
 ## 打包与发布
 
-各平台：`cargo build --release --features gui --bin symm --bin symm-cli`，产物在 `target/release/`。
+本机原生构建：`cargo build --release --features gui --bin symm --bin symm-cli`，产物在 `target/release/`。
 
 可选安装：`install -m 755 target/release/symm-cli /usr/local/bin/symm-cli`（或 `~/.local/bin`）。
 
 交叉编译示例：
 
 ```bash
-rustup target add x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc
+rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc i686-pc-windows-msvc
 cargo build --release --features gui --bin symm --bin symm-cli --target <triple>
 ```
+
+发布产物矩阵：
+
+| 平台 | 架构 | 产物 |
+|------|------|------|
+| Windows | x64 | `symm-setup-windows-x64.exe`、`symm-portable-windows-x64.zip`、`SHA256SUMS` |
+| Windows | arm64 | `symm-portable-windows-arm64.zip`、`SHA256SUMS-windows-arm64` |
+| Windows | x86 | `symm-portable-windows-x86.zip`、`SHA256SUMS-windows-x86` |
+| Linux | x64 | `symm-portable-linux-x64.zip` |
+| Linux | arm64 | `symm-portable-linux-arm64.zip` |
+| macOS | x64 | `symm-portable-macos-x64.zip` |
+| macOS | arm64 | `symm-portable-macos-arm64.zip` |
+
+Windows 安装包目前只为 x64 构建；arm64 / x86 先提供便携 zip。
 
 ## GitHub Actions
 
 | Workflow | 触发 | 说明 |
 |----------|------|------|
-| **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | ubuntu / windows / macos：`fmt` → `clippy -D warnings` → `test` |
-| **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，三平台，设为 Latest |
+| **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | 发布架构矩阵：`fmt` → `clippy -D warnings` → `test` |
+| **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，全平台全架构，设为 Latest |
 | **Release Test** | 推送 `vX.Y.Z-test[-平台]` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定平台（见下） |
 | **Cleanup Test Releases** | 每日北京时间 01:00（17:00 UTC）或手动触发 | 删除旧测试 Pre-release，**仅保留发布时间最新的一条** `*-test*` |
 
-**Release Test 平台与版本**（正式 `release.yml` 仍固定三端全打）：
+**Release Test 平台与版本**（正式 `release.yml` 固定全平台全架构）：
 
-- Tag：`vX.Y.Z-test`（三端）、`vX.Y.Z-test-windows` / `-test-linux` / `-test-macos`，或多平台如 `vX.Y.Z-test-windows-linux`（`win` / `mac` 别名）。**勿**在 `test` 后加数字（不用 `v0.1.0-test15`）。
+- Tag：`vX.Y.Z-test`（全平台全架构）、`vX.Y.Z-test-windows` / `-test-linux` / `-test-macos`，或多平台如 `vX.Y.Z-test-windows-linux`（`win` / `mac` 别名）。**勿**在 `test` 后加数字（不用 `v0.1.0-test15`）。
 - 版本号只改 `X.Y.Z`：小改动 `Z+1`（`0.1.0→0.1.1`）；大变动 `Y+1` 且 `Z=0`（`0.1.2→0.2.0`）。
 - 手动：`gh workflow run release-test.yml -f build_windows=true -f build_linux=false -f build_macos=false`
 
-**打包与 CI**：`release*.yml` 只做发布构建（`cargo build --release --features gui --bin symm --bin symm-cli`），**不重复**跑测试；会先查当前 commit 上 `ci.yml` 三端矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
+**打包与 CI**：`release*.yml` 只做发布构建（`cargo build --release --features gui --bin symm --bin symm-cli`），**不重复**跑测试；会先查当前 commit 上 `ci.yml` 发布架构矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
 
 **Release 说明**：自动使用 **tag 所指向 commit 的提交说明**（`git log -1`）作为 GitHub Release 正文。打 tag 前把该 commit 的 message 写好即可；跨多 commit 时可在打 tag 前 `git commit --amend` 汇总，或 squash 后再 tag。手动触发测试包时可用 `release_notes` 覆盖。
