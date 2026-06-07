@@ -2,14 +2,9 @@ use crate::domain::gui_settings::{ColorScheme, FONT_SIZE_PT_DEFAULT, GuiSettings
 use crate::domain::model::{LinkKind, LinkView};
 use crate::gui::i18n::GuiTexts;
 use crate::workflows::rm::workflow::RemoveMode;
-use std::collections::HashSet;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MainView {
-    #[default]
-    Detail,
-    Add,
-}
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::time::Instant;
 
 pub use crate::gui::theme::ThemePreference;
 
@@ -89,8 +84,10 @@ pub struct AppState {
     pub search: String,
     pub selected_id: Option<i64>,
     pub checked_ids: HashSet<i64>,
-    pub main_view: MainView,
     pub sidebar_width: f32,
+    pub show_add_dialog: bool,
+    /// 侧栏「已刷新」提示截止时间（与统计行同排右侧）。
+    pub refresh_notice_until: Option<Instant>,
     pub toast: Option<String>,
     pub db_error: Option<String>,
     pub theme: ThemePreference,
@@ -102,58 +99,147 @@ pub struct AppState {
     pub settings_draft: Option<SettingsDraft>,
     pub add_form: AddForm,
     pub rm_dialog: Option<RmDialog>,
+    pub sidebar_filter: SidebarFilterCache,
     pub busy: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct SidebarFilterCache {
+    search: String,
+    indices: Vec<usize>,
+    valid: bool,
+}
+
+impl SidebarFilterCache {
+    pub fn clear(&mut self) {
+        self.search.clear();
+        self.indices.clear();
+        self.valid = false;
+    }
+
+    pub fn refresh(&mut self, snapshot: &LinkSnapshot, search: &str) -> usize {
+        if self.valid && self.search == search {
+            return self.indices.len();
+        }
+        self.search.clear();
+        self.search.push_str(search);
+        snapshot.fill_filtered_indices(search, &mut self.indices);
+        self.valid = true;
+        self.indices.len()
+    }
+
+    pub fn index_at(&self, row: usize) -> Option<usize> {
+        self.indices.get(row).copied()
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct LinkSnapshot {
     pub views: Vec<LinkView>,
+    display_names: Vec<String>,
+    display_names_lower: Vec<String>,
+    name_lower: Vec<String>,
+    sorted_indices: Vec<usize>,
+    id_to_index: HashMap<i64, usize>,
+    kind_counts: (usize, usize),
 }
 
 impl LinkSnapshot {
+    pub fn new(views: Vec<LinkView>) -> Self {
+        let mut display_names = Vec::with_capacity(views.len());
+        let mut display_names_lower = Vec::with_capacity(views.len());
+        let mut name_lower = Vec::with_capacity(views.len());
+        let mut id_to_index = HashMap::with_capacity(views.len());
+        let mut kind_counts = (0usize, 0usize);
+
+        for (i, view) in views.iter().enumerate() {
+            let display_name = display_name_for(view);
+            display_names_lower.push(display_name.to_lowercase());
+            name_lower.push(view.name.to_lowercase());
+            display_names.push(display_name);
+            id_to_index.insert(view.id, i);
+            match view.link_kind {
+                LinkKind::Symlink => kind_counts.0 += 1,
+                LinkKind::Junction => kind_counts.1 += 1,
+            }
+        }
+
+        let mut sorted_indices: Vec<usize> = (0..views.len()).collect();
+        sorted_indices.sort_by(|&a, &b| display_names[a].cmp(&display_names[b]));
+
+        Self {
+            views,
+            display_names,
+            display_names_lower,
+            name_lower,
+            sorted_indices,
+            id_to_index,
+            kind_counts,
+        }
+    }
+
     pub fn total(&self) -> usize {
         self.views.len()
     }
 
     /// (软链条数, 联接条数)
     pub fn kind_counts(&self) -> (usize, usize) {
-        let mut symlink = 0usize;
-        let mut junction = 0usize;
-        for v in &self.views {
-            match v.link_kind {
-                LinkKind::Symlink => symlink += 1,
-                LinkKind::Junction => junction += 1,
-            }
-        }
-        (symlink, junction)
+        self.kind_counts
     }
 
-    pub fn filtered_by_name<'a>(&'a self, search: &str) -> Vec<&'a LinkView> {
-        let q = search.trim().to_lowercase();
-        let mut out: Vec<&LinkView> = self
-            .views
-            .iter()
-            .filter(|v| {
-                if q.is_empty() {
-                    return true;
-                }
-                v.display_name().to_lowercase().contains(&q)
-                    || (!v.name.is_empty() && v.name.to_lowercase().contains(&q))
-            })
-            .collect();
-        out.sort_by_key(|v| v.display_name());
-        out
+    pub fn fill_filtered_indices(&self, search: &str, out: &mut Vec<usize>) {
+        out.clear();
+        let q = search.trim();
+        if q.is_empty() {
+            out.extend_from_slice(&self.sorted_indices);
+            return;
+        }
+        let q = q.to_lowercase();
+        out.extend(self.sorted_indices.iter().copied().filter(|&i| {
+            self.display_names_lower[i].contains(&q)
+                || (!self.name_lower[i].is_empty() && self.name_lower[i].contains(&q))
+        }));
+    }
+
+    pub fn view_at(&self, index: usize) -> Option<&LinkView> {
+        self.views.get(index)
+    }
+
+    pub fn display_name_at(&self, index: usize) -> Option<&str> {
+        self.display_names.get(index).map(String::as_str)
     }
 
     pub fn selected_view(&self, id: Option<i64>) -> Option<&LinkView> {
         let id = id?;
-        self.views.iter().find(|v| v.id == id)
+        self.view_by_id(id)
     }
+
+    pub fn view_by_id(&self, id: i64) -> Option<&LinkView> {
+        self.id_to_index
+            .get(&id)
+            .and_then(|&index| self.views.get(index))
+    }
+}
+
+fn display_name_for(view: &LinkView) -> String {
+    if !view.name.is_empty() {
+        return view.name.clone();
+    }
+    Path::new(&view.link_path)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| view.link_path.clone())
 }
 
 impl AppState {
     pub fn texts(&self) -> GuiTexts {
         GuiTexts::new(self.locale)
+    }
+
+    pub fn refresh_notice_active(&self) -> bool {
+        self.refresh_notice_until
+            .is_some_and(|deadline| Instant::now() < deadline)
     }
 }
 
@@ -163,8 +249,9 @@ impl Default for AppState {
             search: String::new(),
             selected_id: None,
             checked_ids: HashSet::new(),
-            main_view: MainView::Detail,
             sidebar_width: crate::gui::theme::SIDEBAR_DEFAULT_WIDTH,
+            show_add_dialog: false,
+            refresh_notice_until: None,
             toast: None,
             db_error: None,
             theme: ThemePreference::System,
@@ -175,6 +262,7 @@ impl Default for AppState {
             settings_draft: None,
             add_form: AddForm::default(),
             rm_dialog: None,
+            sidebar_filter: SidebarFilterCache::default(),
             busy: false,
         }
     }

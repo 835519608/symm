@@ -108,8 +108,8 @@ impl GuiTexts {
 
     pub fn settings_data_dir_hint(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "留空使用默认可执行文件旁 data/",
-            Locale::En => "Leave empty for default data/ next to executable",
+            Locale::ZhCn => "默认 data/（可执行文件旁）",
+            Locale::En => "Default: data/ next to executable",
         }
     }
 
@@ -252,6 +252,20 @@ impl GuiTexts {
         }
     }
 
+    pub fn search_label(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "搜索链接",
+            Locale::En => "Search links",
+        }
+    }
+
+    pub fn select_link_label(&self, name: &str) -> String {
+        match self.locale {
+            Locale::ZhCn => format!("选择 {name}"),
+            Locale::En => format!("Select {name}"),
+        }
+    }
+
     pub fn no_links(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "暂无链接",
@@ -263,6 +277,13 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "无匹配",
             Locale::En => "No matches",
+        }
+    }
+
+    pub fn no_selection(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "请选择左侧链接",
+            Locale::En => "Select a link",
         }
     }
 
@@ -278,13 +299,6 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "添加链接",
             Locale::En => "Add link",
-        }
-    }
-
-    pub fn add_subtitle(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "与 CLI `symm add` 相同",
-            Locale::En => "Same as CLI `symm add`",
         }
     }
 
@@ -325,8 +339,22 @@ impl GuiTexts {
 
     pub fn browse_tip(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "选择路径",
-            Locale::En => "Pick a path",
+            Locale::ZhCn => "选择文件或文件夹",
+            Locale::En => "Pick a file or folder",
+        }
+    }
+
+    pub fn browse_pick_file(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "选择文件",
+            Locale::En => "Choose file",
+        }
+    }
+
+    pub fn browse_pick_folder(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "选择文件夹",
+            Locale::En => "Choose folder",
         }
     }
 
@@ -401,13 +429,6 @@ impl GuiTexts {
     }
 
     // --- 详情 ---
-    pub fn select_link_hint(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "在左侧选择一条链接",
-            Locale::En => "Select a link on the left",
-        }
-    }
-
     pub fn field_name(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "名称",
@@ -452,6 +473,13 @@ impl GuiTexts {
 
     pub fn field_id(&self) -> &'static str {
         "ID"
+    }
+
+    pub fn copy_field_tip(&self, label: &str) -> String {
+        match self.locale {
+            Locale::ZhCn => format!("复制{label}"),
+            Locale::En => format!("Copy {label}"),
+        }
     }
 
     // --- 删除对话框 ---
@@ -508,6 +536,13 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "处理中…",
             Locale::En => "Working…",
+        }
+    }
+
+    pub fn task_failed(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "后台任务异常结束",
+            Locale::En => "Background task ended unexpectedly",
         }
     }
 

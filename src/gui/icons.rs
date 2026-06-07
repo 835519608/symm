@@ -19,6 +19,7 @@ pub enum Icon {
     TextAa,
     Gear,
     Info,
+    Copy,
 }
 
 impl Icon {
@@ -39,6 +40,7 @@ impl Icon {
             Icon::TextAa => regular::TEXT_AA,
             Icon::Gear => regular::GEAR,
             Icon::Info => regular::INFO,
+            Icon::Copy => regular::COPY,
         }
     }
 }

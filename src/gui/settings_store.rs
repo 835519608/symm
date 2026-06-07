@@ -3,6 +3,7 @@ use crate::domain::error::SymmError;
 use crate::domain::gui_settings::{GuiSettings, data_dir_from_settings};
 use crate::gui::env::sync_symm_home;
 use crate::gui::state::AppState;
+use std::path::PathBuf;
 pub fn load_into(state: &mut AppState) -> GuiSettings {
     let settings = settings_store::load();
     apply(state, &settings);
@@ -34,6 +35,20 @@ pub fn apply(state: &mut AppState, settings: &GuiSettings) {
     state.data_dir = data_dir_from_settings(settings);
 }
 
-pub fn save_state(state: &AppState) -> Result<(), SymmError> {
-    settings_store::save(&from_state(state))
+pub fn save(settings: &GuiSettings) -> Result<(), SymmError> {
+    settings_store::save(settings)
+}
+
+pub fn apply_data_dir(data_dir: &str) -> Result<PathBuf, String> {
+    let trimmed = data_dir.trim();
+    if trimmed.is_empty() {
+        let data_home = crate::adapters::paths::runtime_paths::default_data_home()
+            .map_err(|e| e.to_string())?;
+        sync_symm_home("");
+        return Ok(data_home);
+    }
+    let path = PathBuf::from(trimmed);
+    crate::gui::env::ensure_data_dir(&path).map_err(|e| e.to_string())?;
+    sync_symm_home(trimmed);
+    Ok(path)
 }

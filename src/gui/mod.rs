@@ -9,6 +9,7 @@ mod icon;
 mod icons;
 mod panels;
 mod settings_store;
+mod shell;
 mod state;
 mod theme;
 mod util;

@@ -1,9 +1,9 @@
 use crate::gui::fonts::icon_font_id;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, typography_from_ui};
-use egui::{Button, Response, RichText, Ui, Vec2};
+use egui::{Button, Response, RichText, Ui, Vec2, WidgetInfo, WidgetType};
 
-const BTN_MIN_W: f32 = 72.0;
+const BTN_MIN_W: f32 = 96.0;
 
 fn widget_text(icon: Option<Icon>, label: &str, typo: &theme::UiTypography) -> RichText {
     let caption = match icon {
@@ -19,15 +19,15 @@ fn widget_text(icon: Option<Icon>, label: &str, typo: &theme::UiTypography) -> R
     RichText::new(caption).font(font_id)
 }
 
-fn default_min_size(typo: &theme::UiTypography, icon: Option<Icon>, label: &str) -> Vec2 {
+pub(crate) fn default_min_size(
+    typo: &theme::UiTypography,
+    icon: Option<Icon>,
+    label: &str,
+) -> Vec2 {
     if label.is_empty() && icon.is_some() {
         return typo.icon_btn;
     }
-    let text_len = label.len().max(4) as f32;
-    Vec2::new(
-        (text_len * 7.5 * typo.scale + 36.0 * typo.scale).max(BTN_MIN_W * typo.scale),
-        typo.btn_h,
-    )
+    Vec2::new(BTN_MIN_W * typo.scale, typo.btn_h)
 }
 
 /// 链式配置按钮（egui [`Button`] + 主题 `Visuals`）。
@@ -36,6 +36,7 @@ pub struct UiButton<'a> {
     icon: Option<Icon>,
     label: &'a str,
     tip: &'a str,
+    enabled: bool,
 }
 
 impl<'a> UiButton<'a> {
@@ -45,6 +46,7 @@ impl<'a> UiButton<'a> {
             icon: None,
             label: "",
             tip: "",
+            enabled: true,
         }
     }
 
@@ -63,13 +65,55 @@ impl<'a> UiButton<'a> {
         self
     }
 
-    pub fn show(self) -> Response {
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    fn button(self) -> (Button<'a>, &'a mut Ui, &'a str, Option<&'a str>) {
         let typo = typography_from_ui(self.ui);
         let text = widget_text(self.icon, self.label, &typo);
         let size = default_min_size(&typo, self.icon, self.label);
-        let mut resp = self.ui.add(Button::new(text).min_size(size));
-        if !self.tip.is_empty() {
-            resp = resp.on_hover_text(self.tip);
+        let semantic_label = if self.label.is_empty() && self.icon.is_some() && !self.tip.is_empty()
+        {
+            Some(self.tip)
+        } else {
+            None
+        };
+        (
+            Button::new(text).min_size(size),
+            self.ui,
+            self.tip,
+            semantic_label,
+        )
+    }
+
+    pub fn show(self) -> Response {
+        let enabled = self.enabled;
+        let (button, ui, tip, semantic_label) = self.button();
+        let semantic_enabled = enabled && ui.is_enabled();
+        let mut resp = ui.add_enabled(enabled, button);
+        if let Some(label) = semantic_label {
+            resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, semantic_enabled, label));
+        }
+        if !tip.is_empty() {
+            resp = resp.on_hover_text(tip);
+        }
+        resp
+    }
+
+    pub fn show_sized(self, size: Vec2) -> Response {
+        let enabled = self.enabled;
+        let (button, ui, tip, semantic_label) = self.button();
+        let semantic_enabled = enabled && ui.is_enabled();
+        let mut resp = ui
+            .add_enabled_ui(enabled, |ui| ui.add_sized(size, button.min_size(size)))
+            .inner;
+        if let Some(label) = semantic_label {
+            resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, semantic_enabled, label));
+        }
+        if !tip.is_empty() {
+            resp = resp.on_hover_text(tip);
         }
         resp
     }
@@ -77,4 +121,21 @@ impl<'a> UiButton<'a> {
 
 pub fn button(ui: &mut Ui) -> UiButton<'_> {
     UiButton::new(ui)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::gui_settings::FONT_SIZE_PT_DEFAULT;
+
+    #[test]
+    fn chinese_text_button_has_room_for_label_and_padding() {
+        let typo = theme::UiTypography::from_body_pt(FONT_SIZE_PT_DEFAULT);
+        let size = default_min_size(&typo, None, "关闭");
+
+        assert!(
+            size.x >= 96.0 * typo.scale,
+            "short CJK button labels still need enough horizontal padding, got {size:?}"
+        );
+    }
 }

@@ -2,7 +2,9 @@ use crate::domain::model::LinkView;
 use crate::gui::i18n::GuiTexts;
 use crate::gui::state::{AppState, RmDialog};
 use crate::gui::theme::{self, rich_section};
-use crate::gui::widgets::{ModalOptions, ModalSize, button, button_row, show_modal};
+use crate::gui::widgets::{
+    ModalOptions, ModalSection, ModalSize, button, right_aligned, show_modal,
+};
 use crate::workflows::rm::workflow::RemoveMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +21,7 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
 
     let t = state.texts();
     let p = theme::resolve(state.theme, state.color_scheme);
+    let enabled = !state.busy;
     let mut open = true;
     let mut action = RmDialogAction::None;
     let mut mode = dialog.mode;
@@ -28,41 +31,46 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
         ctx,
         modal_id,
         &p,
-        ModalOptions::new(t.rm_dialog_title(), ModalSize::fit_content(400.0)),
+        ModalOptions::new(t.rm_dialog_title(), ModalSize::fit_content(400.0))
+            .close_enabled(enabled),
         &mut open,
-        |ui| {
-            ui.label(rich_section(&t.rm_confirm_prompt(&dialog.summary), p.text));
-            ui.add_space(12.0);
-            ui.radio_value(
-                &mut mode,
-                RemoveMode::DeleteLinkOnly,
-                t.rm_mode_delete_only(),
-            );
-            ui.radio_value(
-                &mut mode,
-                RemoveMode::RestoreTargetToLink,
-                t.rm_mode_restore(),
-            );
-            ui.add_space(14.0);
-            button_row(ui, |ui| {
-                if button(ui)
-                    .icon(crate::gui::icons::Icon::Trash)
-                    .label(t.confirm_delete())
-                    .show()
-                    .clicked()
-                {
-                    action = RmDialogAction::Confirm;
-                }
-                if button(ui)
-                    .icon(crate::gui::icons::Icon::Clear)
-                    .label(t.cancel())
-                    .tip(t.cancel())
-                    .show()
-                    .clicked()
-                {
-                    action = RmDialogAction::Cancel;
-                }
-            });
+        t.cancel(),
+        |section| match section {
+            ModalSection::Main(ui) => {
+                ui.add_enabled_ui(enabled, |ui| {
+                    ui.add(
+                        egui::Label::new(rich_section(
+                            &t.rm_confirm_prompt(&dialog.summary),
+                            p.text,
+                        ))
+                        .wrap(),
+                    );
+                    ui.add_space(theme::gap_lg(ui));
+                    ui.radio_value(
+                        &mut mode,
+                        RemoveMode::DeleteLinkOnly,
+                        t.rm_mode_delete_only(),
+                    );
+                    ui.radio_value(
+                        &mut mode,
+                        RemoveMode::RestoreTargetToLink,
+                        t.rm_mode_restore(),
+                    );
+                });
+            }
+            ModalSection::FooterCustom(ui) => {
+                right_aligned(ui, |ui| {
+                    if button(ui)
+                        .icon(crate::gui::icons::Icon::Trash)
+                        .label(t.confirm_delete())
+                        .enabled(enabled)
+                        .show()
+                        .clicked()
+                    {
+                        action = RmDialogAction::Confirm;
+                    }
+                });
+            }
         },
     ) else {
         return RmDialogAction::None;

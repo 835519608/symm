@@ -94,14 +94,9 @@ pub fn apply_text_styles(ctx: &Context, typo: &UiTypography) {
     style.spacing.item_spacing = egui::vec2(10.0 * s, 8.0 * s);
     style.spacing.button_padding = egui::vec2(12.0 * s, 7.0 * s);
     style.spacing.interact_size = typo.interact;
+    // 浮动滚动条不占列宽，内容区左右留白与容器内边距一致。
+    style.spacing.scroll = egui::style::ScrollStyle::floating();
     ctx.set_style(style);
-}
-
-pub fn rich_heading(text: &str, color: egui::Color32) -> RichText {
-    RichText::new(text)
-        .text_style(TextStyle::Heading)
-        .strong()
-        .color(color)
 }
 
 pub fn rich_section(text: &str, color: egui::Color32) -> RichText {

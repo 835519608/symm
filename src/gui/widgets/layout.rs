@@ -1,60 +1,86 @@
-use crate::gui::theme::{self, rich_body, rich_body_muted, rich_heading, rich_small};
-use egui::{Frame, Margin, Ui};
+use crate::gui::icons::Icon;
+use crate::gui::theme::{self, rich_body, rich_body_muted};
+use crate::gui::widgets::button;
+use egui::{Align, Frame, Layout, Margin, Ui};
+
+const CARD_INNER_MARGIN: f32 = 12.0;
+
+/// 右对齐区域：用于工具栏、底栏、弹窗 footer 的右侧动作。
+pub fn right_aligned<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.with_layout(Layout::right_to_left(Align::Center), add)
+        .inner
+}
+
+/// 左右分区行：左侧内容自然排列，右侧动作贴右。
+pub fn split_row<L, R>(
+    ui: &mut Ui,
+    add_left: impl FnOnce(&mut Ui) -> L,
+    add_right: impl FnOnce(&mut Ui) -> R,
+) -> (L, R) {
+    ui.horizontal(|ui| {
+        let left = add_left(ui);
+        let right = right_aligned(ui, add_right);
+        (left, right)
+    })
+    .inner
+}
 
 /// 表单页：占满主区可用宽度，各行控件右缘对齐。
 pub fn form_page<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let w = ui.available_width().max(200.0);
-    ui.vertical(|ui| {
-        ui.set_width(w);
-        ui.set_min_width(w);
-        ui.set_max_width(w);
-        add(ui)
-    })
-    .inner
-}
-
-/// 主区标题 + 副标题。
-pub fn page_heading(ui: &mut Ui, p: &theme::UiPalette, title: &str, subtitle: Option<&str>) {
-    ui.label(rich_heading(title, p.text));
-    if let Some(sub) = subtitle {
-        ui.label(rich_body_muted(sub, p.text_muted));
-    }
-}
-
-/// 操作按钮行（统一间距）。
-pub fn button_row<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0 * theme::typography_from_ui(ui).scale;
-        add(ui)
-    })
-    .inner
+    ui.vertical(add).inner
 }
 
 /// 内容卡片（egui [`Frame::group`]）。
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     Frame::group(ui.style())
-        .inner_margin(Margin::same(12.0))
+        .inner_margin(Margin::same(CARD_INNER_MARGIN))
+        .show(ui, add)
+        .inner
+}
+
+/// 设置页等内容区：只提供内边距，不绘制左右边框。
+pub fn settings_content_frame<R>(ui: &mut Ui, pad: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    Frame::none()
+        .inner_margin(Margin::same(pad))
         .show(ui, add)
         .inner
 }
 
 /// 详情只读字段。
 pub fn detail_field(ui: &mut Ui, p: &theme::UiPalette, label: &str, value: &str) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(rich_body_muted(&format!("{label}:"), p.text_muted));
-        ui.label(rich_body(value, p.text));
+        let resp = ui.add(egui::Label::new(rich_body(value, p.text)).wrap());
+        if value.chars().count() > 24 {
+            resp.on_hover_text(value);
+        }
     });
-    ui.add_space(6.0 * theme::typography_from_ui(ui).scale);
+    ui.add_space(theme::gap_sm(ui));
 }
 
-/// 居中空状态提示。
-pub fn empty_hint(ui: &mut Ui, p: &theme::UiPalette, text: &str) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(ui.available_height() * 0.28);
-        card(ui, |ui| {
-            ui.centered_and_justified(|ui| {
-                ui.label(rich_small(text, p.text_muted));
-            });
-        });
-    });
+/// 路径详情字段：值可选择，右侧动作可直接复制完整路径。
+pub fn detail_path_field(
+    ui: &mut Ui,
+    p: &theme::UiPalette,
+    label: &str,
+    value: &str,
+    copy_tip: &str,
+) {
+    split_row(
+        ui,
+        |ui| {
+            ui.label(rich_body_muted(&format!("{label}:"), p.text_muted));
+        },
+        |ui| {
+            if button(ui).icon(Icon::Copy).tip(copy_tip).show().clicked() {
+                ui.ctx().copy_text(value.to_string());
+            }
+        },
+    );
+    ui.add(
+        egui::Label::new(rich_body(value, p.text))
+            .selectable(true)
+            .wrap(),
+    );
+    ui.add_space(theme::gap_sm(ui));
 }

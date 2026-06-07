@@ -22,15 +22,20 @@ impl VecWriter {
     }
 }
 
-/// 一次打开系统选择器：macOS 可在同一对话框中选文件或文件夹；其它平台为原生「打开」对话框。
-pub fn pick_path() -> Option<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(path) = pick_path_macos() {
-            return Some(path);
-        }
-    }
-    rfd::FileDialog::new().set_title("选择路径").pick_file()
+/// 选择文件（返回文件路径）。
+pub fn pick_path_file() -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title("选择文件").pick_file()
+}
+
+/// 选择文件夹（返回目录路径）。
+pub fn pick_path_folder() -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title("选择文件夹").pick_folder()
+}
+
+/// macOS：同一对话框可选文件或文件夹。
+#[cfg(target_os = "macos")]
+pub fn pick_path_file_or_folder() -> Option<PathBuf> {
+    pick_path_macos()
 }
 
 #[cfg(target_os = "macos")]

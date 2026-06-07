@@ -14,11 +14,6 @@ pub fn vertical_when_overflow<R>(
         .id_salt(id_salt)
         .max_height(max_h)
         .auto_shrink([false, true])
-        .show(ui, |ui| {
-            let w = ui.available_width().max(200.0);
-            ui.set_width(w);
-            ui.set_min_width(w);
-            add(ui)
-        })
+        .show(ui, |ui| add(ui))
         .inner
 }
