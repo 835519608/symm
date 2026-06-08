@@ -195,7 +195,7 @@ jobs:
     name: 构建测试产物 (windows-x64)
     needs: plan
     if: needs.plan.outputs.build_windows_x64 == 'true'
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -212,7 +212,7 @@ jobs:
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-test-assets-windows-x64
           path: |
@@ -243,7 +243,7 @@ jobs:
           build_installer: "false"
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-test-assets-windows-arm64
           path: symm-portable-windows-arm64.zip
@@ -253,7 +253,7 @@ jobs:
     name: 构建测试产物 (windows-x86)
     needs: plan
     if: needs.plan.outputs.build_windows_x86 == 'true'
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -273,7 +273,7 @@ jobs:
           build_installer: "false"
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-test-assets-windows-x86
           path: symm-portable-windows-x86.zip
@@ -301,7 +301,7 @@ jobs:
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-test-assets-linux-x64
           path: symm-portable-linux-x64.zip
@@ -329,7 +329,7 @@ jobs:
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-test-assets-linux-arm64
           path: symm-portable-linux-arm64.zip
@@ -357,7 +357,7 @@ jobs:
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-test-assets-macos-x64
           path: symm-portable-macos-x64.zip
@@ -385,7 +385,7 @@ jobs:
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-test-assets-macos-arm64
           path: symm-portable-macos-arm64.zip
@@ -406,7 +406,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: 下载全部临时产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-test-assets-*
           path: dist

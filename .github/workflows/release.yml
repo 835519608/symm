@@ -44,7 +44,7 @@ jobs:
     name: 构建产物 (windows-x64)
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -61,7 +61,7 @@ jobs:
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets-windows-x64
           path: |
@@ -92,7 +92,7 @@ jobs:
           build_installer: "false"
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets-windows-arm64
           path: symm-portable-windows-arm64.zip
@@ -102,7 +102,7 @@ jobs:
     name: 构建产物 (windows-x86)
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -122,7 +122,7 @@ jobs:
           build_installer: "false"
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets-windows-x86
           path: symm-portable-windows-x86.zip
@@ -160,7 +160,7 @@ jobs:
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets-linux-${{ matrix.arch }}
           path: ${{ matrix.archive_name }}
@@ -198,7 +198,7 @@ jobs:
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets-macos-${{ matrix.arch }}
           path: ${{ matrix.archive_name }}
@@ -217,7 +217,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: 下载全部临时产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: release-assets-*
           path: dist

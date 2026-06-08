@@ -44,13 +44,13 @@ jobs:
             runner: ubuntu-24.04-arm
             target: ""
           - name: windows-x64
-            runner: windows-2025
+            runner: windows-2025-vs2026
             target: ""
           - name: windows-arm64
             runner: windows-11-arm
             target: ""
           - name: windows-x86
-            runner: windows-2025
+            runner: windows-2025-vs2026
             target: i686-pc-windows-msvc
           - name: macos-x64
             runner: macos-15-intel

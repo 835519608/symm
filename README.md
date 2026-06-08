@@ -416,7 +416,7 @@ Windows 安装包目前只为 x64 构建；arm64 / x86 先提供便携 zip。每
 |--------|--------|
 | Linux x64 | `ubuntu-24.04` |
 | Linux arm64 | `ubuntu-24.04-arm` |
-| Windows x64 / x86 | `windows-2025` |
+| Windows x64 / x86 | `windows-2025-vs2026` |
 | Windows arm64 | `windows-11-arm` |
 | macOS x64 | `macos-15-intel` |
 | macOS arm64 | `macos-15` |
