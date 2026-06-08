@@ -19,6 +19,22 @@ impl Display for LinkKind {
 }
 
 impl LinkKind {
+    /// 数据库与 JSON 使用的稳定英文枚举值；不要使用 [`Display`] 入库。
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            LinkKind::Symlink => "symlink",
+            LinkKind::Junction => "junction",
+        }
+    }
+
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "symlink" | "软链接" => Some(LinkKind::Symlink),
+            "junction" | "目录联接" => Some(LinkKind::Junction),
+            _ => None,
+        }
+    }
+
     /// 终端表格/详情用；JSON 仍为 `symlink` / `junction`。
     pub fn label_zh(self) -> &'static str {
         match self {
@@ -32,11 +48,7 @@ impl FromStr for LinkKind {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "symlink" => Ok(LinkKind::Symlink),
-            "junction" => Ok(LinkKind::Junction),
-            _ => Err(()),
-        }
+        LinkKind::from_db_str(s).ok_or(())
     }
 }
 

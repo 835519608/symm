@@ -394,6 +394,20 @@ impl GuiTexts {
         }
     }
 
+    pub fn symlink_conflict_cancel(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "软链指向不同时取消",
+            Locale::En => "Cancel when symlink points elsewhere",
+        }
+    }
+
+    pub fn symlink_conflict_retarget(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "软链指向不同时改到新目标",
+            Locale::En => "Retarget symlink when it points elsewhere",
+        }
+    }
+
     pub fn create_link(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "创建链接",

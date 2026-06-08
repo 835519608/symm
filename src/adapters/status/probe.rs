@@ -1,5 +1,6 @@
-use crate::domain::model::{LinkRecord, LinkStatus, LinkView};
+use crate::domain::model::{LinkKind, LinkRecord, LinkStatus, LinkView};
 use std::fs;
+use std::fs::Metadata;
 use std::path::Path;
 
 pub fn for_record(record: &LinkRecord) -> LinkStatus {
@@ -8,7 +9,7 @@ pub fn for_record(record: &LinkRecord) -> LinkStatus {
         Err(_) => return LinkStatus::Missing,
         Ok(meta) => meta,
     };
-    if !meta.file_type().is_symlink() {
+    if !is_expected_link_kind(&meta, record.link_kind) {
         return LinkStatus::Stale;
     }
     let expected = Path::new(&record.target_path);
@@ -19,6 +20,26 @@ pub fn for_record(record: &LinkRecord) -> LinkStatus {
         return LinkStatus::Drift;
     }
     LinkStatus::Ok
+}
+
+fn is_expected_link_kind(meta: &Metadata, kind: LinkKind) -> bool {
+    match kind {
+        LinkKind::Symlink => meta.file_type().is_symlink(),
+        LinkKind::Junction => is_junction_like(meta),
+    }
+}
+
+#[cfg(windows)]
+fn is_junction_like(meta: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    meta.is_dir() && (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+}
+
+#[cfg(not(windows))]
+fn is_junction_like(_meta: &Metadata) -> bool {
+    false
 }
 
 pub fn to_view(record: LinkRecord) -> LinkView {

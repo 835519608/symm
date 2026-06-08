@@ -211,6 +211,20 @@ fn rm_multiple_selectors_deletes_all() {
 }
 
 #[test]
+fn rm_missing_selector_fails_before_prompting_for_mode() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .write_stdin("")
+        .args(["rm", "missing"])
+        .assert()
+        .failure()
+        .stderr(contains("\"code\": \"not_found\""));
+}
+
+#[test]
 fn rm_with_restore_moves_target_back_to_link_path() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");

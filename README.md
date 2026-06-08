@@ -1,387 +1,405 @@
 # symm
 
-跨平台软链接管理 CLI：创建、纳管、查看、删除；SQLite 按 `link_path` 幂等 upsert。
+symm 是一个跨平台软链接管理工具，包含桌面 GUI（`symm`）和命令行工具（`symm-cli`）。它把每条链接记录写入本地 SQLite，并围绕「创建 / 纳管 / 查看 / 删除 / 恢复」这些操作处理路径迁移、占用检测、状态探测和 Windows 提权。
 
-## 功能概览
+核心约定：
 
-- **`add`**：建链或纳管已有软链；`link` 为实体时可接管迁移到 `target`；冲突与占用可交互处理
-- **`rm`**：删除记录与软链，或先将 `target` 迁回 `link` 再删库
-- **`ls` / `show`**：列表与详情，支持状态过滤、JSON、分页
-- **跨平台**：Linux / macOS / Windows（Windows 目录链失败时可降级为 junction）
+- 记录以 `link_path` 幂等 upsert；同一个链接路径再次 `add` 会更新原记录。
+- `target` 是真实数据位置，`link` 是对外访问位置。
+- 非空 `name` 是可读别名，在库内唯一；纯数字名称入库时会加 `link-` 前缀，避免和 `ls` 序号冲突。
+- 任一步失败即停止，不做自动回滚；中间态需要人工检查后重试。
 
-失败不自动回滚；任一步出错即停止，中间态由人工处理后重试。
+## 功能
 
-### 终端中文与 JSON 英文
+| 能力 | GUI | CLI |
+|------|-----|-----|
+| 添加记录 / 创建链接 | 支持 | `symm-cli add <link> <target>` |
+| 纳管已有软链接 | 支持 | `symm-cli add <link> <target>` |
+| 实体迁移后建链 | 支持 | `symm-cli add <link> <target>` |
+| 列表 / 搜索 / 状态 | 支持 | `symm-cli ls` |
+| 详情 | 支持 | `symm-cli show <序号或名称>` |
+| 删除链接 / 恢复目标 | 支持 | `symm-cli rm <序号或名称>...` |
+| JSON 输出 | 不适用 | `ls --json` / `show --json` |
 
-- **表格 / `show` / 菜单 / 进度**：使用简体中文（如状态「正常」「目标没了」）。
-- **`--json` 与 `--status`**：字段值仍为英文枚举（`ok`、`broken`、`symlink` 等），便于脚本过滤。
-
-| 状态（JSON / `--status`） | 终端显示 | 含义 |
-|---------------------------|----------|------|
-| `ok` | 正常 | 软链在，目标在，指向与库一致 |
-| `broken` | 目标没了 | 软链在，目标路径不存在 |
-| `missing` | 链接没了 | 链接路径本身不存在 |
-| `stale` | 不是软链 | 路径还在，但已不是软链 |
-| `drift` | 指向不对 | 仍是软链，指向与库中目标不一致 |
-
-| 类型（JSON） | 终端显示 |
-|--------------|----------|
-| `symlink` | 软链接 |
-| `junction` | 目录联接 |
+终端的人类可读输出使用简体中文；JSON 与 `--status` 参数保持英文枚举，便于脚本处理。
 
 ## 快速开始
 
-### 依赖
+依赖：
 
-- Rust stable（`rustup` + `cargo`）
+- `mise`（项目会按 `.mise.toml` 安装 Rust stable）
 - Git
-- Windows 本地构建另需：MSVC 工具链（`link.exe`）
+- Windows 本地构建安装包时需要 MSVC 工具链；CI 里安装包由 Windows runner + Inno Setup 构建
 
-### 构建与运行
+首次构建 GUI 前需要下载内嵌中文字体：
 
 ```bash
-cargo build --release --features gui --bin symm --bin symm-cli
-# 产物：target/release/symm（GUI）和 target/release/symm-cli（CLI）
+scripts/fetch-gui-font.sh
 ```
 
-### 常用命令
+构建 GUI 与 CLI：
+
+```bash
+mise run build
+```
+
+产物：
+
+- `target/release/symm`：桌面 GUI
+- `target/release/symm-cli`：命令行工具
+- Windows 上扩展名为 `.exe`
+
+开发时常用命令：
+
+```bash
+mise run run-gui
+mise run run-help
+mise run fmt-check
+mise run clippy
+mise run test
+mise run ci
+```
+
+没有 `mise` 的临时环境可以直接运行等价 `cargo` 命令；项目内开发、检查和运行默认以 `.mise.toml` 为准。发布门禁仍以 GitHub Actions 为准。
+
+## CLI 使用
 
 ```bash
 symm-cli add <link> <target>
 symm-cli ls [--status ok|broken|missing|stale|drift] [--json] [--limit N] [--offset N]
-symm-cli show <name|link> [--json]
-symm-cli rm <name|link>
+symm-cli show [序号或名称] [--json]
+symm-cli rm [序号或名称]...
 ```
 
-### 质量检查
+选择器规则：
 
-- 本地：`cargo fmt --all -- --check`（或 `mise run fmt-check`）
-- 门禁：**GitHub Actions** 三端矩阵（`fmt` → `clippy -D warnings` → `test`）；不以本地构建结果为发布依据
+- `show` / `rm` 的纯数字选择器表示当前 `ls` 序号。
+- 非纯数字选择器按 `name` 查找。
+- `show` 省略选择器时进入交互选择。
+- `rm` 可一次传多个选择器；省略时进入交互多选。
+
+示例：
+
+```bash
+symm-cli add ~/.config/app ~/data/app-config
+symm-cli ls --status ok
+symm-cli show 1
+symm-cli rm 1
+SYMM_RM_ACTION=restore symm-cli rm app-config
+```
+
+## 状态与类型
+
+| JSON / `--status` | 终端显示 | 含义 |
+|-------------------|----------|------|
+| `ok` | 正常 | 链接存在，目标存在，指向与数据库一致 |
+| `broken` | 目标没了 | 链接存在，但目标路径不存在 |
+| `missing` | 链接没了 | 链接路径不存在 |
+| `stale` | 不是软链 | 链接路径存在，但已经不是软链接 / junction |
+| `drift` | 指向不对 | 链接仍存在，但指向与数据库中的目标不一致 |
+
+| JSON 类型 | 终端显示 |
+|-----------|----------|
+| `symlink` | 软链接 |
+| `junction` | 目录联接 |
 
 ## 数据目录
 
-- **默认**：可执行文件同级 `data/`，库文件为 `symm.db`（仅 `links` 表）
-- **CLI 在 `cli/` 子目录**（安装包 / 便携 zip）：自动使用应用根目录的 `data/`，与 `symm.exe`（GUI）共用同一库
-- **覆盖**：设置 `SYMM_HOME` 指向其它目录（见下文）
+默认数据目录是可执行文件同级的 `data/`：
 
-## 环境变量
+```text
+symm/
+  symm
+  cli/
+    symm-cli
+  data/
+    symm.db
+    settings.json
+```
 
-默认情况下，`add` / `rm` 在需要你做决定时会弹出**终端菜单**（↑↓ 移动、Enter 确认、Esc 取消）。下列变量用于**跳过对应菜单**，适合脚本、自动化或你已明确意图的场景。
+特殊规则：
 
-若设置了变量但取值不合法，命令会直接报错退出（不会静默回退到菜单）。
-
----
-
-### `SYMM_HOME`
-
-指定 symm **存放数据库的目录**（目录下会有 `symm.db`）。
-
-- **默认**：可执行文件所在目录下的 `data/`；`cli/symm-cli.exe` 时使用上一级的 `data/`
-- **注意**：不同 `SYMM_HOME` 对应不同的链接库，互不影响
+- 当 CLI 位于 `cli/` 子目录时，`symm-cli` 会自动使用上一级应用根目录的 `data/`，与 GUI 共用数据库。
+- `symm.db` 存链接记录。
+- 默认 `data/settings.json` 存 GUI 偏好，和可切换的链接库数据目录分离。
+- 设置 `SYMM_HOME` 后，链接数据库使用该目录；GUI 偏好仍写入默认 `data/settings.json`，避免自定义数据目录重启后丢失。
 
 ```bash
 SYMM_HOME=/var/lib/symm symm-cli ls
 ```
 
----
+## 环境变量
 
-### GUI 字体（内嵌）
+CLI 默认在需要决策时弹出终端交互菜单。下列变量用于跳过对应菜单，适合脚本或自动化场景。变量值不合法时会直接报错，不会静默回退到菜单。
 
-`symm` 图形界面将 **Noto Sans SC**（中文）与 **Phosphor Regular**（图标）打进二进制，不依赖系统已安装字体。
-
-首次本地构建 GUI 前需下载 Noto 文件：
-
-```bash
-scripts/fetch-gui-font.sh
-mise run run-gui
-```
-
-详见 `assets/fonts/README.md`。
-
----
+| 变量 | 用途 |
+|------|------|
+| `SYMM_HOME` | 指定数据目录 |
+| `SYMM_ADD_NAME` | `add` 写库前指定记录名称 |
+| `SYMM_ADD_LOCK_CHOICE` | `add` 遇到链接位置被占用时选择是否解除占用 |
+| `SYMM_ADD_CONFLICT_CHOICE` | `link` 和 `target` 都是实体时选择保留哪一侧 |
+| `SYMM_ADD_SYMLINK_CONFLICT_CHOICE` | `link` 已是软链但指向不一致时选择是否改指向 |
+| `SYMM_RM_ACTION` | `rm` 时选择仅删除链接，或先恢复目标再删除记录 |
+| `SYMM_PERF_LOG` | 在 stderr 输出 workflow 耗时 |
 
 ### `SYMM_ADD_NAME`
-
-在 `symm-cli add` 成功建链/纳管之后、写入数据库之前，跳过「名称（可选）」输入框。
-
-- `name` 是给人看的别名（如 `symm-cli show demo`、`symm-cli rm demo`），可留空；**非空** `name` 在库内必须唯一
-- 更新已有 `link` 时若不设置此变量，提示框会默认带上原来的 `name`，回车即可保持不变
 
 ```bash
 SYMM_ADD_NAME=my-project symm-cli add ./link ./target
 ```
 
----
+空名称允许多条；非空名称必须唯一。
 
 ### `SYMM_ADD_LOCK_CHOICE`
 
-在 `add` 时发现**链接位置**被其它进程占用时，代替「是否结束占用并继续」的菜单。
-
 | 取值 | 效果 |
-| :--- | :--- |
-| `unlock`（`kill`、`continue`） | 结束占用进程，等待句柄释放后继续 `add` |
-| `cancel`（`abort`） | 不杀进程，取消本次 `add` |
-
-```bash
-SYMM_ADD_LOCK_CHOICE=unlock symm-cli add ./busy-link ./target
-```
-
----
+|------|------|
+| `unlock` / `kill` / `continue` | 结束占用进程，等待句柄释放后继续 |
+| `cancel` / `abort` | 不结束进程，取消本次 `add` |
 
 ### `SYMM_ADD_CONFLICT_CHOICE`
 
-在 `add` 时 **link 与 target 都已存在**，且 link **不是**软链接（两个实体冲突）时，代替「保留哪一边」的菜单。
-
 | 取值 | 效果 |
-| :--- | :--- |
-| `link`（`keep_link`） | 保留 link 内容：删 target，把 link 迁到 target，再在 link 建链 |
-| `target`（`keep_target`） | 保留 target：删 link，再在 link 新建指向 target 的软链 |
+|------|------|
+| `link` / `keep_link` | 保留 link 内容：删除 target，把 link 迁到 target，再创建链接 |
+| `target` / `keep_target` | 保留 target：删除 link，再创建指向 target 的链接 |
 | `cancel` | 不修改，退出 |
-
----
 
 ### `SYMM_ADD_SYMLINK_CONFLICT_CHOICE`
 
-在 `add` 时 link **已是软链接**，但指向与本次 `target` **不一致**时，代替「是否改指向新 target」的菜单。
-
 | 取值 | 效果 |
-| :--- | :--- |
-| `retarget`（`target`、`replace`） | 删除旧软链，随后创建指向新 target 的链接 |
+|------|------|
+| `retarget` / `target` / `replace` | 删除旧软链，创建指向新 target 的链接 |
 | `cancel` | 不修改软链，退出 |
 
-若软链已指向本次 `target`，不会出现此菜单，只更新数据库。
-
----
+如果已有软链已经指向本次 `target`，不会出现该菜单，只更新数据库。
 
 ### `SYMM_RM_ACTION`
 
-在 `symm-cli rm` 查到记录之后，代替「是否把目标移回链接位置」的菜单。
-
 | 取值 | 效果 |
-| :--- | :--- |
-| `delete` / `no` / `n` | **仅删除**：先删库记录，再删 link 软链；target 仍留在原处 |
-| `restore` / `yes` / `y` | **恢复再删库**：删软链 → 将 target 迁回 link → 删库记录 |
+|------|------|
+| `delete` / `no` / `n` | 先删库记录，再删除 link；target 保留在原处 |
+| `restore` / `yes` / `y` | 删除 link，把 target 迁回 link，再删库记录 |
 
 ```bash
 SYMM_RM_ACTION=delete symm-cli rm my-link
 ```
 
----
-
 ### `SYMM_PERF_LOG`
 
-调试时在 **stderr** 输出各命令耗时（前缀 `[symm-perf]`），不影响命令结果。设为 `1` 或非 `0`/`false`/`no` 的值即开启。
+设为 `1` 或非 `0` / `false` / `no` 的值即开启。
 
 ```bash
 SYMM_PERF_LOG=1 symm-cli ls
 ```
 
-## 平台差异
+## GUI
+
+GUI 使用 `eframe` / `egui`，通过 `gui` feature 构建。它复用 CLI 的业务 workflow，不维护另一套链接逻辑。
+
+主要能力：
+
+- 侧栏搜索、状态刷新、详情查看。
+- 添加链接时选择占用处理、实体冲突和软链改指向策略。
+- 批量删除，支持「仅删除」和「恢复后删除」。
+- 设置明暗模式、配色、字号、侧栏宽度和数据目录。
+- 内嵌 Noto Sans SC 和 Phosphor 图标字体，不依赖系统字体。
+
+字体文件要求见 `assets/fonts/README.md`。CI 和打包 workflow 会自动运行 `.github/actions/fetch-gui-font`。
+
+## 平台行为
 
 | 能力 | Linux / macOS | Windows |
 |------|---------------|---------|
-| 建链 | `symlink` | 软链；目录失败可 junction |
+| 建链 | `symlink` | 优先软链接；目录软链失败时可降级为 junction |
 | 同盘判断 | `dev` | 盘符 |
-| 查占用 | `fuser` / `lsof`；非 root 时 **sudo 子进程** | **Restart Manager**；非管理员时 **UAC 子进程**（按迁移目录**全文件清单**注册） |
-| 杀占用进程 | 同上（sudo 子进程） | UAC 子进程 + `TerminateProcess` |
-| 建链提权 | 无 | 仅当普通建链失败且错误需提权时 UAC |
-| 跨盘目录 ACL | — | `icacls` 快照（失败则跳过恢复） |
+| 查占用 | `fuser` / `lsof`；需要时走 sudo 子进程 | Restart Manager；非管理员时走 UAC 子进程 |
+| 结束占用 | sudo 子进程 | UAC 子进程 + `TerminateProcess` |
+| 建链提权 | 无 | 普通建链失败且需要提权时走 UAC |
+| 跨盘目录 ACL | 不适用 | `icacls` 快照，失败则跳过恢复 |
 | 同盘迁移软链 | `rename` + 树内 rebase | `rename`；拒绝访问时重建链接 |
 
-交互式终端下 Linux/macOS 的 `sudo` 可正常输入密码；无 TTY 的自动化场景可能失败。
+交互式终端下 Linux / macOS 的 `sudo` 可输入密码；无 TTY 自动化环境可能失败。
 
-### Windows：占用检测与提权（实现说明）
+Windows 占用检测说明：
 
-- **主进程**（你运行的 `symm`）保持**当前用户**，迁移/复制/写库不在此提权。
-- **查占用 / 杀进程**：非管理员时通过 [`runas`](https://crates.io/crates/runas) 启动**独立子进程**（`symm-cli __elevated-list-locks` / `__elevated-kill`），UAC 点「是」后子进程内执行 Restart Manager 或结束进程；结果经临时快照文件回传主进程。子进程**不弹黑窗**（`show(false)`），扫锁进度经临时文件回传并在**主终端**输出。
-- **扫锁范围**：对 `link` 路径做与迁移一致的 `WalkDir` 收集**普通文件**（不注册目录本身；目录无 `\` 结尾会导致 `RmGetList` 错误 5），分批 `RmRegisterResources` / `RmGetList`；单批若遇 `ACCESS_DENIED` 会二分拆分跳过不可查路径。
-- **提权失败**：直接报错（含 `--elevated-log` 路径下的子进程日志）；**不会**再在主进程用普通权限重扫一遍。
-- **杀进程后**：短暂等待句柄释放（约 0.8s），**不再**反复扫锁或二次 UAC。
-- **已是管理员终端**：本进程直接调 RM / 杀进程，不启 UAC 子进程。
-- **建链**：仍为先普通用户创建；仅权限不足时再 UAC（`__elevated-create-link`），与扫锁策略不同。
-
-## 迁移与 rebase
-
-- **同盘**：`rename` 到目标路径，再对目标树单遍 rebase（树内**绝对路径**软链改指向新根）
-- **跨盘**：单遍复制；进度为**已复制字节**与**已处理文件数**；复制时对树内软链 rebase
-- **相对路径**软链：通常不改写；指向树外的链接保持原目标
-- **跨盘删源失败**：目标已存在，源可能仍在，需人工清理（错误信息会说明）
-
-> **注意**：占用扫描只能发现「有进程注册在 RM 的资源」；迁移阶段仍可能遇到文件锁（`os error 33`），需完全退出相关程序（含托盘/后台）后重试。
+- 主进程保持当前用户身份，迁移、复制和写库不在主进程提权。
+- 非管理员查占用 / 结束占用时，使用 `runas` 启动隐藏窗口的内部子命令。
+- Restart Manager 扫描的是迁移目录下普通文件清单，分批注册资源；遇到不可访问路径会拆分跳过。
+- 提权子进程的结果通过临时文件回传，扫锁进度在主终端显示。
+- 杀进程后只短暂等待句柄释放，不重复二次 UAC 扫描。
+- 建链提权独立于扫锁策略，仅在普通建链失败且错误需要提权时触发。
 
 ## `add` 流程
 
-执行顺序：**占用检测** → **冲突/接管（adopt）** → **规范化 target** → **建链（若需要）** → **填写 name** → **写库**。
+执行顺序：
+
+```text
+占用检测
+  -> 冲突 / 接管
+  -> 规范化 target
+  -> 必要时创建链接
+  -> 填写 name
+  -> 写库
+```
 
 | 场景 | 行为 |
 |------|------|
-| 同一 `link` 再次执行 | 更新原记录（`ON CONFLICT(link_path)`），非新增行 |
-| `link` 占用 | UAC/sudo 扫锁 → 可选结束占用 → 等待句柄释放 → 继续；取消则退出 |
-| `link` 为实体且 `target` 不存在 | 将 `link` 迁移到 `target`，再建链指向 `target` |
-| `link` 与 `target` 均存在（link 非软链） | 三选一：保留 link / 保留 target / 取消 |
-| `link` 已是软链且指向 `target` | 跳过建链，仅更新库 |
+| 同一 `link` 再次执行 | 更新原记录 |
+| `link` 被占用 | 检测占用，按选择解除或取消 |
+| `link` 为实体且 `target` 不存在 | 将 `link` 迁移到 `target`，再建链 |
+| `link` 和 `target` 都是实体 | 选择保留 link、保留 target 或取消 |
+| `link` 已是软链且指向 `target` | 跳过建链，只更新数据库 |
 | `link` 已是软链但指向别处 | 改指向新 target 或取消 |
-| `link`、`target` 均不存在 | 在规范化 target 时报错（不创建空 target） |
-| 写库失败 | 可能已创建软链但无库记录，需人工对齐 |
-
-```mermaid
-flowchart TB
-start[add] --> lock[占用检测 UAC/sudo 子进程]
-lock --> locked{有占用?}
-locked -->|是| unlock{解除?}
-unlock -->|否| err1[错误退出]
-unlock -->|是| kill[结束进程 UAC/sudo]
-kill --> wait[等待句柄释放]
-wait --> adopt[冲突/接管 adopt]
-locked -->|否| adopt
-adopt --> norm[规范化 target]
-norm --> needLink{需新建链?}
-needLink -->|是| create[create_link 可能再 UAC]
-needLink -->|否| name[name + 写库]
-create --> name
-name --> ok{成功?}
-ok -->|否| err2[错误退出 可能留链]
-ok -->|是| done[完成]
-```
+| `link`、`target` 都不存在 | 规范化 target 时报错，不创建空目标 |
+| 写库失败 | 可能已创建链接但没有记录，需要人工对齐 |
 
 ## `rm` 流程
 
-先按 **name** 或 **link_path** 查记录，再选动作：
+`rm` 先把选择器解析为记录，再按模式执行：
 
-| 动作 | 顺序 |
+| 模式 | 顺序 |
 |------|------|
-| **仅删除**（`delete` / `no`） | 先删库 → 再删 `link` 软链 |
-| **恢复**（`restore` / `yes`） | 先删 `link` → `target` 迁回 `link` → 再删库 |
+| 仅删除 | 删除数据库记录，再删除 link |
+| 恢复后删除 | 删除 link，把 target 迁回 link，再删除数据库记录 |
 
-恢复分支复用与 `add` 相同的迁移能力（同盘 rename / 跨盘复制）。
+恢复分支复用与 `add` 相同的迁移能力。
 
-```mermaid
-flowchart TB
-start[rm] --> fetch[查记录]
-fetch --> choose{动作}
-choose -->|仅删除| db1[删除 DB]
-db1 --> rmLink[删除 link]
-choose -->|恢复| rmLink2[删除 link]
-rmLink2 --> migrate[target 迁回 link]
-migrate --> db2[删除 DB]
-rmLink --> done[完成]
-db2 --> done
-```
+## 迁移与 rebase
+
+- 同盘迁移使用 `rename`，随后对目标树做单遍 rebase。
+- 跨盘迁移使用复制，进度按已复制字节和已处理文件数输出。
+- 树内绝对路径软链会改写到新根。
+- 相对路径软链通常不改写。
+- 指向树外的链接保持原目标。
+- 跨盘删源失败时，目标可能已存在且源仍在，错误信息会说明需要人工清理。
+
+占用扫描只能发现平台 API 能报告的资源；迁移阶段仍可能遇到文件锁，需要退出相关程序后重试。
 
 ## 代码结构
 
 ```text
 src/
-  bin/symm.rs                    # 入口：用户命令 → app::dispatch；__elevated-* → lock/platform
+  bin/
+    symm.rs                      # GUI 入口
+    symm-cli.rs                  # CLI 入口；内部 __elevated-* 子命令在此分流
   app/
-    dispatch.rs                  # 命令分发（仅 match → workflows）
+    dispatch.rs                  # 命令分发，只把 CLI command 交给 workflow
   domain/
-    model.rs                     # LinkRecord / LinkView / LinkStatus / name 入库规则
+    model.rs                     # LinkRecord / LinkView / LinkStatus / LinkKind / name 规则
     error.rs                     # SymmError
-  workflows/                     # 业务流程（无平台 cfg，不 use platform）
-    add/
-      workflow.rs                # add 主流程（占用 → adopt → 建链 → 写库）
-      paths.rs                   # 无参时解析 link/target（含库内模板）
-      lock_gate.rs               # link 占用检测与解除
-      adopt.rs                   # 冲突/接管（实体 vs 软链、保留哪边）
-    select.rs                    # 无 selector 时交互选记录（show/rm）
-    rm/workflow.rs
-    list_views.rs              # ls / show 共用 LinkView 构建与筛选
-    ls/workflow.rs
-    show/workflow.rs
-    perf.rs                      # SYMM_PERF_LOG 耗时（各 workflow 共用）
+    gui_settings.rs              # GUI 偏好模型
+  workflows/
+    add/                         # add 主流程、路径输入、占用 gate、冲突接管
+    rm/                          # rm 主流程
+    ls/                          # ls 输出流程
+    show/                        # show 输出流程
+    list_views.rs                # 从记录构造带状态的 LinkView
+    pick_list.rs                 # 交互选择列表数据
+    select.rs                    # 无 selector 时交互选择
+    selector.rs                  # 序号 / name 解析
+    perf.rs                      # SYMM_PERF_LOG
   adapters/
-    db/
-      schema.rs                  # 建表、索引、legacy 迁移
-      repository.rs              # SQLite 打开、CRUD、list
-      query.rs                   # 查询条件 DSL（供 repository / 未来 API）
-      resolve.rs                 # name / ls 序号 → LinkRecord
-      pick_list.rs               # ls 序号列表 + 状态标签（供交互选择）
-    symlink/                     # 建链/写链/删链（唯一入口；Windows UAC 在 windows 子模块）
-      link.rs / unlink.rs
-      windows.rs                 # 仅 Windows cfg
-    migrate/                     # 迁移编排（同盘/跨盘/rebase；写链只调 symlink）
-      path.rs / copy_file.rs / copy_dir.rs / rebase.rs / relocate_symlink.rs
-    paths/
-      home.rs                    # SYMM_HOME、data 目录
-      normalize.rs               # 路径规范化辅助
-      runtime_paths.rs           # add/rm 用的 link/target 规范化入口
-      remove.rs                  # 删文件/目录（migrate 与 platform 共用）
-      rebase_paths.rs            # 软链 rebase 路径计算（无 OS 调用）
-    status/
-      probe.rs                   # 盘上链状态（ok/broken/missing/stale/drift）
-    lock/                        # 占用检测/解除编排（文案见 messages.rs）
-      mod.rs                     # list_locking_processes / kill_processes
-      elevated.rs                # UAC/sudo 子进程协议
-      release.rs / snapshot.rs / elevated_progress.rs
-    errors/io.rs                 # IO 错误 → SymmError（含 Windows 码映射）
-    platform/                    # OS API（cfg 集中处）
-      privilege.rs               # runas / sudo、是否已提权
-      host/                      # HostFs：建链、迁移、ACL、同盘
-      process/
-        restart_manager.rs       # Windows Restart Manager
-        windows.rs / unix.rs     # 扫锁、杀进程
+    db/                          # SQLite schema、query、repository
+    paths/                       # SYMM_HOME、路径规范化、remove、rebase 路径计算
+    status/                      # 读盘探测 ok/broken/missing/stale/drift
+    symlink/                     # 建链、写链、删链；Windows 策略在 windows.rs
+    migrate/                     # rename / copy / rebase 编排
+    lock/                        # 占用检测、解除占用、提权子进程协议
+    platform/                    # OS API、提权、host fs、进程 API
+    errors/                      # IO 错误映射
+    settings.rs                  # 通用设置辅助
+  gui/
+    app.rs                       # egui 应用主体与后台任务
+    data.rs                      # GUI 调 workflow 的数据入口
+    state.rs                     # GUI 状态、快照、筛选缓存
+    panels/                      # 顶栏、侧栏、内容、添加、删除、设置
+    widgets/                     # 项目内 GUI 控件
+    theme/                       # 字体、配色、排版
   ui/
-    cli.rs                       # clap 定义（含隐藏 __elevated-*）
+    cli.rs                       # clap 命令定义
     output.rs                    # 表格 / JSON / 错误 JSON
-    interaction/                 # inquire 菜单（无 DB/status 依赖）
-      choice.rs / pick_record.rs
-    progress/migration_reporter.rs
+    interaction/                 # inquire 交互
+    progress/                    # 迁移进度输出
 ```
 
-**依赖方向**（禁止反向）：
+依赖方向：
 
 ```text
-bin / app  →  workflows  →  adapters（db / symlink / migrate / lock / paths / errors）
-                              ↘ platform → domain
-migrate / symlink  →  paths / platform（禁止 platform → migrate/symlink/status）
-paths  →  domain / errors
-ui  →  domain（及 migrate 进度事件类型）；交互选记录由 workflows/select + adapters/db/pick_list 准备选项
+bin / app
+  -> workflows
+  -> adapters::{db, paths, status, symlink, migrate, lock}
+  -> adapters::platform
+  -> domain
+
+gui -> workflows / adapters::db / domain
+ui  -> domain
 ```
 
-约定（**修改代码必须遵守**；Agent 见 `.cursor/rules/architecture-layers.mdc`）：
+分层约束：
 
-| 规则 | 说明 |
+| 位置 | 约束 |
 |------|------|
-| `workflows/**` | 不写 `#[cfg(windows\|unix)]`，不 `use adapters::platform::*`，不依赖 `app::*` |
-| `adapters/migrate/**` | 不新增平台 cfg；不直接 `write_symlink_direct`，写链只调 `symlink::*` |
-| `adapters/symlink/**` | Windows 策略仅在 `windows.rs`；其它文件无 cfg |
-| `adapters/status/**` | 仅读盘链状态（`probe`） |
-| 平台 / 提权 / 占用文案 | `adapters/platform/**`、`adapters/lock/**`（如 `messages.rs`） |
-| `app/**` | 只做命令分发，不放查询解析等业务 helper |
-| `ui/**` | 交互与输出；`cli.rs` 内 Windows 专用子命令定义可保留 `#[cfg(windows)]` |
+| `workflows/**` | 不写平台 `cfg`，不直接依赖 `adapters::platform`，只编排业务动作 |
+| `adapters/migrate/**` | 不新增平台分支；写链只走 `adapters::symlink` |
+| `adapters/symlink/**` | Windows 专用策略集中在 `windows.rs` |
+| `adapters/status/**` | 只负责读盘状态探测 |
+| `adapters/platform/**` | 集中 OS API、提权、host fs 和进程能力 |
+| `app/**` | 只做分发，不放业务 helper |
+| `ui/**` | 只做命令定义、输出、交互和进度展示 |
 
-对外入口示例：
+常用入口：
 
-- 查库 / 选择器：`adapters::db::repository` / `adapters::db::resolve`
-- 链状态：`adapters::status::{for_record, to_view}`
-- 建链 / 写链 / 删链：`adapters::symlink::{create_link, write_symlink, unlink}`
-- 迁移：`adapters::migrate::migrate_path` / `move_path_with_retry`
-- 文件系统 OS（同盘/ACL/rename）：`adapters::platform::host_platform()`（仅 migrate 等编排层）
-- 占用：`adapters::lock::list_locking_processes_with_progress` / `kill_processes`
+| 能力 | 入口 |
+|------|------|
+| 打开数据库 / CRUD | `adapters::db::repository` |
+| 查询条件 | `adapters::db::query::LinkQuery` |
+| 链状态 | `adapters::status::{for_record, to_view}` |
+| 建链 / 写链 / 删链 | `adapters::symlink::{create_link, write_symlink, unlink}` |
+| 迁移 | `adapters::migrate::{migrate_path, move_path_with_retry}` |
+| OS 文件系统能力 | `adapters::platform::host_platform()` |
+| 占用检测 / 解除 | `adapters::lock::*` |
 
-## 实现要点
+## 数据库
 
-- `ls` / `show`：列表从 SQLite 读取，展示前对每条记录 `status::probe` 读盘；`ls` 支持流式输出与 `--limit` / `--offset`
-- 链状态判定顺序：`missing` → `stale` → `broken` → `drift` → `ok`（见上文「终端中文与 JSON 英文」对照表）
-- SQLite：`busy_timeout=5000`、`WAL`、`synchronous=NORMAL`、`temp_store=MEMORY`
-- 非空 `name` 在库内唯一（空 name 允许多条）
-- Windows 依赖：`windows`（Restart Manager）、`runas`（UAC 子进程）；已移除 `filelocksmith`
+SQLite 连接参数：
 
-## 打包与发布
+- `busy_timeout = 5000`
+- `journal_mode = WAL`
+- `synchronous = NORMAL`
+- `temp_store = MEMORY`
 
-本机原生构建：`cargo build --release --features gui --bin symm --bin symm-cli`，产物在 `target/release/`。
+主表 `links`：
 
-可选安装：`install -m 755 target/release/symm-cli /usr/local/bin/symm-cli`（或 `~/.local/bin`）。
+| 字段 | 说明 |
+|------|------|
+| `id` | 自增主键 |
+| `name` | 可读别名，空字符串表示未命名 |
+| `link_path` | 链接路径，唯一 |
+| `target_path` | 目标路径 |
+| `link_kind` | `symlink` 或 `junction` |
+| `created_at` / `updated_at` | 时间戳 |
 
-交叉编译示例：
+索引：
 
-```bash
-rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc i686-pc-windows-msvc
-cargo build --release --features gui --bin symm --bin symm-cli --target <triple>
+- `ux_links_link_path`：`link_path` 唯一。
+- `ux_links_name_nonempty`：非空 `name` 唯一。
+
+## 打包
+
+便携包布局：
+
+```text
+symm/
+  symm              # GUI
+  cli/
+    symm-cli        # CLI
+  data/             # 默认数据目录
 ```
 
-发布产物矩阵：
+Windows 安装包目前只为 x64 构建；Windows arm64 / x86 提供便携 zip。Linux 和 macOS 均提供便携 zip。
+
+发布产物：
 
 | 平台 | 架构 | 产物 |
 |------|------|------|
@@ -392,39 +410,86 @@ cargo build --release --features gui --bin symm --bin symm-cli --target <triple>
 | Linux | arm64 | `symm-portable-linux-arm64.zip` |
 | macOS | x64 | `symm-portable-macos-x64.zip` |
 | macOS | arm64 | `symm-portable-macos-arm64.zip` |
-
-Windows 安装包目前只为 x64 构建；arm64 / x86 先提供便携 zip。每次发布会额外生成一个统一的 `SHA256SUMS`，覆盖本次 Release 的所有产物。
+| 全平台 | 全架构 | `SHA256SUMS` |
 
 ## GitHub Actions
 
 | Workflow | 触发 | 说明 |
 |----------|------|------|
-| **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | 发布架构矩阵：`fmt` → `clippy -D warnings` → `test` |
-| **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，全平台全架构，设为 Latest |
-| **Release Test** | 推送 `vX.Y.Z-test[-平台]` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定目标包 |
-| **Cleanup Test Releases** | 每日北京时间 01:00（17:00 UTC）或手动触发 | 删除旧测试 Pre-release，**仅保留发布时间最新的一条** `*-test*` |
+| `ci.yml` | 影响代码、测试、打包、assets 或 workflow 的 push / PR | 多平台矩阵执行 fmt、clippy、test |
+| `release.yml` | `vX.Y.Z`，无 `-` 后缀 | 正式 Release，全平台全架构，设为 Latest |
+| `release-test.yml` | `vX.Y.Z-test*` tag 或手动触发 | Pre-release，不设为 Latest，可按目标包控制 |
+| `cleanup-test-releases.yml` | 定时或手动 | 清理旧测试 Pre-release，只保留最新测试包 |
 
-**发布流程**：
+发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 的 `ci.yml` 已成功。
 
-1. `verify-ci` 先确认当前提交上的 `ci.yml` 已成功；发布 workflow 不重复跑测试。
-2. 各平台构建 job 只生成并上传临时 artifact，不直接写 GitHub Release。
-3. 最后的发布 job 下载全部 artifact，生成统一 `SHA256SUMS`，再一次性创建 / 更新 GitHub Release。
+Runner 矩阵：
 
-**Runner 矩阵**：
-
-| 目标包 | Runner |
-|--------|--------|
+| 目标 | Runner |
+|------|--------|
 | Linux x64 | `ubuntu-24.04` |
 | Linux arm64 | `ubuntu-24.04-arm` |
-| Windows x64 / x86 | `windows-2025-vs2026` |
+| Windows x64 | `windows-2025-vs2026` |
 | Windows arm64 | `windows-11-arm` |
+| Windows x86 | `windows-2025-vs2026` + `i686-pc-windows-msvc` |
 | macOS x64 | `macos-15-intel` |
 | macOS arm64 | `macos-15` |
 
-**Release Test 规则**：
+正式发布流程：
 
-- 测试 tag：`vX.Y.Z-test`（全平台全架构）、`vX.Y.Z-test-windows` / `-test-linux` / `-test-macos`，或多平台组合如 `vX.Y.Z-test-windows-linux`（支持 `win` / `mac` 别名）。
-- 禁止在 `test` 后追加数字，例如不要使用 `v0.1.0-test15`。
-- 手动触发按目标包勾选，默认构建 `windows-x64` / `linux-x64` / `macos-x64`。
-- 手动只打 Windows x64：`gh workflow run release-test.yml -f build_windows_x64=true -f build_linux_x64=false -f build_macos_x64=false`
-- 手动只打 Linux arm64：`gh workflow run release-test.yml -f build_windows_x64=false -f build_linux_x64=false -f build_macos_x64=false -f build_linux_arm64=true`
+1. 推送 `vX.Y.Z` tag。
+2. 校验该 commit 的 CI 已通过。
+3. 解析版本号并准备 Release 正文。
+4. 各平台构建并上传临时 artifact。
+5. 发布 job 下载全部 artifact，生成统一 `SHA256SUMS`，创建 / 更新正式 Release。
+
+测试包 tag：
+
+| Tag | 构建目标 |
+|-----|----------|
+| `vX.Y.Z-test` | 全平台全架构 |
+| `vX.Y.Z-test-windows` / `vX.Y.Z-test-win` | Windows 全架构 |
+| `vX.Y.Z-test-linux` | Linux 全架构 |
+| `vX.Y.Z-test-macos` / `vX.Y.Z-test-mac` | macOS 全架构 |
+| `vX.Y.Z-test-windows-linux` | 多平台组合 |
+
+禁止在 `test` 后追加数字，例如不要使用 `v0.1.0-test15`。
+
+手动测试包输入：
+
+| 输入 | 默认 | 目标产物 |
+|------|------|----------|
+| `build_windows_x64` | `true` | Windows x64 安装包 + 便携包 |
+| `build_windows_arm64` | `false` | Windows arm64 便携包 |
+| `build_windows_x86` | `false` | Windows x86 便携包 |
+| `build_linux_x64` | `true` | Linux x64 便携包 |
+| `build_linux_arm64` | `false` | Linux arm64 便携包 |
+| `build_macos_x64` | `true` | macOS x64 便携包 |
+| `build_macos_arm64` | `false` | macOS arm64 便携包 |
+| `release_notes` | 空 | 可选，覆盖测试 Release 正文 |
+
+手动触发默认只构建 `windows-x64`、`linux-x64`、`macos-x64`。
+
+```bash
+# 只打 Windows x64
+gh workflow run release-test.yml \
+  -f build_windows_x64=true \
+  -f build_linux_x64=false \
+  -f build_macos_x64=false
+
+# 只打 Linux arm64
+gh workflow run release-test.yml \
+  -f build_windows_x64=false \
+  -f build_linux_x64=false \
+  -f build_macos_x64=false \
+  -f build_linux_arm64=true
+```
+
+手动触发没有 semver tag，Release tag 会使用 `test-run-<run_id>`；版本号来自当前 `Cargo.toml`。
+
+## 维护约定
+
+- 改 Rust 代码后优先跑 `mise run fmt-check`，需要整体本地检查时跑 `mise run ci`。
+- 发布和测试包以 GitHub Actions 结果为准，不以本地 `target/release/*` 作为交付物。
+- 改 workflow 或 action 时，优先用 YAML 解析和远端 Actions 验证；本机没有 `actionlint` 时不要声称已跑。
+- 修改分层相关代码时，保持 `workflows` 无平台分支，平台差异集中在 adapters。

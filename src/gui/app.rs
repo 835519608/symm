@@ -39,6 +39,7 @@ pub struct SymmApp {
     saved_settings: crate::domain::gui_settings::GuiSettings,
     pending_settings: Option<crate::domain::gui_settings::GuiSettings>,
     settings_save_due: Option<Instant>,
+    manual_refresh_pending: bool,
     applied_theme: Option<ThemeKey>,
     debug_open_settings: bool,
     debug_settings_section: Option<SettingsSection>,
@@ -112,6 +113,7 @@ impl SymmApp {
             saved_settings,
             pending_settings: None,
             settings_save_due: None,
+            manual_refresh_pending: false,
             applied_theme: None,
             debug_open_settings: std::env::var_os("SYMM_DEBUG_OPEN_SETTINGS").is_some(),
             debug_settings_section: debug_settings_section(),
@@ -154,11 +156,19 @@ impl SymmApp {
             return;
         }
 
-        if let Some(pending) = self.pending_settings.take()
-            && let Ok(()) = settings_store::save(&pending)
-        {
-            self.saved_settings = pending;
-            self.settings_save_due = None;
+        if let Some(pending) = self.pending_settings.take() {
+            match settings_store::save(&pending) {
+                Ok(()) => {
+                    self.saved_settings = pending;
+                    self.settings_save_due = None;
+                }
+                Err(err) => {
+                    self.pending_settings = Some(pending);
+                    self.settings_save_due = Some(now + Duration::from_secs(5));
+                    self.toast(format!("设置保存失败：{err}"), 4200);
+                    ctx.request_repaint_after(Duration::from_secs(5));
+                }
+            }
         }
     }
 
@@ -206,6 +216,10 @@ impl SymmApp {
                 self.snapshot = snapshot;
                 self.state.sidebar_filter.clear();
                 self.state.db_error = None;
+                if self.manual_refresh_pending {
+                    self.state.refresh_notice_until =
+                        Some(Instant::now() + Duration::from_millis(1800));
+                }
                 let valid: HashSet<i64> = self.snapshot.views.iter().map(|v| v.id).collect();
                 self.state.checked_ids.retain(|id| valid.contains(id));
                 if let Some(selected_id) = self.state.selected_id
@@ -220,6 +234,7 @@ impl SymmApp {
                 self.state.db_error = Some(self.state.texts().db_open_failed(&err));
             }
         }
+        self.manual_refresh_pending = false;
     }
 
     fn apply_settings_draft(&mut self, ctx: &egui::Context) {
@@ -432,9 +447,10 @@ impl SymmApp {
         let name = form.name.trim().to_string();
         let lock = form.lock_policy;
         let conflict = form.conflict_policy;
+        let symlink_conflict = form.symlink_conflict_policy;
         self.spawn_task(ctx, move || {
             GuiTaskResult::Add(
-                crate::gui::data::add_link(&link, &target, &name, lock, conflict)
+                crate::gui::data::add_link(&link, &target, &name, lock, conflict, symlink_conflict)
                     .map_err(|err| err.to_string()),
             )
         });
@@ -507,7 +523,8 @@ impl eframe::App for SymmApp {
         let frame_actions = shell::show_frame(ctx, &mut self.state, &self.snapshot);
         if frame_actions.refresh_requested {
             self.needs_reload = true;
-            self.state.refresh_notice_until = Some(Instant::now() + Duration::from_millis(1800));
+            self.state.refresh_notice_until = None;
+            self.manual_refresh_pending = true;
         }
         if frame_actions.delete_checked_requested {
             self.begin_rm_checked();

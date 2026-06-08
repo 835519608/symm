@@ -29,6 +29,7 @@ impl RemoveMode {
 }
 
 /// GUI / 脚本：指定删除方式，不走交互选择。
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub fn run_with_mode<W: Write>(
     conn: &rusqlite::Connection,
     selectors: &[String],
@@ -37,7 +38,29 @@ pub fn run_with_mode<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let records = resolve_records(conn, selectors)?;
-    let action = mode.to_action();
+    run_resolved_records(conn, records, mode.to_action(), writer, started)
+}
+
+/// CLI：先解析 selector，再询问删除方式，避免非 TTY 脚本把 selector 错误误报成交互失败。
+pub fn run_with_mode_picker<W: Write>(
+    conn: &rusqlite::Connection,
+    selectors: &[String],
+    pick_mode: impl FnOnce() -> Result<RemoveMode, SymmError>,
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    let started = Instant::now();
+    let records = resolve_records(conn, selectors)?;
+    let action = pick_mode()?.to_action();
+    run_resolved_records(conn, records, action, writer, started)
+}
+
+fn run_resolved_records<W: Write>(
+    conn: &rusqlite::Connection,
+    records: Vec<LinkRecord>,
+    action: RmAction,
+    writer: &mut W,
+    started: Instant,
+) -> Result<(), SymmError> {
     let mut labels = Vec::with_capacity(records.len());
     let mut failures = Vec::new();
     for record in records {

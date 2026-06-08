@@ -7,6 +7,12 @@ use std::path::PathBuf;
 pub fn load_into(state: &mut AppState) -> GuiSettings {
     let settings = settings_store::load();
     apply(state, &settings);
+    if state.data_dir.trim().is_empty()
+        && let Ok(home) = std::env::var("SYMM_HOME")
+        && !home.trim().is_empty()
+    {
+        state.data_dir = home.trim().to_string();
+    }
     sync_symm_home(&state.data_dir);
     settings
 }

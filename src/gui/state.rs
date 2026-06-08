@@ -22,12 +22,20 @@ pub enum AddLockPolicy {
     Cancel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AddSymlinkConflictPolicy {
+    Retarget,
+    #[default]
+    Cancel,
+}
+
 #[derive(Debug, Default)]
 pub struct AddForm {
     pub link_path: String,
     pub target_path: String,
     pub name: String,
     pub conflict_policy: AddConflictPolicy,
+    pub symlink_conflict_policy: AddSymlinkConflictPolicy,
     pub lock_policy: AddLockPolicy,
     pub status_message: Option<String>,
     pub error: Option<String>,

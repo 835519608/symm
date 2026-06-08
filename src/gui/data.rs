@@ -1,6 +1,6 @@
 use crate::adapters::db::link_store;
 use crate::domain::error::SymmError;
-use crate::gui::state::{AddConflictPolicy, AddLockPolicy, LinkSnapshot};
+use crate::gui::state::{AddConflictPolicy, AddLockPolicy, AddSymlinkConflictPolicy, LinkSnapshot};
 use crate::gui::util::VecWriter;
 use crate::workflows::add::workflow::{
     AddConflictChoice, AddDecisionProvider, AddLockChoice, AddSymlinkConflictChoice,
@@ -21,6 +21,7 @@ pub fn add_link(
     name: &str,
     lock: AddLockPolicy,
     conflict: AddConflictPolicy,
+    symlink_conflict: AddSymlinkConflictPolicy,
 ) -> Result<String, SymmError> {
     let conn = link_store::open()?;
     let mut writer = VecWriter(Vec::new());
@@ -28,6 +29,7 @@ pub fn add_link(
         name,
         lock,
         conflict,
+        symlink_conflict,
     };
     crate::workflows::add::workflow::run_with_decisions(
         &conn,
@@ -53,6 +55,7 @@ struct GuiAddDecisions<'a> {
     name: &'a str,
     lock: AddLockPolicy,
     conflict: AddConflictPolicy,
+    symlink_conflict: AddSymlinkConflictPolicy,
 }
 
 impl AddDecisionProvider for GuiAddDecisions<'_> {
@@ -78,6 +81,9 @@ impl AddDecisionProvider for GuiAddDecisions<'_> {
     }
 
     fn symlink_conflict_choice(&mut self) -> Result<AddSymlinkConflictChoice, SymmError> {
-        Ok(AddSymlinkConflictChoice::Retarget)
+        Ok(match self.symlink_conflict {
+            AddSymlinkConflictPolicy::Retarget => AddSymlinkConflictChoice::Retarget,
+            AddSymlinkConflictPolicy::Cancel => AddSymlinkConflictChoice::Cancel,
+        })
     }
 }

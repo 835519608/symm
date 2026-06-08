@@ -3,7 +3,7 @@ use crate::adapters::db::schema;
 use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkKind, LinkRecord, prepare_link_name_for_storage};
-use rusqlite::{Connection, Error as SqlError, ErrorCode, ToSql, params};
+use rusqlite::{Connection, Error as SqlError, ErrorCode, ToSql, params, types::Type};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn now_ts() -> i64 {
@@ -50,7 +50,7 @@ pub fn insert_link(
         prepared.stored.as_str(),
         link_path,
         target_path,
-        link_kind.to_string(),
+        link_kind.as_db_str(),
         ts,
         ts
     ]);
@@ -272,12 +272,19 @@ pub fn list_index_for_id(conn: &Connection, id: i64) -> Result<Option<u32>, Symm
 
 fn map_link_row(row: &rusqlite::Row<'_>) -> Result<LinkRecord, SqlError> {
     let kind_str: String = row.get(4)?;
+    let link_kind = LinkKind::from_db_str(&kind_str).ok_or_else(|| {
+        SqlError::FromSqlConversionFailure(
+            4,
+            Type::Text,
+            format!("未知链接类型：{kind_str}").into(),
+        )
+    })?;
     Ok(LinkRecord {
         id: row.get(0)?,
         name: row.get(1)?,
         link_path: row.get(2)?,
         target_path: row.get(3)?,
-        link_kind: kind_str.parse().unwrap_or(LinkKind::Symlink),
+        link_kind,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
     })
@@ -364,5 +371,37 @@ mod tests {
         assert_eq!(stored, "link-42");
         let r = find_one(&conn, &LinkQuery::name_exact("link-42")).expect("by name");
         assert_eq!(r.name, "link-42");
+    }
+
+    #[test]
+    fn junction_kind_round_trips_with_stable_db_value() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        insert_link(&conn, "j", "/tmp/j", "/tmp/t", LinkKind::Junction).expect("insert");
+
+        let raw: String = conn
+            .query_row("SELECT link_kind FROM links WHERE name = 'j'", [], |row| {
+                row.get(0)
+            })
+            .expect("raw link kind");
+        assert_eq!(raw, "junction");
+
+        let record = find_one(&conn, &LinkQuery::link_path_exact("/tmp/j")).expect("get");
+        assert_eq!(record.link_kind, LinkKind::Junction);
+    }
+
+    #[test]
+    fn legacy_chinese_link_kind_values_remain_readable() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        conn.execute(
+            "INSERT INTO links(name, link_path, target_path, link_kind, created_at, updated_at)
+             VALUES('legacy', '/tmp/legacy', '/tmp/t', '目录联接', 0, 0)",
+            [],
+        )
+        .expect("insert legacy");
+
+        let record = find_one(&conn, &LinkQuery::link_path_exact("/tmp/legacy")).expect("get");
+        assert_eq!(record.link_kind, LinkKind::Junction);
     }
 }

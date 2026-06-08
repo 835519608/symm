@@ -21,10 +21,12 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
                 writer,
             )
         }
-        Commands::Rm { selectors } => {
-            let mode = crate::app::cli_decisions::select_rm_mode()?;
-            workflows::rm::workflow::run_with_mode(&conn, &selectors, mode, writer)
-        }
+        Commands::Rm { selectors } => workflows::rm::workflow::run_with_mode_picker(
+            &conn,
+            &selectors,
+            crate::app::cli_decisions::select_rm_mode,
+            writer,
+        ),
         Commands::Ls {
             json,
             status,

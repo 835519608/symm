@@ -1,6 +1,8 @@
 use crate::domain::gui_settings::Locale;
 use crate::gui::icons::Icon;
-use crate::gui::state::{AddConflictPolicy, AddForm, AddLockPolicy, AppState};
+use crate::gui::state::{
+    AddConflictPolicy, AddForm, AddLockPolicy, AddSymlinkConflictPolicy, AppState,
+};
 use crate::gui::theme;
 use crate::gui::widgets::{
     ModalOptions, ModalSection, ModalSize, PathBrowse, PathPickMode, button, form_page, path_field,
@@ -170,6 +172,17 @@ fn show_add_form(
                 &mut form.conflict_policy,
                 AddConflictPolicy::KeepTarget,
                 t.conflict_keep_target(),
+            );
+            ui.separator();
+            ui.radio_value(
+                &mut form.symlink_conflict_policy,
+                AddSymlinkConflictPolicy::Cancel,
+                t.symlink_conflict_cancel(),
+            );
+            ui.radio_value(
+                &mut form.symlink_conflict_policy,
+                AddSymlinkConflictPolicy::Retarget,
+                t.symlink_conflict_retarget(),
             );
         });
 
