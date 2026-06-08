@@ -12,6 +12,17 @@ fn cmd() -> Command {
     command
 }
 
+#[cfg(windows)]
+fn create_junction(target: &Path, link: &Path) {
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()
+        .expect("run mklink");
+    assert!(status.success(), "mklink /J should succeed");
+}
+
 #[test]
 fn add_then_ls_then_show_then_rm() {
     let temp = tempdir().expect("temp dir");
@@ -210,6 +221,76 @@ fn rm_multiple_selectors_deletes_all() {
         .stdout(contains("[]"));
 }
 
+#[cfg(unix)]
+#[test]
+fn rm_multiple_partial_failure_returns_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    let protected_dir = data_root.join("protected");
+    let normal_dir = data_root.join("normal");
+    fs::create_dir_all(&protected_dir).expect("create protected root");
+    fs::create_dir_all(&normal_dir).expect("create normal root");
+
+    let protected_target = data_root.join("protected_target.txt");
+    let protected_link = protected_dir.join("protected_link.txt");
+    let normal_target = data_root.join("normal_target.txt");
+    let normal_link = normal_dir.join("normal_link.txt");
+    fs::write(&protected_target, "protected").expect("write protected target");
+    fs::write(&normal_target, "normal").expect("write normal target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "rm-protected")
+        .args([
+            "add",
+            &protected_link.to_string_lossy(),
+            &protected_target.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "rm-normal")
+        .args([
+            "add",
+            &normal_link.to_string_lossy(),
+            &normal_target.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    let original_mode = fs::metadata(&protected_dir)
+        .expect("protected metadata")
+        .permissions()
+        .mode();
+    fs::set_permissions(&protected_dir, fs::Permissions::from_mode(0o555))
+        .expect("make protected root readonly");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_RM_ACTION", "delete")
+        .args(["rm", "rm-protected", "rm-normal"])
+        .assert()
+        .failure()
+        .stdout(contains("已删除：rm-normal"))
+        .stdout(contains("失败：rm-protected"))
+        .stderr(contains("\"code\": \"io_error\""));
+
+    fs::set_permissions(&protected_dir, fs::Permissions::from_mode(original_mode))
+        .expect("restore protected root permissions");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"rm-protected\""))
+        .stdout(predicates::str::contains("\"name\":\"rm-normal\"").not());
+}
+
 #[test]
 fn rm_missing_selector_fails_before_prompting_for_mode() {
     let temp = tempdir().expect("temp dir");
@@ -222,6 +303,42 @@ fn rm_missing_selector_fails_before_prompting_for_mode() {
         .assert()
         .failure()
         .stderr(contains("\"code\": \"not_found\""));
+}
+
+#[cfg(windows)]
+#[test]
+fn add_existing_junction_records_junction_kind() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+    let target = data_root.join("target_junction");
+    let link = data_root.join("link_junction");
+    fs::create_dir(&target).expect("create target dir");
+    create_junction(&target, &link);
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "junction-demo")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).expect("json stdout");
+    let json: Value = serde_json::from_str(&text).expect("ls json");
+    let items = json.as_array().expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "junction-demo");
+    assert_eq!(items[0]["link_kind"], "junction");
+    assert_eq!(items[0]["status"], "ok");
 }
 
 #[test]

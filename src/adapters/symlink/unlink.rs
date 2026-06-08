@@ -11,9 +11,7 @@ pub fn unlink(link: &Path) -> Result<(), SymmError> {
             if !file_type.is_symlink() && !is_junction {
                 return Ok(());
             }
-            let is_dir_link =
-                is_junction || file_type.is_dir() || fs::metadata(link).is_ok_and(|m| m.is_dir());
-            if is_dir_link {
+            if should_remove_with_remove_dir(&meta, link, is_junction) {
                 fs::remove_dir(link).map_err(|e| SymmError::IoError {
                     message: e.to_string(),
                 })?;
@@ -32,6 +30,16 @@ pub fn unlink(link: &Path) -> Result<(), SymmError> {
 }
 
 #[cfg(windows)]
+fn should_remove_with_remove_dir(meta: &Metadata, link: &Path, is_junction: bool) -> bool {
+    is_junction || meta.file_type().is_dir() || fs::metadata(link).is_ok_and(|m| m.is_dir())
+}
+
+#[cfg(not(windows))]
+fn should_remove_with_remove_dir(_meta: &Metadata, _link: &Path, _is_junction: bool) -> bool {
+    false
+}
+
+#[cfg(windows)]
 fn is_junction_like(meta: &Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
 
@@ -44,6 +52,35 @@ fn is_junction_like(meta: &Metadata) -> bool {
 #[cfg(not(windows))]
 fn is_junction_like(_meta: &Metadata) -> bool {
     false
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod unix_tests {
+    use super::unlink;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn unlink_removes_directory_symlink_without_removing_target() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("target-dir");
+        let link = dir.path().join("link-dir");
+        fs::create_dir(&target).expect("target");
+        fs::write(target.join("data.txt"), "x").expect("write target file");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink dir");
+
+        unlink(&link).expect("unlink directory symlink");
+
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "symlink path should be removed"
+        );
+        assert!(
+            target.join("data.txt").exists(),
+            "target contents should remain"
+        );
+    }
 }
 
 #[cfg(test)]

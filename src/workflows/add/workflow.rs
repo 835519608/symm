@@ -112,9 +112,8 @@ fn execute_add<W: Write>(
         runtime_paths::normalize_target(target)?
     };
     let link_kind = if prep.link_exists_at_path {
-        existing
-            .as_ref()
-            .map(|r| r.link_kind)
+        prep.existing_link_kind
+            .or_else(|| existing.as_ref().map(|r| r.link_kind))
             .unwrap_or(LinkKind::Symlink)
     } else {
         reporter.handle_workflow_event(WorkflowProgressEvent::CreatingLink {

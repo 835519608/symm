@@ -59,12 +59,17 @@ pub struct SettingsDraft {
 
 impl SettingsDraft {
     pub fn from_state(state: &AppState) -> Self {
+        let data_dir = if state.data_dir_runtime_override {
+            &state.persisted_data_dir
+        } else {
+            &state.data_dir
+        };
         Self {
             section: SettingsSection::Appearance,
             color_scheme: state.color_scheme,
             font_size_pt: state.font_size_pt,
             sidebar_width: state.sidebar_width,
-            data_dir: state.data_dir.clone(),
+            data_dir: data_dir.clone(),
         }
     }
 
@@ -278,5 +283,38 @@ impl Default for AppState {
             sidebar_filter: SidebarFilterCache::default(),
             busy: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_draft_uses_persisted_data_dir_when_runtime_override_is_active() {
+        let state = AppState {
+            data_dir: "/tmp/symm-env".to_string(),
+            persisted_data_dir: "/tmp/symm-saved".to_string(),
+            data_dir_runtime_override: true,
+            ..AppState::default()
+        };
+
+        let draft = SettingsDraft::from_state(&state);
+
+        assert_eq!(draft.data_dir, "/tmp/symm-saved");
+    }
+
+    #[test]
+    fn settings_draft_uses_active_data_dir_without_runtime_override() {
+        let state = AppState {
+            data_dir: "/tmp/symm-active".to_string(),
+            persisted_data_dir: "/tmp/symm-saved".to_string(),
+            data_dir_runtime_override: false,
+            ..AppState::default()
+        };
+
+        let draft = SettingsDraft::from_state(&state);
+
+        assert_eq!(draft.data_dir, "/tmp/symm-active");
     }
 }

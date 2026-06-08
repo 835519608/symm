@@ -3,6 +3,7 @@ use crate::adapters::migrate::{self, MigrationEvent};
 use crate::adapters::paths::remove;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
+use crate::domain::model::LinkKind;
 use std::fs;
 use std::path::Path;
 
@@ -10,12 +11,14 @@ use std::path::Path;
 pub struct AddPrepareOutcome {
     /// `link` 路径上是否已有条目（通常为软链），调用方无需再 `create_link`。
     pub link_exists_at_path: bool,
+    pub existing_link_kind: Option<LinkKind>,
     /// 若 true，`add` 可对 `target` 调用 `normalize_target_known_exists`，跳过第二次 `exists()`。
     pub skip_target_exists_check: bool,
 }
 
 fn finish_outcome(
     link_exists_at_path: bool,
+    existing_link_kind: Option<LinkKind>,
     target_existed_at_start: bool,
     target_removed_during_prepare: bool,
     target_created_during_prepare: bool,
@@ -24,6 +27,7 @@ fn finish_outcome(
         target_existed_at_start && !target_removed_during_prepare && !target_created_during_prepare;
     AddPrepareOutcome {
         link_exists_at_path,
+        existing_link_kind,
         skip_target_exists_check,
     }
 }
@@ -57,26 +61,25 @@ where
 {
     let link_meta = fs::symlink_metadata(link).ok();
     let link_exists = link_meta.is_some();
-    let link_is_symlink = link_meta
-        .as_ref()
-        .is_some_and(|meta| meta.file_type().is_symlink());
+    let existing_link_kind = link_meta.as_ref().and_then(symlink::kind_from_metadata);
+    let link_is_managed_link = existing_link_kind.is_some();
     let target_existed_at_start = target.exists();
 
     match (link_exists, target_existed_at_start) {
-        (false, false) => Ok(finish_outcome(false, false, false, false)),
-        (false, true) => Ok(finish_outcome(false, true, false, false)),
+        (false, false) => Ok(finish_outcome(false, None, false, false, false)),
+        (false, true) => Ok(finish_outcome(false, None, true, false, false)),
         (true, false) => {
-            if link_is_symlink {
+            if link_is_managed_link {
                 return Err(SymmError::TargetNotFound {
                     path: target.to_string_lossy().to_string(),
                 });
             }
             adopt_link_to_target(link, target, reporter, true, true)?;
-            Ok(finish_outcome(false, false, false, true))
+            Ok(finish_outcome(false, None, false, false, true))
         }
         (true, true) => {
-            if link_is_symlink {
-                prepare_symlink_exist(link, target, target_existed_at_start, decisions)
+            if let Some(link_kind) = existing_link_kind {
+                prepare_existing_link(link, target, target_existed_at_start, link_kind, decisions)
             } else {
                 prepare_both_exist(link, target, reporter, target_existed_at_start, decisions)
             }
@@ -84,20 +87,33 @@ where
     }
 }
 
-fn prepare_symlink_exist(
+fn prepare_existing_link(
     link: &Path,
     target: &Path,
     target_existed_at_start: bool,
+    link_kind: LinkKind,
     decisions: &mut impl ConflictDecisionProvider,
 ) -> Result<AddPrepareOutcome, SymmError> {
     if symlink_points_to_target(link, target)? {
-        return Ok(finish_outcome(true, target_existed_at_start, false, false));
+        return Ok(finish_outcome(
+            true,
+            Some(link_kind),
+            target_existed_at_start,
+            false,
+            false,
+        ));
     }
     let choice = decisions.symlink_conflict_choice()?;
     match choice {
         SymlinkConflictChoice::Retarget => {
             symlink::unlink(link)?;
-            Ok(finish_outcome(false, target_existed_at_start, false, false))
+            Ok(finish_outcome(
+                false,
+                None,
+                target_existed_at_start,
+                false,
+                false,
+            ))
         }
         SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {
             message: format!(
@@ -123,11 +139,23 @@ where
         ConflictChoice::KeepLink => {
             remove::remove_any(target)?;
             adopt_link_to_target(link, target, reporter, true, true)?;
-            Ok(finish_outcome(false, target_existed_at_start, true, true))
+            Ok(finish_outcome(
+                false,
+                None,
+                target_existed_at_start,
+                true,
+                true,
+            ))
         }
         ConflictChoice::KeepTarget => {
             remove::remove_any(link)?;
-            Ok(finish_outcome(false, target_existed_at_start, false, false))
+            Ok(finish_outcome(
+                false,
+                None,
+                target_existed_at_start,
+                false,
+                false,
+            ))
         }
         ConflictChoice::Cancel => Err(SymmError::InvalidArgument {
             message: "已取消".to_string(),

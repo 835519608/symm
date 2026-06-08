@@ -100,9 +100,15 @@ fn run_resolved_records<W: Write>(
         started.elapsed(),
         &[
             ("count", labels.len().to_string()),
+            ("failures", failures.len().to_string()),
             ("action", format!("{action:?}")),
         ],
     );
+    if !failures.is_empty() {
+        return Err(SymmError::IoError {
+            message: format!("部分删除失败：{}", failures.join("\n")),
+        });
+    }
     Ok(())
 }
 

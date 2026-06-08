@@ -1,3 +1,4 @@
+use crate::adapters::symlink;
 use crate::domain::model::{LinkKind, LinkRecord, LinkStatus, LinkView};
 use std::fs;
 use std::fs::Metadata;
@@ -23,25 +24,7 @@ pub fn for_record(record: &LinkRecord) -> LinkStatus {
 }
 
 fn is_expected_link_kind(meta: &Metadata, kind: LinkKind) -> bool {
-    match kind {
-        LinkKind::Symlink => meta.file_type().is_symlink(),
-        LinkKind::Junction => is_junction_like(meta),
-    }
-}
-
-#[cfg(windows)]
-fn is_junction_like(meta: &Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    let attrs = meta.file_attributes();
-    (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
-}
-
-#[cfg(not(windows))]
-fn is_junction_like(_meta: &Metadata) -> bool {
-    false
+    symlink::kind_from_metadata(meta) == Some(kind)
 }
 
 pub fn to_view(record: LinkRecord) -> LinkView {
@@ -163,5 +146,22 @@ mod tests {
             LinkKind::Junction,
         ));
         assert_eq!(status, LinkStatus::Broken);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stale_when_recorded_symlink_is_junction() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("target-dir");
+        let link = dir.path().join("junction");
+        fs::create_dir(&target).expect("target");
+        create_junction(&target, &link);
+
+        let status = for_record(&record_with_kind(
+            &link.to_string_lossy(),
+            &target.to_string_lossy(),
+            LinkKind::Symlink,
+        ));
+        assert_eq!(status, LinkStatus::Stale);
     }
 }

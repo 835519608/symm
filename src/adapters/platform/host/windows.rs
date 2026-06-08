@@ -1,6 +1,7 @@
 use super::HostFs;
 use super::error::{RelocateFailure, map_link_io_error};
 use crate::adapters::errors::io::ioe;
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use std::fs;
@@ -151,23 +152,7 @@ pub fn infer_link_kind_after_elevated(target: &Path, link: &Path) -> Result<Link
 }
 
 fn infer_existing_link_kind(link: &Path) -> Option<LinkKind> {
-    let meta = fs::symlink_metadata(link).ok()?;
-    if meta.file_type().is_symlink() {
-        return Some(LinkKind::Symlink);
-    }
-    if is_directory_reparse_point(&meta) {
-        return Some(LinkKind::Junction);
-    }
-    None
-}
-
-fn is_directory_reparse_point(meta: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    let attrs = meta.file_attributes();
-    (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    symlink::existing_link_kind(link)
 }
 
 fn path_prefix(path: &Path) -> Option<String> {
