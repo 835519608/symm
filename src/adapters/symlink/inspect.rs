@@ -1,11 +1,6 @@
 use crate::domain::model::LinkKind;
-use std::fs::{self, Metadata};
+use std::fs::Metadata;
 use std::path::Path;
-
-pub fn existing_link_kind(path: &Path) -> Option<LinkKind> {
-    let meta = fs::symlink_metadata(path).ok()?;
-    kind_from_path_and_metadata(path, &meta)
-}
 
 pub fn kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkKind> {
     #[cfg(windows)]
@@ -143,11 +138,16 @@ fn verbatim_wide_path(path: &Path) -> Option<Vec<u16>> {
 #[cfg(test)]
 #[cfg(windows)]
 mod tests {
-    use super::existing_link_kind;
+    use super::kind_from_path_and_metadata;
     use crate::domain::model::LinkKind;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
+
+    fn existing_link_kind(path: &Path) -> Option<LinkKind> {
+        let meta = fs::symlink_metadata(path).ok()?;
+        kind_from_path_and_metadata(path, &meta)
+    }
 
     fn create_junction(target: &Path, link: &Path) {
         let status = std::process::Command::new("cmd")

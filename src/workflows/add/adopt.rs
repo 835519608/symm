@@ -63,13 +63,21 @@ where
     let link_exists = link_meta.is_some();
     let existing_link_kind = link_meta
         .as_ref()
-        .and_then(|_| symlink::existing_link_kind(link));
+        .and_then(|meta| symlink::kind_from_path_and_metadata(link, meta));
     let link_is_managed_link = existing_link_kind.is_some();
+    let target_path_occupied = fs::symlink_metadata(target).is_ok();
     let target_existed_at_start = target.exists();
 
-    match (link_exists, target_existed_at_start) {
+    match (link_exists, target_path_occupied) {
         (false, false) => Ok(finish_outcome(false, None, false, false, false)),
-        (false, true) => Ok(finish_outcome(false, None, true, false, false)),
+        (false, true) => {
+            if !target_existed_at_start {
+                return Err(SymmError::TargetNotFound {
+                    path: target.to_string_lossy().to_string(),
+                });
+            }
+            Ok(finish_outcome(false, None, true, false, false))
+        }
         (true, false) => {
             if link_is_managed_link {
                 return Err(SymmError::TargetNotFound {
@@ -81,6 +89,11 @@ where
         }
         (true, true) => {
             if let Some(link_kind) = existing_link_kind {
+                if !target_existed_at_start {
+                    return Err(SymmError::TargetNotFound {
+                        path: target.to_string_lossy().to_string(),
+                    });
+                }
                 prepare_existing_link(link, target, target_existed_at_start, link_kind, decisions)
             } else {
                 prepare_both_exist(link, target, reporter, target_existed_at_start, decisions)
@@ -150,6 +163,11 @@ where
             ))
         }
         ConflictChoice::KeepTarget => {
+            if !target_existed_at_start {
+                return Err(SymmError::TargetNotFound {
+                    path: target.to_string_lossy().to_string(),
+                });
+            }
             remove::remove_any(link)?;
             Ok(finish_outcome(
                 false,

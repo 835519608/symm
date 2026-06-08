@@ -152,7 +152,8 @@ pub fn infer_link_kind_after_elevated(target: &Path, link: &Path) -> Result<Link
 }
 
 fn infer_existing_link_kind(link: &Path) -> Option<LinkKind> {
-    symlink::existing_link_kind(link)
+    let meta = fs::symlink_metadata(link).ok()?;
+    symlink::kind_from_path_and_metadata(link, &meta)
 }
 
 fn path_prefix(path: &Path) -> Option<String> {

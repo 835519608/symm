@@ -1,4 +1,5 @@
 use crate::domain::error::SymmError;
+use crate::domain::model::LinkKind;
 use std::fs;
 use std::fs::Metadata;
 use std::path::Path;
@@ -6,12 +7,10 @@ use std::path::Path;
 pub fn unlink(link: &Path) -> Result<(), SymmError> {
     match fs::symlink_metadata(link) {
         Ok(meta) => {
-            let file_type = meta.file_type();
-            let is_junction = is_junction_like(&meta);
-            if !file_type.is_symlink() && !is_junction {
+            let Some(kind) = super::kind_from_path_and_metadata(link, &meta) else {
                 return Ok(());
-            }
-            if should_remove_with_remove_dir(&meta, link, is_junction) {
+            };
+            if should_remove_with_remove_dir(&meta, link, kind) {
                 fs::remove_dir(link).map_err(|e| SymmError::IoError {
                     message: e.to_string(),
                 })?;
@@ -30,28 +29,25 @@ pub fn unlink(link: &Path) -> Result<(), SymmError> {
 }
 
 #[cfg(windows)]
-fn should_remove_with_remove_dir(meta: &Metadata, link: &Path, is_junction: bool) -> bool {
-    is_junction || meta.file_type().is_dir() || fs::metadata(link).is_ok_and(|m| m.is_dir())
+fn should_remove_with_remove_dir(meta: &Metadata, link: &Path, kind: LinkKind) -> bool {
+    kind == LinkKind::Junction
+        || is_directory_reparse_point(meta)
+        || fs::metadata(link).is_ok_and(|m| m.is_dir())
 }
 
 #[cfg(not(windows))]
-fn should_remove_with_remove_dir(_meta: &Metadata, _link: &Path, _is_junction: bool) -> bool {
+fn should_remove_with_remove_dir(_meta: &Metadata, _link: &Path, _kind: LinkKind) -> bool {
     false
 }
 
 #[cfg(windows)]
-fn is_junction_like(meta: &Metadata) -> bool {
+fn is_directory_reparse_point(meta: &Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
 
     const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     let attrs = meta.file_attributes();
     (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
-}
-
-#[cfg(not(windows))]
-fn is_junction_like(_meta: &Metadata) -> bool {
-    false
 }
 
 #[cfg(test)]

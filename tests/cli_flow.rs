@@ -1315,7 +1315,7 @@ fn ls_shows_stale_status_when_link_no_longer_symlink() {
         .assert()
         .success()
         .stdout(contains("stale-item"))
-        .stdout(contains("不是软链"))
+        .stdout(contains("链接类型不符"))
         .stdout(predicates::str::contains("正常").not());
 }
 

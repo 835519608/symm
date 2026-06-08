@@ -1,4 +1,5 @@
 use crate::adapters::errors::io::ioe;
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use std::fs;
 use std::path::Path;
@@ -7,6 +8,10 @@ use std::path::Path;
 pub fn remove_any(path: &Path) -> Result<(), SymmError> {
     match fs::symlink_metadata(path) {
         Ok(meta) => {
+            if symlink::kind_from_path_and_metadata(path, &meta).is_some() {
+                symlink::unlink(path)?;
+                return Ok(());
+            }
             if meta.file_type().is_dir() {
                 fs::remove_dir_all(path).map_err(ioe)?;
             } else {

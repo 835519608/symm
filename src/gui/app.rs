@@ -234,6 +234,9 @@ impl SymmApp {
             Err(err) => {
                 self.snapshot = LinkSnapshot::default();
                 self.state.sidebar_filter.clear();
+                self.state.selected_id = None;
+                self.state.checked_ids.clear();
+                self.state.rm_dialog = None;
                 self.state.db_error = Some(self.state.texts().db_open_failed(&err));
             }
         }
@@ -254,6 +257,7 @@ impl SymmApp {
             return;
         }
 
+        let data_dir_changed = self.state.data_dir != draft.data_dir.trim();
         let sidebar_max = theme::sidebar_max_width(ctx);
         self.state.color_scheme = draft.color_scheme;
         self.state.font_size_pt =
@@ -281,6 +285,11 @@ impl SymmApp {
             }
         }
         self.needs_reload = true;
+        if data_dir_changed {
+            self.state.selected_id = None;
+            self.state.checked_ids.clear();
+            self.state.rm_dialog = None;
+        }
     }
 
     fn poll_task(&mut self, ctx: &egui::Context) {

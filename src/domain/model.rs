@@ -60,7 +60,7 @@ pub enum LinkStatus {
     Broken,
     #[serde(rename = "missing")]
     Missing,
-    /// 路径存在，但已不是软链/junction（库内陈旧记录）
+    /// 路径存在，但不是预期类型的软链/junction（库内陈旧记录）
     #[serde(rename = "stale")]
     Stale,
     /// 仍是软链，但指向与库中 target 不一致
@@ -81,7 +81,7 @@ impl LinkStatus {
             LinkStatus::Ok => "正常",
             LinkStatus::Broken => "目标没了",
             LinkStatus::Missing => "链接没了",
-            LinkStatus::Stale => "不是软链",
+            LinkStatus::Stale => "链接类型不符",
             LinkStatus::Drift => "指向不对",
         }
     }
