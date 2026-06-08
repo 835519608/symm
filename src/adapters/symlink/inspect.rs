@@ -4,7 +4,19 @@ use std::path::Path;
 
 pub fn existing_link_kind(path: &Path) -> Option<LinkKind> {
     let meta = fs::symlink_metadata(path).ok()?;
-    kind_from_metadata(&meta)
+    kind_from_path_and_metadata(path, &meta)
+}
+
+pub fn kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkKind> {
+    #[cfg(windows)]
+    {
+        windows_kind_from_path_and_metadata(path, meta)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        kind_from_metadata(meta)
+    }
 }
 
 pub fn kind_from_metadata(meta: &Metadata) -> Option<LinkKind> {
@@ -23,23 +35,86 @@ pub fn kind_from_metadata(meta: &Metadata) -> Option<LinkKind> {
 }
 
 #[cfg(windows)]
-fn windows_kind_from_metadata(meta: &Metadata) -> Option<LinkKind> {
-    use std::os::windows::fs::{FileTypeExt, MetadataExt};
+fn windows_kind_from_metadata(_meta: &Metadata) -> Option<LinkKind> {
+    None
+}
+
+#[cfg(windows)]
+fn windows_kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkKind> {
+    use std::os::windows::fs::MetadataExt;
 
     const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
-    let file_type = meta.file_type();
-    if file_type.is_symlink_dir() || file_type.is_symlink_file() {
-        return Some(LinkKind::Symlink);
-    }
-
     let attrs = meta.file_attributes();
-    if (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
-        return Some(LinkKind::Junction);
+    if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
+        return None;
     }
 
-    None
+    match reparse_tag_from_path(path) {
+        Some(IO_REPARSE_TAG_SYMLINK) => Some(LinkKind::Symlink),
+        Some(IO_REPARSE_TAG_MOUNT_POINT) if (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 => {
+            Some(LinkKind::Junction)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+use windows::Win32::System::SystemServices::{IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK};
+
+#[cfg(windows)]
+fn reparse_tag_from_path(path: &Path) -> Option<u32> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::FSCTL_GET_REPARSE_POINT;
+    use windows::core::PCWSTR;
+
+    let wide_path: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide_path.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    }
+    .ok()?;
+
+    let mut buffer = vec![0u8; MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize];
+    let mut bytes_returned = 0u32;
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            FSCTL_GET_REPARSE_POINT,
+            None,
+            0,
+            Some(buffer.as_mut_ptr().cast()),
+            buffer.len() as u32,
+            Some(&mut bytes_returned),
+            None,
+        )
+    };
+    let _ = unsafe { CloseHandle(handle) };
+
+    result.ok()?;
+    if bytes_returned < 4 {
+        return None;
+    }
+
+    Some(u32::from_le_bytes(buffer[0..4].try_into().ok()?))
 }
 
 #[cfg(test)]

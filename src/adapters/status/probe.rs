@@ -10,7 +10,7 @@ pub fn for_record(record: &LinkRecord) -> LinkStatus {
         Err(_) => return LinkStatus::Missing,
         Ok(meta) => meta,
     };
-    if !is_expected_link_kind(&meta, record.link_kind) {
+    if !is_expected_link_kind(link, &meta, record.link_kind) {
         return LinkStatus::Stale;
     }
     let expected = Path::new(&record.target_path);
@@ -23,8 +23,8 @@ pub fn for_record(record: &LinkRecord) -> LinkStatus {
     LinkStatus::Ok
 }
 
-fn is_expected_link_kind(meta: &Metadata, kind: LinkKind) -> bool {
-    symlink::kind_from_metadata(meta) == Some(kind)
+fn is_expected_link_kind(link: &Path, meta: &Metadata, kind: LinkKind) -> bool {
+    symlink::kind_from_path_and_metadata(link, meta) == Some(kind)
 }
 
 pub fn to_view(record: LinkRecord) -> LinkView {

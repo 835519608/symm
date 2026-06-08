@@ -61,7 +61,9 @@ where
 {
     let link_meta = fs::symlink_metadata(link).ok();
     let link_exists = link_meta.is_some();
-    let existing_link_kind = link_meta.as_ref().and_then(symlink::kind_from_metadata);
+    let existing_link_kind = link_meta
+        .as_ref()
+        .and_then(|_| symlink::existing_link_kind(link));
     let link_is_managed_link = existing_link_kind.is_some();
     let target_existed_at_start = target.exists();
 
