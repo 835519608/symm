@@ -69,7 +69,9 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
         if link_kind_at(link_path)?.is_none() {
             continue;
         }
-        entries.skip_current_dir();
+        if entry.file_type().is_dir() {
+            entries.skip_current_dir();
+        }
         let raw = fs::read_link(link_path).map_err(ioe)?;
         let rebased = rebase_paths::internal_target(dst_root, link_path, &raw, &roots);
         if rebased.as_os_str() == raw.as_os_str() {

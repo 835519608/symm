@@ -40,7 +40,9 @@ where
 
         if rebase::link_kind_at(src_path)?.is_some() {
             deferred_symlinks.push((src_path.to_path_buf(), dst_path));
-            entries.skip_current_dir();
+            if entry.file_type().is_dir() {
+                entries.skip_current_dir();
+            }
             continue;
         }
 

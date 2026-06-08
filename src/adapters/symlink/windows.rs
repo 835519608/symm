@@ -1,8 +1,8 @@
 //! Windows：建链失败时按需 UAC（策略层，非 OS API）。
 
 use crate::adapters::platform::host::{
-    create_link_direct, infer_link_kind_after_elevated, infer_link_write_kind,
-    needs_link_elevation, write_link_kind_direct, write_symlink_direct,
+    create_link_direct, infer_link_kind_after_elevated, needs_link_elevation,
+    write_link_kind_direct, write_symlink_direct,
 };
 use crate::adapters::platform::privilege;
 use crate::domain::error::SymmError;
@@ -24,11 +24,6 @@ pub fn write_symlink(link: &Path, target: &Path) -> Result<(), SymmError> {
         || write_symlink_direct(link, target),
         || privilege::spawn_elevated_create_link(target, link),
     )
-}
-
-pub fn write_symlink_like(src_link: &Path, link: &Path, target: &Path) -> Result<(), SymmError> {
-    let kind = infer_link_write_kind(src_link)?;
-    write_symlink_with_kind(kind, link, target)
 }
 
 pub(crate) fn write_symlink_with_kind(
