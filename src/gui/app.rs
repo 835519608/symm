@@ -433,6 +433,10 @@ impl SymmApp {
                 self.toast(msg, 3600);
             }
             Err(err) => {
+                self.state.rm_dialog = None;
+                self.needs_reload = true;
+                self.state.selected_id = None;
+                self.state.checked_ids.clear();
                 let msg = self.state.texts().delete_failed(&err);
                 self.toast(msg, 4200);
             }

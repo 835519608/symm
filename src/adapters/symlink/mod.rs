@@ -6,6 +6,6 @@ mod unlink;
 #[cfg(windows)]
 mod windows;
 
-pub use inspect::{existing_link_kind, kind_from_metadata, kind_from_path_and_metadata};
+pub use inspect::{existing_link_kind, kind_from_path_and_metadata};
 pub use link::{create_link, write_symlink};
 pub use unlink::unlink;

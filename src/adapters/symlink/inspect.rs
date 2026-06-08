@@ -19,7 +19,7 @@ pub fn kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkK
     }
 }
 
-pub fn kind_from_metadata(meta: &Metadata) -> Option<LinkKind> {
+fn kind_from_metadata(meta: &Metadata) -> Option<LinkKind> {
     #[cfg(windows)]
     {
         windows_kind_from_metadata(meta)
@@ -75,11 +75,7 @@ fn reparse_tag_from_path(path: &Path) -> Option<u32> {
     use windows::Win32::System::Ioctl::FSCTL_GET_REPARSE_POINT;
     use windows::core::PCWSTR;
 
-    let wide_path: Vec<u16> = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
+    let wide_path = verbatim_wide_path(path)?;
     let handle = unsafe {
         CreateFileW(
             PCWSTR(wide_path.as_ptr()),
@@ -115,6 +111,45 @@ fn reparse_tag_from_path(path: &Path) -> Option<u32> {
     }
 
     Some(u32::from_le_bytes(buffer[0..4].try_into().ok()?))
+}
+
+#[cfg(windows)]
+fn verbatim_wide_path(path: &Path) -> Option<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+
+    fn wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().collect()
+    }
+
+    let absolute;
+    let path = if path.is_absolute() {
+        path
+    } else {
+        absolute = std::env::current_dir().ok()?.join(path);
+        absolute.as_path()
+    };
+
+    let raw: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let verbatim = wide(r"\\?\");
+    let nt_verbatim = wide(r"\??\");
+    if raw.starts_with(&verbatim) || raw.starts_with(&nt_verbatim) {
+        let mut out = raw;
+        out.push(0);
+        return Some(out);
+    }
+
+    let unc = wide(r"\\");
+    let mut out = if raw.starts_with(&unc) {
+        let mut prefixed = wide(r"\\?\UNC\");
+        prefixed.extend_from_slice(&raw[unc.len()..]);
+        prefixed
+    } else {
+        let mut prefixed = verbatim;
+        prefixed.extend_from_slice(&raw);
+        prefixed
+    };
+    out.push(0);
+    Some(out)
 }
 
 #[cfg(test)]
