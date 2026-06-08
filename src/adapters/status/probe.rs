@@ -36,9 +36,7 @@ fn is_junction_like(meta: &Metadata) -> bool {
     const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     let attrs = meta.file_attributes();
-    !meta.file_type().is_symlink()
-        && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
-        && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
 }
 
 #[cfg(not(windows))]
