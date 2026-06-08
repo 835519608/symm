@@ -1,4 +1,3 @@
-pub mod adopt;
-pub mod lock_gate;
-pub mod paths;
-pub mod workflow;
+mod adopt;
+mod lock_gate;
+pub(crate) mod workflow;

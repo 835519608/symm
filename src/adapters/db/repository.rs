@@ -126,10 +126,6 @@ fn push_string_predicate(
             clauses.push(format!("{column} = ?"));
             params.push(Box::new(value.to_string()));
         }
-        StringMatch::Contains => {
-            clauses.push(format!("{column} LIKE ?"));
-            params.push(Box::new(format!("%{value}%")));
-        }
     }
 }
 
@@ -202,10 +198,6 @@ pub fn delete_one(conn: &Connection, query: &LinkQuery) -> Result<LinkRecord, Sy
         });
     }
     Ok(record)
-}
-
-pub fn list_links(conn: &Connection) -> Result<Vec<LinkRecord>, SymmError> {
-    find_all(conn, &LinkQuery::default(), ListOptions::default())
 }
 
 pub fn for_each_link<F>(conn: &Connection, mut f: F) -> Result<(), SymmError>
@@ -319,7 +311,6 @@ fn db_err(e: SqlError) -> SymmError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::db::query::StringMatch;
     use crate::adapters::db::schema::migrate;
 
     #[test]
@@ -340,23 +331,6 @@ mod tests {
     }
 
     #[test]
-    fn find_by_name_contains() {
-        let conn = Connection::open_in_memory().expect("open memory db");
-        migrate(&conn).expect("migrate");
-        insert_link(&conn, "my-demo", "/tmp/a", "/tmp/t", LinkKind::Symlink).expect("insert");
-        let hit = find_one(
-            &conn,
-            &LinkQuery {
-                name: Some("demo".to_string()),
-                name_match: StringMatch::Contains,
-                ..LinkQuery::default()
-            },
-        )
-        .expect("like");
-        assert_eq!(hit.name, "my-demo");
-    }
-
-    #[test]
     fn list_index_resolves_second_row_after_delete() {
         let conn = Connection::open_in_memory().expect("open memory db");
         migrate(&conn).expect("migrate");
@@ -365,7 +339,7 @@ mod tests {
         insert_link(&conn, "c", "/tmp/c", "/tmp/t3", LinkKind::Symlink).expect("insert");
         delete_one(&conn, &LinkQuery::id(2)).expect("delete middle");
 
-        let rows = list_links(&conn).expect("list");
+        let rows = list_links_paginated(&conn, None, 0).expect("list");
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1].name, "c");
     }

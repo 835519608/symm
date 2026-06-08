@@ -1,4 +1,4 @@
 pub mod cli;
-pub mod interaction;
+pub(crate) mod interaction;
 pub mod output;
-pub mod progress;
+pub(crate) mod progress;

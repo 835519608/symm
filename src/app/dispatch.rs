@@ -4,12 +4,27 @@ use crate::workflows;
 use std::io::Write;
 
 pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmError> {
-    let conn = crate::adapters::db::repository::open_db()?;
+    let conn = crate::adapters::db::link_store::open()?;
     match command {
         Commands::Add { link, target } => {
-            workflows::add::workflow::run(&conn, link.as_deref(), target.as_deref(), writer)
+            let (link, target) = crate::app::cli_decisions::resolve_add_paths(
+                &conn,
+                link.as_deref(),
+                target.as_deref(),
+            )?;
+            let mut decisions = crate::app::cli_decisions::CliAddDecisions;
+            workflows::add::workflow::run_with_decisions(
+                &conn,
+                &link,
+                &target,
+                &mut decisions,
+                writer,
+            )
         }
-        Commands::Rm { selectors } => workflows::rm::workflow::run(&conn, &selectors, writer),
+        Commands::Rm { selectors } => {
+            let mode = crate::app::cli_decisions::select_rm_mode()?;
+            workflows::rm::workflow::run_with_mode(&conn, &selectors, mode, writer)
+        }
         Commands::Ls {
             json,
             status,

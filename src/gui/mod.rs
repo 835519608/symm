@@ -11,6 +11,7 @@ mod panels;
 mod settings_store;
 mod shell;
 mod state;
+mod tasks;
 mod theme;
 mod util;
 mod widgets;

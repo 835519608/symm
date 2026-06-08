@@ -3,7 +3,6 @@ use crate::adapters::migrate::{self, MigrationEvent};
 use crate::adapters::paths::remove;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
-use crate::ui::interaction::choice;
 use std::fs;
 use std::path::Path;
 
@@ -42,23 +41,16 @@ pub(crate) enum SymlinkConflictChoice {
     Cancel,
 }
 
-pub fn resolve_add_conflict<F>(
-    link: &Path,
-    target: &Path,
-    reporter: &mut F,
-) -> Result<AddPrepareOutcome, SymmError>
-where
-    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
-{
-    resolve_add_conflict_with_choices(link, target, reporter, None, None)
+pub(crate) trait ConflictDecisionProvider {
+    fn conflict_choice(&mut self) -> Result<ConflictChoice, SymmError>;
+    fn symlink_conflict_choice(&mut self) -> Result<SymlinkConflictChoice, SymmError>;
 }
 
 pub(crate) fn resolve_add_conflict_with_choices<F>(
     link: &Path,
     target: &Path,
     reporter: &mut F,
-    conflict_choice: Option<ConflictChoice>,
-    symlink_conflict_choice: Option<SymlinkConflictChoice>,
+    decisions: &mut impl ConflictDecisionProvider,
 ) -> Result<AddPrepareOutcome, SymmError>
 where
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
@@ -84,20 +76,9 @@ where
         }
         (true, true) => {
             if link_is_symlink {
-                prepare_symlink_exist(
-                    link,
-                    target,
-                    target_existed_at_start,
-                    symlink_conflict_choice,
-                )
+                prepare_symlink_exist(link, target, target_existed_at_start, decisions)
             } else {
-                prepare_both_exist(
-                    link,
-                    target,
-                    reporter,
-                    target_existed_at_start,
-                    conflict_choice,
-                )
+                prepare_both_exist(link, target, reporter, target_existed_at_start, decisions)
             }
         }
     }
@@ -107,15 +88,12 @@ fn prepare_symlink_exist(
     link: &Path,
     target: &Path,
     target_existed_at_start: bool,
-    explicit_choice: Option<SymlinkConflictChoice>,
+    decisions: &mut impl ConflictDecisionProvider,
 ) -> Result<AddPrepareOutcome, SymmError> {
     if symlink_points_to_target(link, target)? {
         return Ok(finish_outcome(true, target_existed_at_start, false, false));
     }
-    let choice = match explicit_choice {
-        Some(choice) => choice,
-        None => select_symlink_conflict_choice()?,
-    };
+    let choice = decisions.symlink_conflict_choice()?;
     match choice {
         SymlinkConflictChoice::Retarget => {
             symlink::unlink(link)?;
@@ -132,15 +110,12 @@ fn prepare_both_exist<F>(
     target: &Path,
     reporter: &mut F,
     target_existed_at_start: bool,
-    explicit_choice: Option<ConflictChoice>,
+    decisions: &mut impl ConflictDecisionProvider,
 ) -> Result<AddPrepareOutcome, SymmError>
 where
     F: FnMut(MigrationEvent) -> Result<(), SymmError>,
 {
-    let choice = match explicit_choice {
-        Some(choice) => choice,
-        None => select_conflict_choice()?,
-    };
+    let choice = decisions.conflict_choice()?;
     match choice {
         ConflictChoice::KeepLink => {
             remove::remove_any(target)?;
@@ -198,67 +173,6 @@ fn ensure_target_parent_dir(target: &Path) -> Result<(), SymmError> {
     fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
         message: format!("接管失败：无法创建目录 {}：{e}", parent.display()),
     })
-}
-
-fn select_conflict_choice() -> Result<ConflictChoice, SymmError> {
-    choice::choose_with_env(
-        "SYMM_ADD_CONFLICT_CHOICE",
-        parse_conflict_choice,
-        "链接位置和目标位置都已存在，请选择：",
-        "↑↓ 移动  Enter 确认  Esc 取消",
-        vec![
-            (
-                "留链接这边（不要目标那边）".to_string(),
-                ConflictChoice::KeepLink,
-            ),
-            (
-                "留目标那边（不要链接这边）".to_string(),
-                ConflictChoice::KeepTarget,
-            ),
-            ("取消".to_string(), ConflictChoice::Cancel),
-        ],
-    )
-}
-
-fn parse_conflict_choice(raw: &str) -> Result<ConflictChoice, SymmError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "link" | "keep_link" => Ok(ConflictChoice::KeepLink),
-        "target" | "keep_target" => Ok(ConflictChoice::KeepTarget),
-        "cancel" | "abort" => Ok(ConflictChoice::Cancel),
-        _ => Err(SymmError::InvalidArgument {
-            message: format!(
-                "环境变量 SYMM_ADD_CONFLICT_CHOICE 无效：{raw}（可选：link / target / cancel）"
-            ),
-        }),
-    }
-}
-
-fn select_symlink_conflict_choice() -> Result<SymlinkConflictChoice, SymmError> {
-    choice::choose_with_env(
-        "SYMM_ADD_SYMLINK_CONFLICT_CHOICE",
-        parse_symlink_conflict_choice,
-        "该路径已是软链，但指向与目标不一致，请选择：",
-        "↑↓ 移动  Enter 确认  Esc 取消",
-        vec![
-            (
-                "改成指向新目标".to_string(),
-                SymlinkConflictChoice::Retarget,
-            ),
-            ("取消".to_string(), SymlinkConflictChoice::Cancel),
-        ],
-    )
-}
-
-fn parse_symlink_conflict_choice(raw: &str) -> Result<SymlinkConflictChoice, SymmError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "retarget" | "target" | "replace" => Ok(SymlinkConflictChoice::Retarget),
-        "cancel" | "abort" => Ok(SymlinkConflictChoice::Cancel),
-        _ => Err(SymmError::InvalidArgument {
-            message: format!(
-                "环境变量 SYMM_ADD_SYMLINK_CONFLICT_CHOICE 无效：{raw}（可选：retarget / cancel）"
-            ),
-        }),
-    }
 }
 
 fn symlink_points_to_target(link: &Path, target: &Path) -> Result<bool, SymmError> {

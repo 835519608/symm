@@ -1,11 +1,10 @@
 //! `rm`：删库后删除 link，或将 target 迁回 link 路径。支持多个 selector；省略参数时交互多选。
-use crate::adapters::db::{LinkQuery, repository};
+use crate::adapters::db::link_store;
 use crate::adapters::migrate;
 use crate::adapters::status;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkRecord, LinkStatus};
-use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use crate::workflows::perf;
 use crate::workflows::select;
@@ -27,15 +26,6 @@ impl RemoveMode {
             RemoveMode::RestoreTargetToLink => RmAction::RestoreTargetToLink,
         }
     }
-}
-
-pub fn run<W: Write>(
-    conn: &rusqlite::Connection,
-    selectors: &[String],
-    writer: &mut W,
-) -> Result<(), SymmError> {
-    let action = select_rm_action()?;
-    run_with_mode(conn, selectors, action.to_remove_mode(), writer)
 }
 
 /// GUI / 脚本：指定删除方式，不走交互选择。
@@ -144,7 +134,7 @@ fn remove_one<W: Write>(
         RmAction::DeleteLinkOnly => apply_delete_link_only(writer, record, link, link_status)?,
     }
 
-    repository::delete_one(conn, &LinkQuery::id(record.id))?;
+    link_store::delete_by_id(conn, record.id)?;
     Ok(record_label(record))
 }
 
@@ -187,43 +177,6 @@ fn record_label(record: &LinkRecord) -> String {
 enum RmAction {
     DeleteLinkOnly,
     RestoreTargetToLink,
-}
-
-impl RmAction {
-    fn to_remove_mode(self) -> RemoveMode {
-        match self {
-            RmAction::DeleteLinkOnly => RemoveMode::DeleteLinkOnly,
-            RmAction::RestoreTargetToLink => RemoveMode::RestoreTargetToLink,
-        }
-    }
-}
-
-fn select_rm_action() -> Result<RmAction, SymmError> {
-    choice::choose_with_env(
-        "SYMM_RM_ACTION",
-        parse_rm_action,
-        "是否把目标移回链接位置？",
-        "↑↓ 移动  Enter 确认  Esc 取消",
-        vec![
-            ("只删软链和记录".to_string(), RmAction::DeleteLinkOnly),
-            (
-                "删软链，并把目标移回链接位置".to_string(),
-                RmAction::RestoreTargetToLink,
-            ),
-        ],
-    )
-}
-
-fn parse_rm_action(raw: &str) -> Result<RmAction, SymmError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "no" | "n" | "delete" | "delete_only" => Ok(RmAction::DeleteLinkOnly),
-        "yes" | "y" | "restore" | "restore_target" => Ok(RmAction::RestoreTargetToLink),
-        _ => Err(SymmError::InvalidArgument {
-            message: format!(
-                "环境变量 SYMM_RM_ACTION 无效：{raw}（可选：delete / restore 或 no / yes）"
-            ),
-        }),
-    }
 }
 
 fn restore_target_to_link<W: Write>(

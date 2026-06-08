@@ -4,4 +4,4 @@ pub mod domain;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod ui;
-pub mod workflows;
+mod workflows;

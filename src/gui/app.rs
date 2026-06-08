@@ -5,14 +5,13 @@ use crate::gui::panels::{open_rm_dialog_batch, validate_add_form};
 use crate::gui::settings_store::{self, from_state};
 use crate::gui::shell::{self, AddDialogAction, RmDialogAction, SettingsDialogAction};
 use crate::gui::state::{AppState, LinkSnapshot, RmDialog, SettingsSection};
+use crate::gui::tasks::{GuiTask, GuiTaskResult, TaskPoll};
 use crate::gui::theme;
 use crate::gui::theme::ThemePreference;
 use crate::workflows::rm::workflow::RemoveMode;
 use eframe::CreationContext;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::thread;
 use std::time::{Duration, Instant};
 pub fn run() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -48,16 +47,6 @@ pub struct SymmApp {
     debug_sample_data: bool,
     debug_screenshot_to: Option<PathBuf>,
     debug_screenshot_requested: bool,
-}
-
-struct GuiTask {
-    rx: Receiver<GuiTaskResult>,
-}
-
-enum GuiTaskResult {
-    Reload(Result<LinkSnapshot, String>),
-    Add(Result<String, String>),
-    Remove(Result<String, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -199,12 +188,8 @@ impl SymmApp {
         if self.task.is_some() {
             return;
         }
-        let (tx, rx) = mpsc::channel();
-        self.task = Some(GuiTask { rx });
+        self.task = Some(GuiTask::spawn(run));
         self.state.busy = true;
-        thread::spawn(move || {
-            let _ = tx.send(run());
-        });
         ctx.request_repaint();
     }
 
@@ -280,13 +265,13 @@ impl SymmApp {
             return;
         };
 
-        let result = match task.rx.try_recv() {
-            Ok(result) => result,
-            Err(TryRecvError::Empty) => {
+        let result = match task.poll() {
+            TaskPoll::Ready(result) => result,
+            TaskPoll::Pending => {
                 ctx.request_repaint_after(Duration::from_millis(50));
                 return;
             }
-            Err(TryRecvError::Disconnected) => {
+            TaskPoll::Disconnected => {
                 self.task = None;
                 self.state.busy = false;
                 self.toast(self.state.texts().task_failed(), 4200);

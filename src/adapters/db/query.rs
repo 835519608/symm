@@ -1,10 +1,9 @@
-//! `links` 表查询条件：各字段可选，非空字段 AND 组合（供 repository / 未来 HTTP 服务共用）。
+//! `links` 表查询条件：各字段可选，非空字段 AND 组合。
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum StringMatch {
     #[default]
     Exact,
-    Contains,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -42,13 +41,6 @@ impl LinkQuery {
         }
     }
 
-    pub fn has_predicate(&self) -> bool {
-        self.id.is_some()
-            || self.name.is_some()
-            || self.link_path.is_some()
-            || self.target_path.is_some()
-    }
-
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
         if let Some(id) = self.id {
@@ -59,7 +51,6 @@ impl LinkQuery {
                 "name {} {:?}",
                 match self.name_match {
                     StringMatch::Exact => "=",
-                    StringMatch::Contains => "LIKE",
                 },
                 name
             ));
@@ -69,7 +60,6 @@ impl LinkQuery {
                 "link_path {} {:?}",
                 match self.link_path_match {
                     StringMatch::Exact => "=",
-                    StringMatch::Contains => "LIKE",
                 },
                 path
             ));
@@ -79,7 +69,6 @@ impl LinkQuery {
                 "target_path {} {:?}",
                 match self.target_path_match {
                     StringMatch::Exact => "=",
-                    StringMatch::Contains => "LIKE",
                 },
                 path
             ));

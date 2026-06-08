@@ -1,6 +1,6 @@
 //! 与 `ls` 顺序一致的交互候选列表。
 
-use crate::adapters::db::repository;
+use crate::adapters::db::link_store;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkRecord;
 use std::ops::Deref;
@@ -46,14 +46,14 @@ impl Deref for PickEntries {
 }
 
 pub fn list_entries(conn: &rusqlite::Connection) -> Result<PickEntries, SymmError> {
-    let total = repository::count_links(conn)?;
+    let total = link_store::count(conn)?;
     if total > INTERACTIVE_ENTRY_LIMIT as usize {
         return Ok(PickEntries {
             items: Vec::new(),
             total,
         });
     }
-    let items = repository::list_links_paginated(conn, Some(INTERACTIVE_ENTRY_LIMIT), 0)?
+    let items = link_store::list_paginated(conn, Some(INTERACTIVE_ENTRY_LIMIT), 0)?
         .into_iter()
         .enumerate()
         .map(|(i, record)| PickEntry {

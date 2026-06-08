@@ -5,7 +5,6 @@ use crate::adapters::lock::{
     list_locking_processes_with_progress, pre_scan_notices, wait_after_kill,
 };
 use crate::domain::error::SymmError;
-use crate::ui::interaction::choice;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use std::io::Write;
 use std::path::Path;
@@ -16,17 +15,10 @@ pub(crate) enum LockResolutionAction {
     Cancel,
 }
 
-pub fn ensure_link_not_locked<W: Write>(
-    link: &Path,
-    reporter: &mut MigrationProgressReporter<'_, W>,
-) -> Result<(), SymmError> {
-    ensure_link_not_locked_with_choice(link, reporter, None)
-}
-
 pub(crate) fn ensure_link_not_locked_with_choice<W: Write>(
     link: &Path,
     reporter: &mut MigrationProgressReporter<'_, W>,
-    explicit_action: Option<LockResolutionAction>,
+    choose_action: &mut impl FnMut(&[ProcInfo]) -> Result<LockResolutionAction, SymmError>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查链接是否被占用：{}", link.display()))?;
     if !link.exists() {
@@ -46,10 +38,7 @@ pub(crate) fn ensure_link_not_locked_with_choice<W: Write>(
         return Ok(());
     }
     reporter.write_line("检测到占用，请选择是否结束占用进程")?;
-    let action = match explicit_action {
-        Some(action) => action,
-        None => select_lock_resolution_action(&procs)?,
-    };
+    let action = choose_action(&procs)?;
     if action == LockResolutionAction::Cancel {
         return Err(SymmError::InvalidArgument {
             message: format!("链接位置仍被占用，已取消：{}", link.display()),
@@ -66,36 +55,4 @@ pub(crate) fn ensure_link_not_locked_with_choice<W: Write>(
     Err(SymmError::IoError {
         message: format_still_locked_message(link, &remaining),
     })
-}
-
-fn select_lock_resolution_action(procs: &[ProcInfo]) -> Result<LockResolutionAction, SymmError> {
-    let occupied = procs
-        .iter()
-        .map(|proc| format!("  - {}", proc))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let prompt = format!("以下进程占用了链接位置：\n{occupied}\n请选择：");
-    choice::choose_with_env(
-        "SYMM_ADD_LOCK_CHOICE",
-        parse_lock_resolution_action,
-        &prompt,
-        "↑↓ 移动  Enter 确认  Esc 取消",
-        vec![
-            (
-                format!("结束占用并继续（{} 个进程）", procs.len()),
-                LockResolutionAction::UnlockAll,
-            ),
-            ("取消".to_string(), LockResolutionAction::Cancel),
-        ],
-    )
-}
-
-fn parse_lock_resolution_action(raw: &str) -> Result<LockResolutionAction, SymmError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "unlock" | "unlock_all" | "kill" | "continue" => Ok(LockResolutionAction::UnlockAll),
-        "cancel" | "abort" => Ok(LockResolutionAction::Cancel),
-        _ => Err(SymmError::InvalidArgument {
-            message: format!("环境变量 SYMM_ADD_LOCK_CHOICE 无效：{raw}（可选：unlock / cancel）"),
-        }),
-    }
 }

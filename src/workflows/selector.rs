@@ -1,6 +1,6 @@
 //! 将 CLI 选择器（name / `ls` 序号）解析为 [`LinkRecord`]。
 
-use crate::adapters::db::{LinkQuery, repository};
+use crate::adapters::db::link_store;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkRecord;
 use std::collections::{BTreeMap, HashSet};
@@ -19,7 +19,7 @@ pub fn record_from_token(
     if let Some(index) = parse_list_index(token)? {
         return record_at_index(conn, index);
     }
-    repository::find_one(conn, &LinkQuery::name_exact(token))
+    link_store::find_by_name(conn, token)
 }
 
 pub fn records_from_tokens(
@@ -39,7 +39,7 @@ pub fn records_from_tokens(
         if let Some(index) = parse_list_index(token)? {
             numeric_positions.entry(index).or_default().push(pos);
         } else {
-            resolved[pos] = Some(repository::find_one(conn, &LinkQuery::name_exact(token))?);
+            resolved[pos] = Some(link_store::find_by_name(conn, token)?);
         }
     }
 
@@ -68,7 +68,7 @@ pub fn record_at_index(conn: &rusqlite::Connection, index: u32) -> Result<LinkRe
         });
     }
     let selector = index.to_string();
-    repository::list_links_paginated(conn, Some(1), index - 1)?
+    link_store::list_paginated(conn, Some(1), index - 1)?
         .into_iter()
         .next()
         .ok_or(SymmError::NotFound { selector })
@@ -76,7 +76,7 @@ pub fn record_at_index(conn: &rusqlite::Connection, index: u32) -> Result<LinkRe
 
 /// 计算记录在 `ls` 全表中的序号（用于 `show` 展示）。
 pub fn index_in_list(conn: &rusqlite::Connection, record: &LinkRecord) -> Result<u32, SymmError> {
-    repository::list_index_for_id(conn, record.id)?.ok_or_else(|| SymmError::NotFound {
+    link_store::index_for_id(conn, record.id)?.ok_or_else(|| SymmError::NotFound {
         selector: record.link_path.clone(),
     })
 }
@@ -105,7 +105,7 @@ fn fill_numeric_records(
 ) -> Result<(), SymmError> {
     let max_index = numeric_positions.keys().next_back().copied().unwrap_or(0);
     let mut row_index = 0u32;
-    repository::for_each_link(conn, |record| {
+    link_store::for_each(conn, |record| {
         row_index = row_index.saturating_add(1);
         if let Some(positions) = numeric_positions.get(&row_index) {
             for &pos in positions {
