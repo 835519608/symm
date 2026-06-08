@@ -385,15 +385,15 @@ cargo build --release --features gui --bin symm --bin symm-cli --target <triple>
 
 | 平台 | 架构 | 产物 |
 |------|------|------|
-| Windows | x64 | `symm-setup-windows-x64.exe`、`symm-portable-windows-x64.zip`、`SHA256SUMS` |
-| Windows | arm64 | `symm-portable-windows-arm64.zip`、`SHA256SUMS-windows-arm64` |
-| Windows | x86 | `symm-portable-windows-x86.zip`、`SHA256SUMS-windows-x86` |
+| Windows | x64 | `symm-setup-windows-x64.exe`、`symm-portable-windows-x64.zip` |
+| Windows | arm64 | `symm-portable-windows-arm64.zip` |
+| Windows | x86 | `symm-portable-windows-x86.zip` |
 | Linux | x64 | `symm-portable-linux-x64.zip` |
 | Linux | arm64 | `symm-portable-linux-arm64.zip` |
 | macOS | x64 | `symm-portable-macos-x64.zip` |
 | macOS | arm64 | `symm-portable-macos-arm64.zip` |
 
-Windows 安装包目前只为 x64 构建；arm64 / x86 先提供便携 zip。
+Windows 安装包目前只为 x64 构建；arm64 / x86 先提供便携 zip。每次发布会额外生成一个统一的 `SHA256SUMS`，覆盖本次 Release 的所有产物。
 
 ## GitHub Actions
 
@@ -401,15 +401,30 @@ Windows 安装包目前只为 x64 构建；arm64 / x86 先提供便携 zip。
 |----------|------|------|
 | **CI** | `push` / `PR`（`src/`、`tests/`、`Cargo.*`、workflow） | 发布架构矩阵：`fmt` → `clippy -D warnings` → `test` |
 | **Release** | 推送 `vX.Y.Z`（无 `-` 后缀） | 正式发布，全平台全架构，设为 Latest |
-| **Release Test** | 推送 `vX.Y.Z-test[-平台]` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定平台（见下） |
+| **Release Test** | 推送 `vX.Y.Z-test[-平台]` 或手动触发 | 测试 Pre-release，**不**取代 Latest；可只打指定目标包 |
 | **Cleanup Test Releases** | 每日北京时间 01:00（17:00 UTC）或手动触发 | 删除旧测试 Pre-release，**仅保留发布时间最新的一条** `*-test*` |
 
-**Release Test 平台与版本**（正式 `release.yml` 固定全平台全架构）：
+**发布流程**：
 
-- Tag：`vX.Y.Z-test`（全平台全架构）、`vX.Y.Z-test-windows` / `-test-linux` / `-test-macos`，或多平台如 `vX.Y.Z-test-windows-linux`（`win` / `mac` 别名）。**勿**在 `test` 后加数字（不用 `v0.1.0-test15`）。
-- 版本号只改 `X.Y.Z`：小改动 `Z+1`（`0.1.0→0.1.1`）；大变动 `Y+1` 且 `Z=0`（`0.1.2→0.2.0`）。
-- 手动：`gh workflow run release-test.yml -f build_windows=true -f build_linux=false -f build_macos=false`
+1. `verify-ci` 先确认当前提交上的 `ci.yml` 已成功；发布 workflow 不重复跑测试。
+2. 各平台构建 job 只生成并上传临时 artifact，不直接写 GitHub Release。
+3. 最后的发布 job 下载全部 artifact，生成统一 `SHA256SUMS`，再一次性创建 / 更新 GitHub Release。
 
-**打包与 CI**：`release*.yml` 只做发布构建（`cargo build --release --features gui --bin symm --bin symm-cli`），**不重复**跑测试；会先查当前 commit 上 `ci.yml` 发布架构矩阵是否已成功。请先 push 并等 CI 全绿再打 tag，否则会失败并提示缺少/未通过的 CI 运行。
+**Runner 矩阵**：
 
-**Release 说明**：自动使用 **tag 所指向 commit 的提交说明**（`git log -1`）作为 GitHub Release 正文。打 tag 前把该 commit 的 message 写好即可；跨多 commit 时可在打 tag 前 `git commit --amend` 汇总，或 squash 后再 tag。手动触发测试包时可用 `release_notes` 覆盖。
+| 目标包 | Runner |
+|--------|--------|
+| Linux x64 | `ubuntu-24.04` |
+| Linux arm64 | `ubuntu-24.04-arm` |
+| Windows x64 / x86 | `windows-2025` |
+| Windows arm64 | `windows-11-arm` |
+| macOS x64 | `macos-15-intel` |
+| macOS arm64 | `macos-15` |
+
+**Release Test 规则**：
+
+- 测试 tag：`vX.Y.Z-test`（全平台全架构）、`vX.Y.Z-test-windows` / `-test-linux` / `-test-macos`，或多平台组合如 `vX.Y.Z-test-windows-linux`（支持 `win` / `mac` 别名）。
+- 禁止在 `test` 后追加数字，例如不要使用 `v0.1.0-test15`。
+- 手动触发按目标包勾选，默认构建 `windows-x64` / `linux-x64` / `macos-x64`。
+- 手动只打 Windows x64：`gh workflow run release-test.yml -f build_windows_x64=true -f build_linux_x64=false -f build_macos_x64=false`
+- 手动只打 Linux arm64：`gh workflow run release-test.yml -f build_windows_x64=false -f build_linux_x64=false -f build_macos_x64=false -f build_linux_arm64=true`

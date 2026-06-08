@@ -11,11 +11,15 @@ permissions:
   contents: write
   actions: read
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   verify-ci:
     name: 校验 CI 已通过
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/verify-ci-passed
@@ -24,10 +28,9 @@ jobs:
     name: 准备 Release 说明
     needs: verify-ci
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       release_tag: ${{ github.ref_name }}
-      release_version: ${{ steps.version.outputs.version }}
       release_semver: ${{ steps.version.outputs.semver }}
       release_body: ${{ steps.notes.outputs.body }}
     steps:
@@ -37,11 +40,11 @@ jobs:
       - id: notes
         uses: ./.github/actions/prepare-release-notes
 
-  build-and-release-windows:
-    name: 发布产物 (windows-latest)
+  build-windows-x64:
+    name: 构建产物 (windows-x64)
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -55,39 +58,22 @@ jobs:
       - name: Windows 安装包与便携包
         uses: ./.github/actions/package-windows
         with:
-          release_version: ${{ needs.prepare-release.outputs.release_version }}
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
-      - name: 上传到 GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
         with:
-          body: ${{ needs.prepare-release.outputs.release_body }}
-          files: |
+          name: release-assets-windows-x64
+          path: |
             symm-setup-windows-x64.exe
             symm-portable-windows-x64.zip
-            SHA256SUMS
-          prerelease: false
-          make_latest: true
+          if-no-files-found: error
 
-  build-and-release-windows-extra:
-    name: 发布产物 (windows-${{ matrix.arch }})
+  build-windows-arm64:
+    name: 构建产物 (windows-arm64)
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: windows-11-arm
-            build_target: ""
-            portable_name: symm-portable-windows-arm64.zip
-            checksum_name: SHA256SUMS-windows-arm64
-          - arch: x86
-            runner: windows-latest
-            build_target: i686-pc-windows-msvc
-            portable_name: symm-portable-windows-x86.zip
-            checksum_name: SHA256SUMS-windows-x86
+    runs-on: windows-11-arm
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -101,25 +87,49 @@ jobs:
       - name: Windows 便携包
         uses: ./.github/actions/package-windows
         with:
-          release_version: ${{ needs.prepare-release.outputs.release_version }}
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
-          build_target: ${{ matrix.build_target }}
-          portable_name: ${{ matrix.portable_name }}
-          checksum_name: ${{ matrix.checksum_name }}
+          portable_name: symm-portable-windows-arm64.zip
           build_installer: "false"
 
-      - name: 上传到 GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
         with:
-          body: ${{ needs.prepare-release.outputs.release_body }}
-          files: |
-            ${{ matrix.portable_name }}
-            ${{ matrix.checksum_name }}
-          prerelease: false
-          make_latest: true
+          name: release-assets-windows-arm64
+          path: symm-portable-windows-arm64.zip
+          if-no-files-found: error
 
-  build-and-release-linux:
-    name: 发布产物 (linux-${{ matrix.arch }})
+  build-windows-x86:
+    name: 构建产物 (windows-x86)
+    needs: prepare-release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: windows-2025
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: Windows 便携包
+        uses: ./.github/actions/package-windows
+        with:
+          release_semver: ${{ needs.prepare-release.outputs.release_semver }}
+          build_target: i686-pc-windows-msvc
+          portable_name: symm-portable-windows-x86.zip
+          build_installer: "false"
+
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-windows-x86
+          path: symm-portable-windows-x86.zip
+          if-no-files-found: error
+
+  build-linux:
+    name: 构建产物 (linux-${{ matrix.arch }})
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ${{ matrix.runner }}
@@ -128,7 +138,7 @@ jobs:
       matrix:
         include:
           - arch: x64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             archive_name: symm-portable-linux-x64.zip
           - arch: arm64
             runner: ubuntu-24.04-arm
@@ -149,16 +159,15 @@ jobs:
           archive_name: ${{ matrix.archive_name }}
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
-      - name: 上传到 GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
         with:
-          body: ${{ needs.prepare-release.outputs.release_body }}
-          files: ${{ matrix.archive_name }}
-          prerelease: false
-          make_latest: true
+          name: release-assets-linux-${{ matrix.arch }}
+          path: ${{ matrix.archive_name }}
+          if-no-files-found: error
 
-  build-and-release-macos:
-    name: 发布产物 (macos-${{ matrix.arch }})
+  build-macos:
+    name: 构建产物 (macos-${{ matrix.arch }})
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ${{ matrix.runner }}
@@ -188,10 +197,52 @@ jobs:
           archive_name: ${{ matrix.archive_name }}
           release_semver: ${{ needs.prepare-release.outputs.release_semver }}
 
-      - name: 上传到 GitHub Release
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-macos-${{ matrix.arch }}
+          path: ${{ matrix.archive_name }}
+          if-no-files-found: error
+
+  publish-release:
+    name: 发布 Release
+    needs:
+      - prepare-release
+      - build-windows-x64
+      - build-windows-arm64
+      - build-windows-x86
+      - build-linux
+      - build-macos
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 下载全部临时产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          path: dist
+          merge-multiple: true
+
+      - name: 生成 SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          if ! find . -maxdepth 1 -type f ! -name SHA256SUMS -print -quit | grep -q .; then
+            echo "::error::没有找到可发布产物"
+            exit 1
+          fi
+          : > SHA256SUMS
+          while IFS= read -r -d '' file; do
+            sha256sum "${file#./}" >> SHA256SUMS
+          done < <(find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z)
+          cat SHA256SUMS
+
+      - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ needs.prepare-release.outputs.release_body }}
-          files: ${{ matrix.archive_name }}
+          files: dist/*
           prerelease: false
           make_latest: true
+          fail_on_unmatched_files: true

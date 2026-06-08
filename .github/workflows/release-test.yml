@@ -1,7 +1,7 @@
 # 测试包：Pre-release，不成为 Latest，不影响正式发布流程。
 #
 # 触发：
-#   - 推送测试 tag（见下）或手动 workflow_dispatch（勾选平台）
+#   - 推送测试 tag（见下）或手动 workflow_dispatch（勾选目标包）
 #
 # Tag 命名：vX.Y.Z-test[-<platforms>]（test 后无数字；版本只在 X.Y.Z）
 #   v0.1.0-test                 → 全平台全架构
@@ -9,11 +9,11 @@
 #   v0.1.0-test-linux           → 仅 Linux 全架构
 #   v0.1.0-test-macos           → 仅 macOS 全架构
 #   v0.1.0-test-windows-linux   → 多平台组合（别名 win / mac）
+# 手动触发按目标包勾选；测试 tag 仍按平台全架构打包。
 #
 # 版本号：小改动 Z+1（0.1.0→0.1.1）；大变动 Y+1 且 Z 归零（0.1.2→0.2.0）
 #
 # 打包前不重复跑测试：校验当前 commit 上 ci.yml 已成功（见 verify-ci-passed）。
-# Windows 附件：setup 安装包、便携 zip、SHA256SUMS；不再单独上传裸 exe。
 name: Release Test
 
 on:
@@ -22,18 +22,34 @@ on:
       - "v*-test*"
   workflow_dispatch:
     inputs:
-      build_windows:
-        description: 构建 Windows 包
+      build_windows_x64:
+        description: 构建 Windows x64 包（含 installer）
         type: boolean
         default: true
-      build_linux:
-        description: 构建 Linux 包
+      build_windows_arm64:
+        description: 构建 Windows arm64 包
+        type: boolean
+        default: false
+      build_windows_x86:
+        description: 构建 Windows x86 包
+        type: boolean
+        default: false
+      build_linux_x64:
+        description: 构建 Linux x64 包
         type: boolean
         default: true
-      build_macos:
-        description: 构建 macOS 包
+      build_linux_arm64:
+        description: 构建 Linux arm64 包
+        type: boolean
+        default: false
+      build_macos_x64:
+        description: 构建 macOS x64 包
         type: boolean
         default: true
+      build_macos_arm64:
+        description: 构建 macOS arm64 包
+        type: boolean
+        default: false
       release_notes:
         description: 可选，覆盖 Release 正文（默认用 tag 指向 commit 的提交说明）
         type: string
@@ -43,18 +59,25 @@ permissions:
   contents: write
   actions: read
 
+concurrency:
+  group: release-test-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   plan:
-    name: 解析平台与 Release tag
-    runs-on: ubuntu-latest
+    name: 解析目标包与 Release tag
+    runs-on: ubuntu-24.04
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
-      release_version: ${{ steps.version.outputs.version }}
       release_semver: ${{ steps.version.outputs.semver }}
       release_body: ${{ steps.notes.outputs.body }}
-      build_windows: ${{ steps.meta.outputs.build_windows }}
-      build_linux: ${{ steps.meta.outputs.build_linux }}
-      build_macos: ${{ steps.meta.outputs.build_macos }}
+      build_windows_x64: ${{ steps.meta.outputs.build_windows_x64 }}
+      build_windows_arm64: ${{ steps.meta.outputs.build_windows_arm64 }}
+      build_windows_x86: ${{ steps.meta.outputs.build_windows_x86 }}
+      build_linux_x64: ${{ steps.meta.outputs.build_linux_x64 }}
+      build_linux_arm64: ${{ steps.meta.outputs.build_linux_arm64 }}
+      build_macos_x64: ${{ steps.meta.outputs.build_macos_x64 }}
+      build_macos_arm64: ${{ steps.meta.outputs.build_macos_arm64 }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -69,63 +92,91 @@ jobs:
           else
             RELEASE_TAG="test-run-${{ github.run_id }}"
           fi
-          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-          build_windows=false
-          build_linux=false
-          build_macos=false
+          build_windows_x64=false
+          build_windows_arm64=false
+          build_windows_x86=false
+          build_linux_x64=false
+          build_linux_arm64=false
+          build_macos_x64=false
+          build_macos_arm64=false
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            [ "${{ inputs.build_windows }}" = "true" ] && build_windows=true
-            [ "${{ inputs.build_linux }}" = "true" ] && build_linux=true
-            [ "${{ inputs.build_macos }}" = "true" ] && build_macos=true
+            [ "${{ inputs.build_windows_x64 }}" = "true" ] && build_windows_x64=true
+            [ "${{ inputs.build_windows_arm64 }}" = "true" ] && build_windows_arm64=true
+            [ "${{ inputs.build_windows_x86 }}" = "true" ] && build_windows_x86=true
+            [ "${{ inputs.build_linux_x64 }}" = "true" ] && build_linux_x64=true
+            [ "${{ inputs.build_linux_arm64 }}" = "true" ] && build_linux_arm64=true
+            [ "${{ inputs.build_macos_x64 }}" = "true" ] && build_macos_x64=true
+            [ "${{ inputs.build_macos_arm64 }}" = "true" ] && build_macos_arm64=true
           elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test[0-9] ]]; then
             echo "::error::测试 tag 格式无效：${RELEASE_TAG}"
             echo "勿在 test 后加数字（如 v0.1.0-test15）；应使用 vX.Y.Z-test 或 vX.Y.Z-test-windows"
             exit 1
           elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test$ ]]; then
-            build_windows=true
-            build_linux=true
-            build_macos=true
+            build_windows_x64=true
+            build_windows_arm64=true
+            build_windows_x86=true
+            build_linux_x64=true
+            build_linux_arm64=true
+            build_macos_x64=true
+            build_macos_arm64=true
           elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test-(.+)$ ]]; then
             suffix="${BASH_REMATCH[1]}"
             IFS='-' read -ra parts <<< "${suffix}"
             for part in "${parts[@]}"; do
               case "${part}" in
-                windows|win) build_windows=true ;;
-                linux) build_linux=true ;;
-                macos|mac) build_macos=true ;;
+                windows|win)
+                  build_windows_x64=true
+                  build_windows_arm64=true
+                  build_windows_x86=true
+                  ;;
+                linux)
+                  build_linux_x64=true
+                  build_linux_arm64=true
+                  ;;
+                macos|mac)
+                  build_macos_x64=true
+                  build_macos_arm64=true
+                  ;;
                 *)
                   echo "::error::未知平台段「${part}」（tag: ${RELEASE_TAG}）。期望形如 v0.1.0-test-windows 或 v0.1.0-test-windows-linux"
                   exit 1
                   ;;
               esac
             done
-            if ! $build_windows && ! $build_linux && ! $build_macos; then
+            if ! $build_windows_x64 && ! $build_windows_arm64 && ! $build_windows_x86 && ! $build_linux_x64 && ! $build_linux_arm64 && ! $build_macos_x64 && ! $build_macos_arm64; then
               echo "::error::未识别任何平台（tag: ${RELEASE_TAG}）"
               exit 1
             fi
           elif [[ "${RELEASE_TAG}" =~ ^test-run- ]]; then
-            build_windows=true
-            build_linux=true
-            build_macos=true
+            build_windows_x64=true
+            build_linux_x64=true
+            build_macos_x64=true
           else
             echo "::error::测试 tag 格式无效：${RELEASE_TAG}"
             echo "期望：vX.Y.Z-test 或 vX.Y.Z-test-<platform(s)>（如 v0.1.1-test-windows）"
             exit 1
           fi
 
-          if ! $build_windows && ! $build_linux && ! $build_macos; then
-            echo "::error::至少选择一个平台"
+          if ! $build_windows_x64 && ! $build_windows_arm64 && ! $build_windows_x86 && ! $build_linux_x64 && ! $build_linux_arm64 && ! $build_macos_x64 && ! $build_macos_arm64; then
+            echo "::error::至少选择一个目标包"
             exit 1
           fi
 
-          echo "build_windows=${build_windows}" >> "$GITHUB_OUTPUT"
-          echo "build_linux=${build_linux}" >> "$GITHUB_OUTPUT"
-          echo "build_macos=${build_macos}" >> "$GITHUB_OUTPUT"
+          {
+            echo "release_tag=${RELEASE_TAG}"
+            echo "build_windows_x64=${build_windows_x64}"
+            echo "build_windows_arm64=${build_windows_arm64}"
+            echo "build_windows_x86=${build_windows_x86}"
+            echo "build_linux_x64=${build_linux_x64}"
+            echo "build_linux_arm64=${build_linux_arm64}"
+            echo "build_macos_x64=${build_macos_x64}"
+            echo "build_macos_arm64=${build_macos_arm64}"
+          } >> "$GITHUB_OUTPUT"
 
           echo "Release tag: ${RELEASE_TAG}"
-          echo "Platforms: windows=${build_windows} linux=${build_linux} macos=${build_macos}"
+          echo "Targets: windows-x64=${build_windows_x64} windows-arm64=${build_windows_arm64} windows-x86=${build_windows_x86} linux-x64=${build_linux_x64} linux-arm64=${build_linux_arm64} macos-x64=${build_macos_x64} macos-arm64=${build_macos_arm64}"
 
       - name: 校验当前 commit 的 CI 已通过
         uses: ./.github/actions/verify-ci-passed
@@ -140,11 +191,11 @@ jobs:
         with:
           dispatch_notes: ${{ github.event_name == 'workflow_dispatch' && inputs.release_notes || '' }}
 
-  build-and-release-windows:
-    name: 测试包 (windows-latest)
+  build-windows-x64:
+    name: 构建测试产物 (windows-x64)
     needs: plan
-    if: needs.plan.outputs.build_windows == 'true'
-    runs-on: windows-latest
+    if: needs.plan.outputs.build_windows_x64 == 'true'
+    runs-on: windows-2025
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -158,43 +209,22 @@ jobs:
       - name: Windows 安装包与便携包
         uses: ./.github/actions/package-windows
         with:
-          release_version: ${{ needs.plan.outputs.release_version }}
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
-      - name: 上传到 GitHub Release（测试）
-        uses: softprops/action-gh-release@v3
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.plan.outputs.release_tag }}
-          target_commitish: ${{ github.sha }}
-          name: Test ${{ needs.plan.outputs.release_tag }}
-          body: ${{ needs.plan.outputs.release_body }}
-          files: |
+          name: release-test-assets-windows-x64
+          path: |
             symm-setup-windows-x64.exe
             symm-portable-windows-x64.zip
-            SHA256SUMS
-          prerelease: true
-          make_latest: false
-          generate_release_notes: false
+          if-no-files-found: error
 
-  build-and-release-windows-extra:
-    name: 测试包 (windows-${{ matrix.arch }})
+  build-windows-arm64:
+    name: 构建测试产物 (windows-arm64)
     needs: plan
-    if: needs.plan.outputs.build_windows == 'true'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: windows-11-arm
-            build_target: ""
-            portable_name: symm-portable-windows-arm64.zip
-            checksum_name: SHA256SUMS-windows-arm64
-          - arch: x86
-            runner: windows-latest
-            build_target: i686-pc-windows-msvc
-            portable_name: symm-portable-windows-x86.zip
-            checksum_name: SHA256SUMS-windows-x86
+    if: needs.plan.outputs.build_windows_arm64 == 'true'
+    runs-on: windows-11-arm
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -208,42 +238,52 @@ jobs:
       - name: Windows 便携包
         uses: ./.github/actions/package-windows
         with:
-          release_version: ${{ needs.plan.outputs.release_version }}
           release_semver: ${{ needs.plan.outputs.release_semver }}
-          build_target: ${{ matrix.build_target }}
-          portable_name: ${{ matrix.portable_name }}
-          checksum_name: ${{ matrix.checksum_name }}
+          portable_name: symm-portable-windows-arm64.zip
           build_installer: "false"
 
-      - name: 上传到 GitHub Release（测试）
-        uses: softprops/action-gh-release@v3
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.plan.outputs.release_tag }}
-          target_commitish: ${{ github.sha }}
-          name: Test ${{ needs.plan.outputs.release_tag }}
-          body: ${{ needs.plan.outputs.release_body }}
-          files: |
-            ${{ matrix.portable_name }}
-            ${{ matrix.checksum_name }}
-          prerelease: true
-          make_latest: false
-          generate_release_notes: false
+          name: release-test-assets-windows-arm64
+          path: symm-portable-windows-arm64.zip
+          if-no-files-found: error
 
-  build-and-release-linux:
-    name: 测试包 (linux-${{ matrix.arch }})
+  build-windows-x86:
+    name: 构建测试产物 (windows-x86)
     needs: plan
-    if: needs.plan.outputs.build_linux == 'true'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: ubuntu-latest
-            archive_name: symm-portable-linux-x64.zip
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            archive_name: symm-portable-linux-arm64.zip
+    if: needs.plan.outputs.build_windows_x86 == 'true'
+    runs-on: windows-2025
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: Windows 便携包
+        uses: ./.github/actions/package-windows
+        with:
+          release_semver: ${{ needs.plan.outputs.release_semver }}
+          build_target: i686-pc-windows-msvc
+          portable_name: symm-portable-windows-x86.zip
+          build_installer: "false"
+
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-assets-windows-x86
+          path: symm-portable-windows-x86.zip
+          if-no-files-found: error
+
+  build-linux-x64:
+    name: 构建测试产物 (linux-x64)
+    needs: plan
+    if: needs.plan.outputs.build_linux_x64 == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -257,36 +297,21 @@ jobs:
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
-          archive_name: ${{ matrix.archive_name }}
+          archive_name: symm-portable-linux-x64.zip
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
-      - name: 上传到 GitHub Release（测试）
-        uses: softprops/action-gh-release@v3
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.plan.outputs.release_tag }}
-          target_commitish: ${{ github.sha }}
-          name: Test ${{ needs.plan.outputs.release_tag }}
-          body: ${{ needs.plan.outputs.release_body }}
-          files: ${{ matrix.archive_name }}
-          prerelease: true
-          make_latest: false
-          generate_release_notes: false
+          name: release-test-assets-linux-x64
+          path: symm-portable-linux-x64.zip
+          if-no-files-found: error
 
-  build-and-release-macos:
-    name: 测试包 (macos-${{ matrix.arch }})
+  build-linux-arm64:
+    name: 构建测试产物 (linux-arm64)
     needs: plan
-    if: needs.plan.outputs.build_macos == 'true'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: macos-15-intel
-            archive_name: symm-portable-macos-x64.zip
-          - arch: arm64
-            runner: macos-15
-            archive_name: symm-portable-macos-arm64.zip
+    if: needs.plan.outputs.build_linux_arm64 == 'true'
+    runs-on: ubuntu-24.04-arm
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -300,17 +325,117 @@ jobs:
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
-          archive_name: ${{ matrix.archive_name }}
+          archive_name: symm-portable-linux-arm64.zip
           release_semver: ${{ needs.plan.outputs.release_semver }}
 
-      - name: 上传到 GitHub Release（测试）
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-assets-linux-arm64
+          path: symm-portable-linux-arm64.zip
+          if-no-files-found: error
+
+  build-macos-x64:
+    name: 构建测试产物 (macos-x64)
+    needs: plan
+    if: needs.plan.outputs.build_macos_x64 == 'true'
+    runs-on: macos-15-intel
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 打包便携 zip
+        uses: ./.github/actions/package-portable
+        with:
+          archive_name: symm-portable-macos-x64.zip
+          release_semver: ${{ needs.plan.outputs.release_semver }}
+
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-assets-macos-x64
+          path: symm-portable-macos-x64.zip
+          if-no-files-found: error
+
+  build-macos-arm64:
+    name: 构建测试产物 (macos-arm64)
+    needs: plan
+    if: needs.plan.outputs.build_macos_arm64 == 'true'
+    runs-on: macos-15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 启用 Cargo 缓存
+        uses: Swatinem/rust-cache@v2
+
+      - name: 打包便携 zip
+        uses: ./.github/actions/package-portable
+        with:
+          archive_name: symm-portable-macos-arm64.zip
+          release_semver: ${{ needs.plan.outputs.release_semver }}
+
+      - name: 上传临时产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-assets-macos-arm64
+          path: symm-portable-macos-arm64.zip
+          if-no-files-found: error
+
+  publish-test-release:
+    name: 发布测试 Release
+    needs:
+      - plan
+      - build-windows-x64
+      - build-windows-arm64
+      - build-windows-x86
+      - build-linux-x64
+      - build-linux-arm64
+      - build-macos-x64
+      - build-macos-arm64
+    if: ${{ always() && needs.plan.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 下载全部临时产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-test-assets-*
+          path: dist
+          merge-multiple: true
+
+      - name: 生成 SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          if ! find . -maxdepth 1 -type f ! -name SHA256SUMS -print -quit | grep -q .; then
+            echo "::error::没有找到可发布产物"
+            exit 1
+          fi
+          : > SHA256SUMS
+          while IFS= read -r -d '' file; do
+            sha256sum "${file#./}" >> SHA256SUMS
+          done < <(find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z)
+          cat SHA256SUMS
+
+      - name: 发布到 GitHub Release（测试）
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.plan.outputs.release_tag }}
           target_commitish: ${{ github.sha }}
           name: Test ${{ needs.plan.outputs.release_tag }}
           body: ${{ needs.plan.outputs.release_body }}
-          files: ${{ matrix.archive_name }}
+          files: dist/*
           prerelease: true
           make_latest: false
           generate_release_notes: false
+          fail_on_unmatched_files: true

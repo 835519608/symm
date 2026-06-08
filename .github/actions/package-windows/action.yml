@@ -1,10 +1,7 @@
 name: Package Windows (installer + portable zip)
-description: 从发版 tag 写入版本号，构建安装包 / zip / SHA256SUMS
+description: 从发版 tag 写入版本号，构建 Windows 安装包 / 便携 zip
 
 inputs:
-  release_version:
-    description: 完整发布版本（如 0.2.7-test），用于 Release 资源路径
-    required: true
   release_semver:
     description: Cargo / 安装包显示用 X.Y.Z
     required: true
@@ -20,10 +17,6 @@ inputs:
     description: 安装包文件名；仅 build_installer=true 时使用
     required: false
     default: symm-setup-windows-x64.exe
-  checksum_name:
-    description: checksum 文件名
-    required: false
-    default: SHA256SUMS
   build_installer:
     description: 是否构建 Inno Setup 安装包
     required: false
@@ -83,19 +76,6 @@ runs:
         Copy-Item "$buildDir/symm-cli.exe" "$root/cli/"
         if (Test-Path "${{ inputs.portable_name }}") { Remove-Item "${{ inputs.portable_name }}" }
         Compress-Archive -Path "packaging/windows/staging/symm" -DestinationPath "${{ inputs.portable_name }}"
-
-    - name: 生成 SHA256SUMS
-      shell: pwsh
-      run: |
-        $files = @("${{ inputs.portable_name }}")
-        if ("${{ inputs.build_installer }}" -eq "true") {
-          $files = @("packaging/windows/dist/${{ inputs.installer_name }}") + $files
-        }
-        $lines = foreach ($file in $files) {
-          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-          "$hash  $(Split-Path $file -Leaf)"
-        }
-        $lines | Set-Content -Path "${{ inputs.checksum_name }}" -Encoding ascii
 
     - name: 复制发布文件到工作区根目录
       if: ${{ inputs.build_installer == 'true' }}
