@@ -102,9 +102,8 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
 }
 
 pub fn open_rm_dialog(state: &mut AppState, view: &LinkView) {
-    let selector = selector_for(view);
     state.rm_dialog = Some(RmDialog {
-        selectors: vec![selector],
+        ids: vec![view.id],
         summary: view.display_name(),
         mode: RemoveMode::DeleteLinkOnly,
     });
@@ -115,23 +114,15 @@ pub fn open_rm_dialog_batch(state: &mut AppState, views: &[&LinkView]) {
         return;
     }
     let t = GuiTexts::new(state.locale);
-    let selectors: Vec<String> = views.iter().map(|v| selector_for(v)).collect();
+    let ids: Vec<i64> = views.iter().map(|v| v.id).collect();
     let summary = if views.len() == 1 {
         views[0].display_name()
     } else {
         t.rm_batch_summary(&views[0].display_name(), views.len())
     };
     state.rm_dialog = Some(RmDialog {
-        selectors,
+        ids,
         summary,
         mode: RemoveMode::DeleteLinkOnly,
     });
-}
-
-fn selector_for(view: &LinkView) -> String {
-    if view.name.is_empty() {
-        view.id.to_string()
-    } else {
-        view.name.clone()
-    }
 }

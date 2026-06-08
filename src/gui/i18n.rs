@@ -309,6 +309,27 @@ impl GuiTexts {
         }
     }
 
+    pub fn link_op_add(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "创建链接",
+            Locale::En => "Add",
+        }
+    }
+
+    pub fn link_op_adopt(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "接管实体",
+            Locale::En => "Adopt",
+        }
+    }
+
+    pub fn link_op_point(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "改指向",
+            Locale::En => "Point",
+        }
+    }
+
     pub fn link_path_label(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "链接路径",
@@ -384,34 +405,6 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "取消（不结束进程）",
             Locale::En => "Cancel (do not kill processes)",
-        }
-    }
-
-    pub fn conflict_keep_link(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "保留链接侧",
-            Locale::En => "Keep link side",
-        }
-    }
-
-    pub fn conflict_keep_target(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "保留目标侧",
-            Locale::En => "Keep target side",
-        }
-    }
-
-    pub fn symlink_conflict_cancel(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "软链指向不同时取消",
-            Locale::En => "Cancel when symlink points elsewhere",
-        }
-    }
-
-    pub fn symlink_conflict_retarget(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "软链指向不同时改到新目标",
-            Locale::En => "Retarget symlink when it points elsewhere",
         }
     }
 

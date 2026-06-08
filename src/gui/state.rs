@@ -1,6 +1,7 @@
 use crate::domain::gui_settings::{ColorScheme, FONT_SIZE_PT_DEFAULT, GuiSettings, Locale};
 use crate::domain::model::{LinkKind, LinkView};
 use crate::gui::i18n::GuiTexts;
+use crate::workflows::add::workflow::LinkOperation;
 use crate::workflows::rm::workflow::RemoveMode;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -9,33 +10,18 @@ use std::time::Instant;
 pub use crate::gui::theme::ThemePreference;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AddConflictPolicy {
-    #[default]
-    KeepLink,
-    KeepTarget,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AddLockPolicy {
     #[default]
     Unlock,
     Cancel,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AddSymlinkConflictPolicy {
-    Retarget,
-    #[default]
-    Cancel,
-}
-
 #[derive(Debug, Default)]
 pub struct AddForm {
+    pub operation: LinkOperation,
     pub link_path: String,
     pub target_path: String,
     pub name: String,
-    pub conflict_policy: AddConflictPolicy,
-    pub symlink_conflict_policy: AddSymlinkConflictPolicy,
     pub lock_policy: AddLockPolicy,
     pub status_message: Option<String>,
     pub error: Option<String>,
@@ -87,7 +73,7 @@ impl SettingsDraft {
 
 #[derive(Debug, Clone)]
 pub struct RmDialog {
-    pub selectors: Vec<String>,
+    pub ids: Vec<i64>,
     pub summary: String,
     pub mode: RemoveMode,
 }

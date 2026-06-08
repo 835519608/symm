@@ -13,20 +13,30 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
                 target.as_deref(),
             )?;
             let mut decisions = crate::app::cli_decisions::CliAddDecisions;
-            workflows::add::workflow::run_with_decisions(
-                &conn,
-                &link,
-                &target,
-                &mut decisions,
-                writer,
-            )
+            workflows::add::workflow::run_add(&conn, &link, &target, &mut decisions, writer)
         }
-        Commands::Rm { selectors } => workflows::rm::workflow::run_with_mode_picker(
-            &conn,
-            &selectors,
-            crate::app::cli_decisions::select_rm_mode,
-            writer,
-        ),
+        Commands::Adopt { link, target } => {
+            let (link, target) = crate::app::cli_decisions::resolve_add_paths(
+                &conn,
+                link.as_deref(),
+                target.as_deref(),
+            )?;
+            let mut decisions = crate::app::cli_decisions::CliAddDecisions;
+            workflows::add::workflow::run_adopt(&conn, &link, &target, &mut decisions, writer)
+        }
+        Commands::Point { link, target } => {
+            let (link, target) = crate::app::cli_decisions::resolve_add_paths(
+                &conn,
+                link.as_deref(),
+                target.as_deref(),
+            )?;
+            let mut decisions = crate::app::cli_decisions::CliAddDecisions;
+            workflows::add::workflow::run_point(&conn, &link, &target, &mut decisions, writer)
+        }
+        Commands::Rm { selectors } => workflows::rm::workflow::run_rm(&conn, &selectors, writer),
+        Commands::Restore { selectors } => {
+            workflows::rm::workflow::run_restore(&conn, &selectors, writer)
+        }
         Commands::Ls {
             json,
             status,

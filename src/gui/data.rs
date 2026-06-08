@@ -1,10 +1,8 @@
 use crate::adapters::db::link_store;
 use crate::domain::error::SymmError;
-use crate::gui::state::{AddConflictPolicy, AddLockPolicy, AddSymlinkConflictPolicy, LinkSnapshot};
+use crate::gui::state::{AddLockPolicy, LinkSnapshot};
 use crate::gui::util::VecWriter;
-use crate::workflows::add::workflow::{
-    AddConflictChoice, AddDecisionProvider, AddLockChoice, AddSymlinkConflictChoice,
-};
+use crate::workflows::add::workflow::{AddDecisionProvider, AddLockChoice, LinkOperation};
 use crate::workflows::list_views;
 use crate::workflows::rm::workflow::{self, RemoveMode};
 use std::path::Path;
@@ -16,23 +14,18 @@ pub fn reload() -> Result<LinkSnapshot, SymmError> {
 }
 
 pub fn add_link(
+    operation: LinkOperation,
     link: &Path,
     target: &Path,
     name: &str,
     lock: AddLockPolicy,
-    conflict: AddConflictPolicy,
-    symlink_conflict: AddSymlinkConflictPolicy,
 ) -> Result<String, SymmError> {
     let conn = link_store::open()?;
     let mut writer = VecWriter(Vec::new());
-    let mut decisions = GuiAddDecisions {
-        name,
-        lock,
-        conflict,
-        symlink_conflict,
-    };
-    crate::workflows::add::workflow::run_with_decisions(
+    let mut decisions = GuiAddDecisions { name, lock };
+    crate::workflows::add::workflow::run_operation(
         &conn,
+        operation,
         link,
         target,
         &mut decisions,
@@ -41,21 +34,22 @@ pub fn add_link(
     Ok(writer.into_log())
 }
 
-pub fn remove_links(selectors: &[String], mode: RemoveMode) -> Result<String, SymmError> {
-    if selectors.is_empty() {
+pub fn remove_links(ids: &[i64], mode: RemoveMode) -> Result<String, SymmError> {
+    if ids.is_empty() {
         return Ok(String::new());
     }
     let conn = link_store::open()?;
     let mut writer = VecWriter(Vec::new());
-    workflow::run_with_mode(&conn, selectors, mode, &mut writer)?;
+    match mode {
+        RemoveMode::DeleteLinkOnly => workflow::run_rm_by_ids(&conn, ids, &mut writer)?,
+        RemoveMode::RestoreTargetToLink => workflow::run_restore_by_ids(&conn, ids, &mut writer)?,
+    }
     Ok(writer.into_log())
 }
 
 struct GuiAddDecisions<'a> {
     name: &'a str,
     lock: AddLockPolicy,
-    conflict: AddConflictPolicy,
-    symlink_conflict: AddSymlinkConflictPolicy,
 }
 
 impl AddDecisionProvider for GuiAddDecisions<'_> {
@@ -70,20 +64,6 @@ impl AddDecisionProvider for GuiAddDecisions<'_> {
         Ok(match self.lock {
             AddLockPolicy::Unlock => AddLockChoice::Unlock,
             AddLockPolicy::Cancel => AddLockChoice::Cancel,
-        })
-    }
-
-    fn conflict_choice(&mut self) -> Result<AddConflictChoice, SymmError> {
-        Ok(match self.conflict {
-            AddConflictPolicy::KeepLink => AddConflictChoice::KeepLink,
-            AddConflictPolicy::KeepTarget => AddConflictChoice::KeepTarget,
-        })
-    }
-
-    fn symlink_conflict_choice(&mut self) -> Result<AddSymlinkConflictChoice, SymmError> {
-        Ok(match self.symlink_conflict {
-            AddSymlinkConflictPolicy::Retarget => AddSymlinkConflictChoice::Retarget,
-            AddSymlinkConflictPolicy::Cancel => AddSymlinkConflictChoice::Cancel,
         })
     }
 }

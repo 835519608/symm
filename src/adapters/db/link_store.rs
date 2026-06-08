@@ -28,6 +28,10 @@ pub fn find_by_name(conn: &Connection, name: &str) -> Result<LinkRecord, SymmErr
     repository::find_one(conn, &LinkQuery::name_exact(name))
 }
 
+pub fn find_by_id(conn: &Connection, id: i64) -> Result<Option<LinkRecord>, SymmError> {
+    repository::find_optional(conn, &LinkQuery::id(id))
+}
+
 pub fn delete_by_id(conn: &Connection, id: i64) -> Result<LinkRecord, SymmError> {
     repository::delete_one(conn, &LinkQuery::id(id))
 }

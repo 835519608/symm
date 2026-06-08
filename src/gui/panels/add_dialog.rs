@@ -1,13 +1,12 @@
 use crate::domain::gui_settings::Locale;
 use crate::gui::icons::Icon;
-use crate::gui::state::{
-    AddConflictPolicy, AddForm, AddLockPolicy, AddSymlinkConflictPolicy, AppState,
-};
+use crate::gui::state::{AddForm, AddLockPolicy, AppState};
 use crate::gui::theme;
 use crate::gui::widgets::{
     ModalOptions, ModalSection, ModalSize, PathBrowse, PathPickMode, button, form_page, path_field,
     show_modal, split_row, text_field,
 };
+use crate::workflows::add::workflow::LinkOperation;
 use egui::{CollapsingHeader, Ui};
 use std::path::PathBuf;
 
@@ -132,6 +131,12 @@ fn show_add_form(
     form: &mut AddForm,
     browse: PathBrowse<'_>,
 ) {
+    ui.horizontal_wrapped(|ui| {
+        ui.radio_value(&mut form.operation, LinkOperation::Add, t.link_op_add());
+        ui.radio_value(&mut form.operation, LinkOperation::Adopt, t.link_op_adopt());
+        ui.radio_value(&mut form.operation, LinkOperation::Point, t.link_op_point());
+    });
+    ui.add_space(theme::gap(ui));
     if let Some(path) = path_field(ui, p, t.link_path_label(), &mut form.link_path, browse) {
         form.link_path = path.display().to_string();
     }
@@ -162,27 +167,6 @@ fn show_add_form(
                 &mut form.lock_policy,
                 AddLockPolicy::Cancel,
                 t.lock_cancel(),
-            );
-            ui.radio_value(
-                &mut form.conflict_policy,
-                AddConflictPolicy::KeepLink,
-                t.conflict_keep_link(),
-            );
-            ui.radio_value(
-                &mut form.conflict_policy,
-                AddConflictPolicy::KeepTarget,
-                t.conflict_keep_target(),
-            );
-            ui.separator();
-            ui.radio_value(
-                &mut form.symlink_conflict_policy,
-                AddSymlinkConflictPolicy::Cancel,
-                t.symlink_conflict_cancel(),
-            );
-            ui.radio_value(
-                &mut form.symlink_conflict_policy,
-                AddSymlinkConflictPolicy::Retarget,
-                t.symlink_conflict_retarget(),
             );
         });
 

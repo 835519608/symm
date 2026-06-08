@@ -58,11 +58,10 @@ fn add_then_ls_then_show_then_rm() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "delete")
         .args(["rm", "demo"])
         .assert()
         .success()
-        .stdout(contains("已删除：demo"));
+        .stdout(contains("已删除链接关系：demo"));
 }
 
 #[test]
@@ -126,7 +125,6 @@ fn rm_by_list_index_after_delete_middle_row() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "delete")
         .args(["rm", "2"])
         .assert()
         .success();
@@ -160,7 +158,6 @@ fn rm_multiple_list_indices_deletes_requested_rows() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "delete")
         .args(["rm", "1", "3"])
         .assert()
         .success()
@@ -205,7 +202,6 @@ fn rm_multiple_selectors_deletes_all() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "delete")
         .args(["rm", "rm-a", "rm-b"])
         .assert()
         .success()
@@ -271,11 +267,10 @@ fn rm_multiple_partial_failure_returns_failure() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "delete")
         .args(["rm", "rm-protected", "rm-normal"])
         .assert()
         .failure()
-        .stdout(contains("已删除：rm-normal"))
+        .stdout(contains("已删除链接关系：rm-normal"))
         .stdout(contains("失败：rm-protected"))
         .stderr(contains("\"code\": \"io_error\""));
 
@@ -360,11 +355,10 @@ fn rm_with_restore_moves_target_back_to_link_path() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "restore")
-        .args(["rm", "restore-demo"])
+        .args(["restore", "restore-demo"])
         .assert()
         .success()
-        .stdout(contains("已删除，目标已移回链接位置：restore-demo"));
+        .stdout(contains("已恢复实体位置：restore-demo"));
 
     assert!(
         !target.exists(),
@@ -476,7 +470,7 @@ fn add_adopts_existing_link_entity_when_target_missing() {
     cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "adopt")
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .args(["adopt", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success()
         .stdout(contains("正在扫描："))
@@ -512,7 +506,7 @@ fn add_adopts_existing_link_entity_and_creates_nested_target_parent_dirs() {
     cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "adopt-nested")
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .args(["adopt", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success();
 
@@ -521,7 +515,7 @@ fn add_adopts_existing_link_entity_and_creates_nested_target_parent_dirs() {
 }
 
 #[test]
-fn add_when_target_and_link_both_exist_keep_link() {
+fn add_when_target_and_link_both_exist_fails_without_mutation() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -532,26 +526,35 @@ fn add_when_target_and_link_both_exist_keep_link() {
     fs::write(&target, "from-target").expect("write target");
     fs::write(&link, "from-link").expect("write link entity");
 
-    cmd()
+    let output = cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "keep-link")
-        .env("SYMM_ADD_CONFLICT_CHOICE", "link")
         .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
-        .assert()
-        .success();
+        .output()
+        .expect("run add");
+    assert!(!output.status.success());
+    let err = String::from_utf8(output.stderr).expect("stderr utf8");
+    let json: Value = serde_json::from_str(&err).expect("stderr json");
+    assert_eq!(json["code"], "invalid_argument");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message string")
+            .contains("adopt")
+    );
 
     assert_eq!(
-        fs::read_to_string(&target).expect("read kept link payload"),
-        "from-link"
+        fs::read_to_string(&target).expect("read target payload"),
+        "from-target"
     );
     assert_eq!(
-        fs::read_to_string(&link).expect("read through new symlink"),
+        fs::read_to_string(&link).expect("read link payload"),
         "from-link"
     );
 }
 
 #[test]
-fn add_when_target_and_link_both_exist_keep_target() {
+fn adopt_when_target_exists_fails_without_mutation() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -562,26 +565,35 @@ fn add_when_target_and_link_both_exist_keep_target() {
     fs::write(&target, "stay-target").expect("write target");
     fs::write(&link, "drop-link-entity").expect("write link entity");
 
-    cmd()
+    let output = cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "keep-target")
-        .env("SYMM_ADD_CONFLICT_CHOICE", "target")
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
-        .assert()
-        .success();
+        .args(["adopt", &link.to_string_lossy(), &target.to_string_lossy()])
+        .output()
+        .expect("run adopt");
+    assert!(!output.status.success());
+    let err = String::from_utf8(output.stderr).expect("stderr utf8");
+    let json: Value = serde_json::from_str(&err).expect("stderr json");
+    assert_eq!(json["code"], "invalid_argument");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message string")
+            .contains("target 路径已存在")
+    );
 
     assert_eq!(
         fs::read_to_string(&target).expect("read kept target payload"),
         "stay-target"
     );
     assert_eq!(
-        fs::read_to_string(&link).expect("read through recreated symlink"),
-        "stay-target"
+        fs::read_to_string(&link).expect("read unchanged link entity"),
+        "drop-link-entity"
     );
 }
 
 #[test]
-fn add_when_target_and_link_both_exist_cancel() {
+fn point_when_link_is_entity_fails_without_mutation() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -592,18 +604,22 @@ fn add_when_target_and_link_both_exist_cancel() {
     fs::write(&target, "keep-target").expect("write target");
     fs::write(&link, "keep-link").expect("write link entity");
 
-    let cancel_output = cmd()
+    let output = cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "cancel-add")
-        .env("SYMM_ADD_CONFLICT_CHOICE", "cancel")
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .args(["point", &link.to_string_lossy(), &target.to_string_lossy()])
         .output()
-        .expect("run cancel add");
-    assert!(!cancel_output.status.success());
-    let cancel_err =
-        String::from_utf8(cancel_output.stderr).expect("cancel stderr should be valid utf-8 json");
-    let cancel_json: Value = serde_json::from_str(&cancel_err).expect("stderr should be json");
-    assert_eq!(cancel_json["code"], "invalid_argument");
+        .expect("run point");
+    assert!(!output.status.success());
+    let err = String::from_utf8(output.stderr).expect("stderr should be valid utf-8 json");
+    let json: Value = serde_json::from_str(&err).expect("stderr should be json");
+    assert_eq!(json["code"], "invalid_argument");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message string")
+            .contains("不是链接")
+    );
 
     assert_eq!(
         fs::read_to_string(&target).expect("read target"),
@@ -635,8 +651,11 @@ fn add_same_link_updates_record_instead_of_inserting_new_one() {
     cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "v2")
-        .env("SYMM_ADD_SYMLINK_CONFLICT_CHOICE", "retarget")
-        .args(["add", &link.to_string_lossy(), &target_b.to_string_lossy()])
+        .args([
+            "point",
+            &link.to_string_lossy(),
+            &target_b.to_string_lossy(),
+        ])
         .assert()
         .success();
 
@@ -724,8 +743,11 @@ fn add_existing_symlink_pointing_elsewhere_can_retarget() {
     cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "retarget")
-        .env("SYMM_ADD_SYMLINK_CONFLICT_CHOICE", "retarget")
-        .args(["add", &link.to_string_lossy(), &target_b.to_string_lossy()])
+        .args([
+            "point",
+            &link.to_string_lossy(),
+            &target_b.to_string_lossy(),
+        ])
         .assert()
         .success();
 
@@ -736,7 +758,7 @@ fn add_existing_symlink_pointing_elsewhere_can_retarget() {
 }
 
 #[test]
-fn add_when_link_is_locked_and_user_cancels_fails_before_mutation() {
+fn adopt_when_link_is_locked_and_user_cancels_fails_before_mutation() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -751,9 +773,9 @@ fn add_when_link_is_locked_and_user_cancels_fails_before_mutation() {
         .env("SYMM_ADD_NAME", "locked")
         .env("SYMM_ADD_LOCK_CHOICE", "cancel")
         .env("SYMM_TEST_LOCK_PATHS", link.to_string_lossy().to_string())
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .args(["adopt", &link.to_string_lossy(), &target.to_string_lossy()])
         .output()
-        .expect("run locked add");
+        .expect("run locked adopt");
 
     assert!(!output.status.success());
     let err = String::from_utf8(output.stderr).expect("stderr should be utf8");
@@ -770,7 +792,7 @@ fn add_when_link_is_locked_and_user_cancels_fails_before_mutation() {
 }
 
 #[test]
-fn add_when_link_is_locked_and_unlock_succeeds_continues_normally() {
+fn adopt_when_link_is_locked_and_unlock_succeeds_continues_normally() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -785,7 +807,7 @@ fn add_when_link_is_locked_and_unlock_succeeds_continues_normally() {
         .env("SYMM_ADD_NAME", "unlock")
         .env("SYMM_ADD_LOCK_CHOICE", "unlock")
         .env("SYMM_TEST_LOCK_PATHS", link.to_string_lossy().to_string())
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .args(["adopt", &link.to_string_lossy(), &target.to_string_lossy()])
         .assert()
         .success()
         .stdout(contains("正在检查链接是否被占用"))
@@ -799,7 +821,7 @@ fn add_when_link_is_locked_and_unlock_succeeds_continues_normally() {
 }
 
 #[test]
-fn add_when_link_is_locked_and_unlock_still_leaves_locks_fails() {
+fn adopt_when_link_is_locked_and_unlock_still_leaves_locks_fails() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -815,9 +837,9 @@ fn add_when_link_is_locked_and_unlock_still_leaves_locks_fails() {
         .env("SYMM_ADD_LOCK_CHOICE", "unlock")
         .env("SYMM_TEST_LOCK_PATHS", link.to_string_lossy().to_string())
         .env("SYMM_TEST_LOCK_CLEAR_ON_KILL", "false")
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .args(["adopt", &link.to_string_lossy(), &target.to_string_lossy()])
         .output()
-        .expect("run locked add");
+        .expect("run locked adopt");
 
     assert!(!output.status.success());
     let err = String::from_utf8(output.stderr).expect("stderr should be utf8");
@@ -864,9 +886,8 @@ fn add_existing_broken_symlink_can_retarget() {
     cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "broken-retarget")
-        .env("SYMM_ADD_SYMLINK_CONFLICT_CHOICE", "retarget")
         .args([
-            "add",
+            "point",
             &link.to_string_lossy(),
             &new_target.to_string_lossy(),
         ])
@@ -901,22 +922,29 @@ fn add_existing_broken_symlink_can_retarget() {
 }
 
 #[test]
-fn add_with_invalid_conflict_choice_env_fails_fast() {
+fn add_existing_symlink_pointing_elsewhere_fails_with_point_hint() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
     fs::create_dir_all(&data_root).expect("create data root");
 
-    let target = data_root.join("target_invalid_conflict.txt");
-    let link = data_root.join("link_invalid_conflict.txt");
-    fs::write(&target, "t").expect("write target");
-    fs::write(&link, "l").expect("write link");
+    let target_a = data_root.join("target_existing_link_a.txt");
+    let target_b = data_root.join("target_existing_link_b.txt");
+    let link = data_root.join("link_existing_link.txt");
+    fs::write(&target_a, "a").expect("write target a");
+    fs::write(&target_b, "b").expect("write target b");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_ADD_NAME", "point-hint")
+        .args(["add", &link.to_string_lossy(), &target_a.to_string_lossy()])
+        .assert()
+        .success();
 
     let output = cmd()
         .env("SYMM_HOME", &symm_home)
         .env("SYMM_ADD_NAME", "invalid-choice")
-        .env("SYMM_ADD_CONFLICT_CHOICE", "bad_value")
-        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .args(["add", &link.to_string_lossy(), &target_b.to_string_lossy()])
         .output()
         .expect("run add");
     assert!(!output.status.success());
@@ -928,8 +956,9 @@ fn add_with_invalid_conflict_choice_env_fails_fast() {
         json["message"]
             .as_str()
             .expect("message string")
-            .contains("SYMM_ADD_CONFLICT_CHOICE")
+            .contains("point")
     );
+    assert_eq!(fs::read_to_string(&link).expect("read original link"), "a");
 }
 
 #[test]
@@ -1147,7 +1176,7 @@ fn add_without_positional_args_uses_env_paths() {
 }
 
 #[test]
-fn rm_restore_on_stale_falls_back_without_blocking_batch() {
+fn restore_on_stale_fails_and_keeps_stale_record_while_restoring_others() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -1185,12 +1214,12 @@ fn rm_restore_on_stale_falls_back_without_blocking_batch() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "restore")
-        .args(["rm", "stale-item", "ok-item"])
+        .args(["restore", "stale-item", "ok-item"])
         .assert()
-        .success()
-        .stdout(contains("已删除"))
-        .stdout(contains("无法移回目标"));
+        .failure()
+        .stdout(contains("已恢复实体位置：ok-item"))
+        .stdout(contains("失败：stale-item"))
+        .stderr(contains("\"code\": \"io_error\""));
 
     assert!(link_stale.exists());
     assert!(link_ok.exists());
@@ -1204,12 +1233,12 @@ fn rm_restore_on_stale_falls_back_without_blocking_batch() {
         .args(["ls"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("stale-item").not())
+        .stdout(contains("stale-item"))
         .stdout(predicates::str::contains("ok-item").not());
 }
 
 #[test]
-fn rm_restore_on_broken_falls_back_to_delete_record_only() {
+fn restore_on_broken_fails_and_keeps_record() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
     let data_root = temp.path().join("data");
@@ -1229,22 +1258,22 @@ fn rm_restore_on_broken_falls_back_to_delete_record_only() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "restore")
-        .args(["rm", "broken-restore"])
+        .args(["restore", "broken-restore"])
         .assert()
-        .success()
-        .stdout(contains("无法移回目标"));
+        .failure()
+        .stderr(contains("\"code\": \"io_error\""))
+        .stderr(contains("target 不存在"));
 
     assert!(
-        fs::symlink_metadata(&link).is_err(),
-        "broken link should be removed by delete-record fallback"
+        fs::symlink_metadata(&link).is_ok(),
+        "broken link should remain when restore fails before mutation"
     );
     cmd()
         .env("SYMM_HOME", &symm_home)
         .args(["ls"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("broken-restore").not());
+        .stdout(contains("broken-restore"));
 }
 
 #[test]
@@ -1271,7 +1300,6 @@ fn rm_stale_entry_deletes_db_and_keeps_non_symlink_path() {
 
     cmd()
         .env("SYMM_HOME", &symm_home)
-        .env("SYMM_RM_ACTION", "delete")
         .args(["rm", "stale-rm"])
         .assert()
         .success()

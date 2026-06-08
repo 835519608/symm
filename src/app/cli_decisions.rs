@@ -2,11 +2,8 @@ use crate::adapters::lock::ProcInfo;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkRecord;
 use crate::ui::interaction::{choice, pick_record};
-use crate::workflows::add::workflow::{
-    AddConflictChoice, AddDecisionProvider, AddLockChoice, AddSymlinkConflictChoice,
-};
+use crate::workflows::add::workflow::{AddDecisionProvider, AddLockChoice};
 use crate::workflows::pick_list;
-use crate::workflows::rm::workflow::RemoveMode;
 use inquire::Text;
 use std::path::{Path, PathBuf};
 
@@ -84,58 +81,6 @@ impl AddDecisionProvider for CliAddDecisions {
             ],
         )
     }
-
-    fn conflict_choice(&mut self) -> Result<AddConflictChoice, SymmError> {
-        choice::choose_with_env(
-            "SYMM_ADD_CONFLICT_CHOICE",
-            parse_conflict_choice,
-            "链接位置和目标位置都已存在，请选择：",
-            "↑↓ 移动  Enter 确认  Esc 取消",
-            vec![
-                (
-                    "留链接这边（不要目标那边）".to_string(),
-                    AddConflictChoice::KeepLink,
-                ),
-                (
-                    "留目标那边（不要链接这边）".to_string(),
-                    AddConflictChoice::KeepTarget,
-                ),
-                ("取消".to_string(), AddConflictChoice::Cancel),
-            ],
-        )
-    }
-
-    fn symlink_conflict_choice(&mut self) -> Result<AddSymlinkConflictChoice, SymmError> {
-        choice::choose_with_env(
-            "SYMM_ADD_SYMLINK_CONFLICT_CHOICE",
-            parse_symlink_conflict_choice,
-            "该路径已是软链，但指向与目标不一致，请选择：",
-            "↑↓ 移动  Enter 确认  Esc 取消",
-            vec![
-                (
-                    "改成指向新目标".to_string(),
-                    AddSymlinkConflictChoice::Retarget,
-                ),
-                ("取消".to_string(), AddSymlinkConflictChoice::Cancel),
-            ],
-        )
-    }
-}
-
-pub fn select_rm_mode() -> Result<RemoveMode, SymmError> {
-    choice::choose_with_env(
-        "SYMM_RM_ACTION",
-        parse_rm_mode,
-        "是否把目标移回链接位置？",
-        "↑↓ 移动  Enter 确认  Esc 取消",
-        vec![
-            ("只删软链和记录".to_string(), RemoveMode::DeleteLinkOnly),
-            (
-                "删软链，并把目标移回链接位置".to_string(),
-                RemoveMode::RestoreTargetToLink,
-            ),
-        ],
-    )
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {
@@ -191,43 +136,6 @@ fn parse_lock_choice(raw: &str) -> Result<AddLockChoice, SymmError> {
         "cancel" | "abort" => Ok(AddLockChoice::Cancel),
         _ => Err(SymmError::InvalidArgument {
             message: format!("环境变量 SYMM_ADD_LOCK_CHOICE 无效：{raw}（可选：unlock / cancel）"),
-        }),
-    }
-}
-
-fn parse_conflict_choice(raw: &str) -> Result<AddConflictChoice, SymmError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "link" | "keep_link" => Ok(AddConflictChoice::KeepLink),
-        "target" | "keep_target" => Ok(AddConflictChoice::KeepTarget),
-        "cancel" | "abort" => Ok(AddConflictChoice::Cancel),
-        _ => Err(SymmError::InvalidArgument {
-            message: format!(
-                "环境变量 SYMM_ADD_CONFLICT_CHOICE 无效：{raw}（可选：link / target / cancel）"
-            ),
-        }),
-    }
-}
-
-fn parse_symlink_conflict_choice(raw: &str) -> Result<AddSymlinkConflictChoice, SymmError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "retarget" | "target" | "replace" => Ok(AddSymlinkConflictChoice::Retarget),
-        "cancel" | "abort" => Ok(AddSymlinkConflictChoice::Cancel),
-        _ => Err(SymmError::InvalidArgument {
-            message: format!(
-                "环境变量 SYMM_ADD_SYMLINK_CONFLICT_CHOICE 无效：{raw}（可选：retarget / cancel）"
-            ),
-        }),
-    }
-}
-
-fn parse_rm_mode(raw: &str) -> Result<RemoveMode, SymmError> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "no" | "n" | "delete" | "delete_only" => Ok(RemoveMode::DeleteLinkOnly),
-        "yes" | "y" | "restore" | "restore_target" => Ok(RemoveMode::RestoreTargetToLink),
-        _ => Err(SymmError::InvalidArgument {
-            message: format!(
-                "环境变量 SYMM_RM_ACTION 无效：{raw}（可选：delete / restore 或 no / yes）"
-            ),
         }),
     }
 }

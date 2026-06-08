@@ -4,7 +4,7 @@ symm 是一个跨平台软链接管理工具，包含桌面 GUI（`symm`）和�
 
 核心约定：
 
-- 记录以 `link_path` 幂等 upsert；同一个链接路径再次 `add` 会更新原记录。
+- 记录以 `link_path` 幂等 upsert；同一个链接路径再次执行 `add` / `adopt` / `point` 会更新原记录。
 - `target` 是真实数据位置，`link` 是对外访问位置。
 - 非空 `name` 是可读别名，在库内唯一；纯数字名称入库时会加 `link-` 前缀，避免和 `ls` 序号冲突。
 - 任一步失败即停止，不做自动回滚；中间态需要人工检查后重试。
@@ -14,11 +14,12 @@ symm 是一个跨平台软链接管理工具，包含桌面 GUI（`symm`）和�
 | 能力 | GUI | CLI |
 |------|-----|-----|
 | 添加记录 / 创建链接 | 支持 | `symm-cli add <link> <target>` |
-| 纳管已有软链接 | 支持 | `symm-cli add <link> <target>` |
-| 实体迁移后建链 | 支持 | `symm-cli add <link> <target>` |
+| 接管实体后建链 | 支持 | `symm-cli adopt <link> <target>` |
+| 修改已有链接指向 | 支持 | `symm-cli point <link> <target>` |
 | 列表 / 搜索 / 状态 | 支持 | `symm-cli ls` |
 | 详情 | 支持 | `symm-cli show <序号或名称>` |
-| 删除链接 / 恢复目标 | 支持 | `symm-cli rm <序号或名称>...` |
+| 删除链接关系 | 支持 | `symm-cli rm <序号或名称>...` |
+| 恢复目标到链接位置 | 支持 | `symm-cli restore <序号或名称>...` |
 | JSON 输出 | 不适用 | `ls --json` / `show --json` |
 
 终端的人类可读输出使用简体中文；JSON 与 `--status` 参数保持英文枚举，便于脚本处理。
@@ -66,26 +67,31 @@ mise run ci
 
 ```bash
 symm-cli add <link> <target>
+symm-cli adopt <link> <target>
+symm-cli point <link> <target>
 symm-cli ls [--status ok|broken|missing|stale|drift] [--json] [--limit N] [--offset N]
 symm-cli show [序号或名称] [--json]
 symm-cli rm [序号或名称]...
+symm-cli restore [序号或名称]...
 ```
 
 选择器规则：
 
-- `show` / `rm` 的纯数字选择器表示当前 `ls` 序号。
+- `show` / `rm` / `restore` 的纯数字选择器表示当前 `ls` 序号。
 - 非纯数字选择器按 `name` 查找。
 - `show` 省略选择器时进入交互选择。
-- `rm` 可一次传多个选择器；省略时进入交互多选。
+- `rm` / `restore` 可一次传多个选择器；省略时进入交互多选。
 
 示例：
 
 ```bash
 symm-cli add ~/.config/app ~/data/app-config
+symm-cli adopt ~/.config/app ~/data/app-config
+symm-cli point ~/.config/app ~/data/app-config-v2
 symm-cli ls --status ok
 symm-cli show 1
 symm-cli rm 1
-SYMM_RM_ACTION=restore symm-cli rm app-config
+symm-cli restore app-config
 ```
 
 ## 状态与类型
@@ -135,11 +141,8 @@ CLI 默认在需要决策时弹出终端交互菜单。下列变量用于跳过�
 | 变量 | 用途 |
 |------|------|
 | `SYMM_HOME` | 指定数据目录 |
-| `SYMM_ADD_NAME` | `add` 写库前指定记录名称 |
-| `SYMM_ADD_LOCK_CHOICE` | `add` 遇到链接位置被占用时选择是否解除占用 |
-| `SYMM_ADD_CONFLICT_CHOICE` | `link` 和 `target` 都是实体时选择保留哪一侧 |
-| `SYMM_ADD_SYMLINK_CONFLICT_CHOICE` | `link` 已是软链但指向不一致时选择是否改指向 |
-| `SYMM_RM_ACTION` | `rm` 时选择仅删除链接，或先恢复目标再删除记录 |
+| `SYMM_ADD_NAME` | `add` / `adopt` / `point` 写库前指定记录名称 |
+| `SYMM_ADD_LOCK_CHOICE` | 链接操作遇到 link 路径被占用时选择是否解除占用 |
 | `SYMM_PERF_LOG` | 在 stderr 输出 workflow 耗时 |
 
 ### `SYMM_ADD_NAME`
@@ -155,35 +158,7 @@ SYMM_ADD_NAME=my-project symm-cli add ./link ./target
 | 取值 | 效果 |
 |------|------|
 | `unlock` / `kill` / `continue` | 结束占用进程，等待句柄释放后继续 |
-| `cancel` / `abort` | 不结束进程，取消本次 `add` |
-
-### `SYMM_ADD_CONFLICT_CHOICE`
-
-| 取值 | 效果 |
-|------|------|
-| `link` / `keep_link` | 保留 link 内容：删除 target，把 link 迁到 target，再创建链接 |
-| `target` / `keep_target` | 保留 target：删除 link，再创建指向 target 的链接 |
-| `cancel` | 不修改，退出 |
-
-### `SYMM_ADD_SYMLINK_CONFLICT_CHOICE`
-
-| 取值 | 效果 |
-|------|------|
-| `retarget` / `target` / `replace` | 删除旧软链，创建指向新 target 的链接 |
-| `cancel` | 不修改软链，退出 |
-
-如果已有软链已经指向本次 `target`，不会出现该菜单，只更新数据库。
-
-### `SYMM_RM_ACTION`
-
-| 取值 | 效果 |
-|------|------|
-| `delete` / `no` / `n` | 删除 link，再删库记录；target 保留在原处 |
-| `restore` / `yes` / `y` | 删除 link，把 target 迁回 link，再删库记录 |
-
-```bash
-SYMM_RM_ACTION=delete symm-cli rm my-link
-```
+| `cancel` / `abort` | 不结束进程，取消本次链接操作 |
 
 ### `SYMM_PERF_LOG`
 
@@ -200,8 +175,8 @@ GUI 使用 `eframe` / `egui`，通过 `gui` feature 构建。它复用 CLI 的�
 主要能力：
 
 - 侧栏搜索、状态刷新、详情查看。
-- 添加链接时选择占用处理、实体冲突和软链改指向策略。
-- 批量删除，支持「仅删除」和「恢复后删除」。
+- 链接操作对话框中显式选择创建链接、接管实体或改指向。
+- 批量删除链接关系，也可单独执行恢复目标到链接位置。
 - 设置明暗模式、配色、字号、侧栏宽度和数据目录。
 - 内嵌 Noto Sans SC 和 Phosphor 图标字体，不依赖系统字体。
 
@@ -230,40 +205,60 @@ Windows 占用检测说明：
 - 杀进程后只短暂等待句柄释放，不重复二次 UAC 扫描。
 - 建链提权独立于扫锁策略，仅在普通建链失败且错误需要提权时触发。
 
-## `add` 流程
+## 链接操作流程
 
-执行顺序：
-
-```text
-占用检测
-  -> 冲突 / 接管
-  -> 规范化 target
-  -> 必要时创建链接
-  -> 填写 name
-  -> 写库
-```
+`add` 只创建或登记 link 指向已存在 target：
 
 | 场景 | 行为 |
 |------|------|
-| 同一 `link` 再次执行 | 更新原记录 |
-| `link` 被占用 | 检测占用，按选择解除或取消 |
-| `link` 为实体且 `target` 不存在 | 将 `link` 迁移到 `target`，再建链 |
-| `link` 和 `target` 都是实体 | 选择保留 link、保留 target 或取消 |
-| `link` 已是软链且指向 `target` | 跳过建链，只更新数据库 |
-| `link` 已是软链但指向别处 | 改指向新 target 或取消 |
-| `link`、`target` 都不存在 | 规范化 target 时报错，不创建空目标 |
+| `link` 不存在且 `target` 存在 | 创建链接并写库 |
+| `link` 已是链接且指向同一 `target` | 不重建链接，只写库或更新记录 |
+| `link` 已是链接但指向别处 | 报错，提示使用 `point` |
+| `link` 是真实文件或目录 | 报错，提示使用 `adopt` |
+| `target` 不存在 | 报错 |
+
+`adopt` 接管 link 路径上的真实实体：
+
+| 场景 | 行为 |
+|------|------|
+| `link` 是真实文件或目录且 `target` 不存在 | 将 link 实体迁到 target，再在 link 原位置建链并写库 |
+| `link` 已是链接 | 报错，提示使用 `add` 或 `point` |
+| `target` 已存在 | 报错，不替换 target |
+
+`point` 修改已有链接指向：
+
+| 场景 | 行为 |
+|------|------|
+| `link` 已是链接且 `target` 存在 | 删除当前 link，按新 target 类型重建链接并写库 |
+| `link` 不是链接 | 报错 |
+| `target` 不存在 | 报错 |
+
+三个操作都会检查 link 路径占用，按 `SYMM_ADD_LOCK_CHOICE` 解除或取消；都会以 `link_path` upsert 数据库记录。
+
+| 场景 | 行为 |
+|------|------|
 | 写库失败 | 可能已创建链接但没有记录，需要人工对齐 |
 
-## `rm` 流程
+## `rm` / `restore` 流程
 
-`rm` 先把选择器解析为记录，再按模式执行：
+`rm` 停止管理链接关系，不移动 target：
 
-| 模式 | 顺序 |
+| 状态 | 行为 |
 |------|------|
-| 仅删除 | 删除 link，再删除数据库记录 |
-| 恢复后删除 | 删除 link，把 target 迁回 link，再删除数据库记录 |
+| `ok` / `broken` / `drift` | 删除 link，删除数据库记录 |
+| `missing` | 只删除数据库记录 |
+| `stale` | 不碰 link 路径上的真实实体，只删除数据库记录 |
 
-恢复分支复用与 `add` 相同的迁移能力。
+`restore` 把 target 迁回 link 路径，然后删除记录：
+
+| 状态 | 行为 |
+|------|------|
+| `ok` / `drift` | 删除当前 link，把记录里的 target 迁回 link，删除数据库记录 |
+| `missing` | target 存在时仍尝试迁回 link，删除数据库记录 |
+| `broken` | 报错并保留记录 |
+| `stale` | 报错并保留记录，不覆盖 link 路径上的真实实体 |
+
+`restore` 复用迁移能力；目录内部链接会保持为链接，指向被迁移目录内部的链接会 rebase 到新位置。
 
 ## 迁移与 rebase
 
@@ -290,8 +285,8 @@ src/
     error.rs                     # SymmError
     gui_settings.rs              # GUI 偏好模型
   workflows/
-    add/                         # add 主流程、路径输入、占用 gate、冲突接管
-    rm/                          # rm 主流程
+    add/                         # add / adopt / point 主流程、路径输入、占用 gate
+    rm/                          # rm / restore 主流程
     ls/                          # ls 输出流程
     show/                        # show 输出流程
     list_views.rs                # 从记录构造带状态的 LinkView

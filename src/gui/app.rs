@@ -418,11 +418,11 @@ impl SymmApp {
         let Some(dialog) = self.state.rm_dialog.clone() else {
             return;
         };
-        let selectors = dialog.selectors;
+        let ids = dialog.ids;
         let mode = dialog.mode;
         self.spawn_task(ctx, move || {
             GuiTaskResult::Remove(
-                crate::gui::data::remove_links(&selectors, mode).map_err(|err| err.to_string()),
+                crate::gui::data::remove_links(&ids, mode).map_err(|err| err.to_string()),
             )
         });
     }
@@ -466,12 +466,11 @@ impl SymmApp {
             return;
         };
         let name = form.name.trim().to_string();
+        let operation = form.operation;
         let lock = form.lock_policy;
-        let conflict = form.conflict_policy;
-        let symlink_conflict = form.symlink_conflict_policy;
         self.spawn_task(ctx, move || {
             GuiTaskResult::Add(
-                crate::gui::data::add_link(&link, &target, &name, lock, conflict, symlink_conflict)
+                crate::gui::data::add_link(operation, &link, &target, &name, lock)
                     .map_err(|err| err.to_string()),
             )
         });
@@ -527,7 +526,7 @@ impl eframe::App for SymmApp {
         }
         if self.debug_open_rm && self.state.rm_dialog.is_none() {
             self.state.rm_dialog = Some(RmDialog {
-                selectors: vec!["debug-link".to_string()],
+                ids: vec![],
                 summary: "debug-link".to_string(),
                 mode: RemoveMode::DeleteLinkOnly,
             });

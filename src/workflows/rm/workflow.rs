@@ -14,44 +14,67 @@ use std::path::Path;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub enum RemoveMode {
     DeleteLinkOnly,
     RestoreTargetToLink,
 }
 
-impl RemoveMode {
-    fn to_action(self) -> RmAction {
-        match self {
-            RemoveMode::DeleteLinkOnly => RmAction::DeleteLinkOnly,
-            RemoveMode::RestoreTargetToLink => RmAction::RestoreTargetToLink,
-        }
-    }
-}
-
-/// GUI / 脚本：指定删除方式，不走交互选择。
+/// CLI：删除链接关系，不移动 target。
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
-pub fn run_with_mode<W: Write>(
+pub fn run_rm<W: Write>(
     conn: &rusqlite::Connection,
     selectors: &[String],
-    mode: RemoveMode,
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let records = resolve_records(conn, selectors)?;
-    run_resolved_records(conn, records, mode.to_action(), writer, started)
+    run_resolved_records(conn, records, RmAction::DeleteLinkOnly, writer, started)
 }
 
-/// CLI：先解析 selector，再询问删除方式，避免非 TTY 脚本把 selector 错误误报成交互失败。
-pub fn run_with_mode_picker<W: Write>(
+/// CLI：恢复 target 到 link 路径，然后删除记录。
+pub fn run_restore<W: Write>(
     conn: &rusqlite::Connection,
     selectors: &[String],
-    pick_mode: impl FnOnce() -> Result<RemoveMode, SymmError>,
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let records = resolve_records(conn, selectors)?;
-    let action = pick_mode()?.to_action();
-    run_resolved_records(conn, records, action, writer, started)
+    run_resolved_records(
+        conn,
+        records,
+        RmAction::RestoreTargetToLink,
+        writer,
+        started,
+    )
+}
+
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn run_rm_by_ids<W: Write>(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    let started = Instant::now();
+    let records = records_from_ids(conn, ids)?;
+    run_resolved_records(conn, records, RmAction::DeleteLinkOnly, writer, started)
+}
+
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn run_restore_by_ids<W: Write>(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    let started = Instant::now();
+    let records = records_from_ids(conn, ids)?;
+    run_resolved_records(
+        conn,
+        records,
+        RmAction::RestoreTargetToLink,
+        writer,
+        started,
+    )
 }
 
 fn run_resolved_records<W: Write>(
@@ -77,9 +100,8 @@ fn run_resolved_records<W: Write>(
     }
 
     let action_hint = match action {
-        RmAction::DeleteLinkOnly => "已删除",
-        RmAction::RestoreTargetToLink if failures.is_empty() => "已删除，目标已移回链接位置",
-        RmAction::RestoreTargetToLink => "已删除（部分无法移回目标，仅删了记录）",
+        RmAction::DeleteLinkOnly => "已删除链接关系",
+        RmAction::RestoreTargetToLink => "已恢复实体位置",
     };
     let summary = if labels.len() == 1 {
         labels[0].clone()
@@ -129,6 +151,25 @@ fn resolve_records(
     Ok(records)
 }
 
+fn records_from_ids(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+) -> Result<Vec<LinkRecord>, SymmError> {
+    if ids.is_empty() {
+        return Err(SymmError::InvalidArgument {
+            message: "未指定要操作的记录".to_string(),
+        });
+    }
+    let mut records = Vec::with_capacity(ids.len());
+    for id in ids {
+        let record = link_store::find_by_id(conn, *id)?.ok_or_else(|| SymmError::NotFound {
+            selector: format!("#{id}"),
+        })?;
+        records.push(record);
+    }
+    Ok(records)
+}
+
 fn remove_one<W: Write>(
     conn: &rusqlite::Connection,
     record: &LinkRecord,
@@ -138,41 +179,14 @@ fn remove_one<W: Write>(
     let link = Path::new(&record.link_path);
     let target = Path::new(&record.target_path);
     let link_status = status::for_record(record);
-    let mut action = action;
-
-    if action == RmAction::RestoreTargetToLink
-        && matches!(
-            link_status,
-            LinkStatus::Broken | LinkStatus::Stale | LinkStatus::Missing
-        )
-    {
-        writeln!(
-            writer,
-            "提示：{} 状态为 {}，无法移回目标，本条只删记录",
-            record.link_path,
-            link_status.label_zh()
-        )
-        .map_err(|e| SymmError::IoError {
-            message: e.to_string(),
-        })?;
-        action = RmAction::DeleteLinkOnly;
-    }
 
     match action {
         RmAction::RestoreTargetToLink => {
+            ensure_restorable(record, link_status)?;
             if let Err(err) = restore_target_to_link(writer, link, target) {
                 match err {
                     RestoreFailure::LinkUnchanged(err) => return Err(err),
-                    RestoreFailure::LinkRemoved(err) => {
-                        if let Err(delete_err) = link_store::delete_by_id(conn, record.id) {
-                            return Err(SymmError::IoError {
-                                message: format!(
-                                    "{err}；链接已删除，但数据库记录删除失败：{delete_err}"
-                                ),
-                            });
-                        }
-                        return Err(err);
-                    }
+                    RestoreFailure::LinkRemoved(err) => return Err(err),
                 }
             }
         }
@@ -181,6 +195,21 @@ fn remove_one<W: Write>(
 
     link_store::delete_by_id(conn, record.id)?;
     Ok(record_label(record))
+}
+
+fn ensure_restorable(record: &LinkRecord, status: LinkStatus) -> Result<(), SymmError> {
+    match status {
+        LinkStatus::Ok | LinkStatus::Drift | LinkStatus::Missing => Ok(()),
+        LinkStatus::Broken => Err(SymmError::InvalidArgument {
+            message: format!("target 不存在，无法 restore：{}", record.target_path),
+        }),
+        LinkStatus::Stale => Err(SymmError::InvalidArgument {
+            message: format!(
+                "link 路径已被非预期实体占用，无法 restore：{}",
+                record.link_path
+            ),
+        }),
+    }
 }
 
 fn should_unlink_on_disk(status: LinkStatus) -> bool {

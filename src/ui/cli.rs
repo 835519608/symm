@@ -17,7 +17,24 @@ pub enum Commands {
         /// 实体数据位置；省略则交互填写
         target: Option<PathBuf>,
     },
+    Adopt {
+        /// 要接管的真实文件/目录位置，接管后会变成链接位置
+        link: Option<PathBuf>,
+        /// 真实数据迁移到的位置
+        target: Option<PathBuf>,
+    },
+    Point {
+        /// 已存在的链接位置
+        link: Option<PathBuf>,
+        /// 新的真实数据位置
+        target: Option<PathBuf>,
+    },
     Rm {
+        /// ls 序号（纯数字）或 name；可多个；省略则交互多选
+        #[arg(value_name = "SELECTOR")]
+        selectors: Vec<String>,
+    },
+    Restore {
         /// ls 序号（纯数字）或 name；可多个；省略则交互多选
         #[arg(value_name = "SELECTOR")]
         selectors: Vec<String>,
