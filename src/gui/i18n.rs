@@ -122,8 +122,15 @@ impl GuiTexts {
 
     pub fn settings_data_dir_note(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "存放 symm.db 与 settings.json；应用后重新加载链接库",
-            Locale::En => "Stores symm.db and settings.json; link list reloads after Apply",
+            Locale::ZhCn => "存放 symm.db；GUI 设置仍保存在默认 data/settings.json",
+            Locale::En => "Stores symm.db; GUI settings stay in default data/settings.json",
+        }
+    }
+
+    pub fn settings_save_failed(&self, err: &str) -> String {
+        match self.locale {
+            Locale::ZhCn => format!("设置保存失败：{err}"),
+            Locale::En => format!("Failed to save settings: {err}"),
         }
     }
 

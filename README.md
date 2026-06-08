@@ -27,7 +27,7 @@ symm 是一个跨平台软链接管理工具，包含桌面 GUI（`symm`）和�
 
 依赖：
 
-- `mise`（项目会按 `.mise.toml` 安装 Rust stable）
+- Rust stable（推荐本地通过 `mise` 按 `.mise.toml` 管理）
 - Git
 - Windows 本地构建安装包时需要 MSVC 工具链；CI 里安装包由 Windows runner + Inno Setup 构建
 
@@ -49,7 +49,7 @@ mise run build
 - `target/release/symm-cli`：命令行工具
 - Windows 上扩展名为 `.exe`
 
-开发时常用命令：
+本地开发推荐入口：
 
 ```bash
 mise run run-gui
@@ -60,7 +60,7 @@ mise run test
 mise run ci
 ```
 
-没有 `mise` 的临时环境可以直接运行等价 `cargo` 命令；项目内开发、检查和运行默认以 `.mise.toml` 为准。发布门禁仍以 GitHub Actions 为准。
+没有 `mise` 的临时环境可以直接运行等价 `cargo` 命令；`mise` 只是本地环境管理入口，发布门禁仍以 GitHub Actions 为准。
 
 ## CLI 使用
 
@@ -178,7 +178,7 @@ SYMM_ADD_NAME=my-project symm-cli add ./link ./target
 
 | 取值 | 效果 |
 |------|------|
-| `delete` / `no` / `n` | 先删库记录，再删除 link；target 保留在原处 |
+| `delete` / `no` / `n` | 删除 link，再删库记录；target 保留在原处 |
 | `restore` / `yes` / `y` | 删除 link，把 target 迁回 link，再删库记录 |
 
 ```bash
@@ -260,7 +260,7 @@ Windows 占用检测说明：
 
 | 模式 | 顺序 |
 |------|------|
-| 仅删除 | 删除数据库记录，再删除 link |
+| 仅删除 | 删除 link，再删除数据库记录 |
 | 恢复后删除 | 删除 link，把 target 迁回 link，再删除数据库记录 |
 
 恢复分支复用与 `add` 相同的迁移能力。

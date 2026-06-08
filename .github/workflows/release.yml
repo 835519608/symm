@@ -1,4 +1,4 @@
-# 正式发布：仅匹配无连字符的 semver tag（如 v0.2.0），勿用 -test / -rc 等后缀。
+# 正式发布：触发 v* 且排除带连字符 tag；semver 合法性由 resolve-release-version 校验。
 # 打包前不重复跑测试：校验当前 commit 上 ci.yml 已成功。
 name: Release
 

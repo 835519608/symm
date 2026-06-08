@@ -11,7 +11,8 @@ pub fn unlink(link: &Path) -> Result<(), SymmError> {
             if !file_type.is_symlink() && !is_junction {
                 return Ok(());
             }
-            let is_dir_link = is_junction || fs::metadata(link).is_ok_and(|m| m.is_dir());
+            let is_dir_link =
+                is_junction || file_type.is_dir() || fs::metadata(link).is_ok_and(|m| m.is_dir());
             if is_dir_link {
                 fs::remove_dir(link).map_err(|e| SymmError::IoError {
                     message: e.to_string(),
@@ -34,11 +35,70 @@ pub fn unlink(link: &Path) -> Result<(), SymmError> {
 fn is_junction_like(meta: &Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
 
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    meta.is_dir() && (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    let attrs = meta.file_attributes();
+    (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
 }
 
 #[cfg(not(windows))]
 fn is_junction_like(_meta: &Metadata) -> bool {
     false
+}
+
+#[cfg(test)]
+#[cfg(windows)]
+mod tests {
+    use super::unlink;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    fn create_junction(target: &Path, link: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status()
+            .expect("run mklink");
+        assert!(status.success(), "mklink /J should succeed");
+    }
+
+    #[test]
+    fn unlink_removes_junction_without_removing_target() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("target-dir");
+        let link = dir.path().join("junction");
+        fs::create_dir(&target).expect("target");
+        fs::write(target.join("data.txt"), "x").expect("write target file");
+        create_junction(&target, &link);
+
+        unlink(&link).expect("unlink junction");
+
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "junction path should be removed"
+        );
+        assert!(
+            target.join("data.txt").exists(),
+            "target contents should remain"
+        );
+    }
+
+    #[test]
+    fn unlink_removes_broken_junction() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("target-dir");
+        let link = dir.path().join("junction");
+        fs::create_dir(&target).expect("target");
+        create_junction(&target, &link);
+        fs::remove_dir(&target).expect("remove target");
+
+        unlink(&link).expect("unlink broken junction");
+
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "broken junction path should be removed"
+        );
+    }
 }

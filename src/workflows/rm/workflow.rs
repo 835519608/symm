@@ -1,4 +1,4 @@
-//! `rm`：删库后删除 link，或将 target 迁回 link 路径。支持多个 selector；省略参数时交互多选。
+//! `rm`：删除 link 后删库，或将 target 迁回 link 路径。支持多个 selector；省略参数时交互多选。
 use crate::adapters::db::link_store;
 use crate::adapters::migrate;
 use crate::adapters::status;

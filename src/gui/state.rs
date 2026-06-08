@@ -102,8 +102,11 @@ pub struct AppState {
     pub color_scheme: ColorScheme,
     pub locale: Locale,
     pub font_size_pt: f32,
-    /// 持久化数据目录（空 = 默认）；应用时写入 `SYMM_HOME`。
+    /// 当前生效的数据目录（空 = 默认）；应用时写入 `SYMM_HOME`。
     pub data_dir: String,
+    /// 稳定设置中保存的数据目录；`SYMM_HOME` 运行时覆盖不会自动写入这里。
+    pub persisted_data_dir: String,
+    pub data_dir_runtime_override: bool,
     pub settings_draft: Option<SettingsDraft>,
     pub add_form: AddForm,
     pub rm_dialog: Option<RmDialog>,
@@ -267,6 +270,8 @@ impl Default for AppState {
             locale: Locale::default(),
             font_size_pt: FONT_SIZE_PT_DEFAULT,
             data_dir: String::new(),
+            persisted_data_dir: String::new(),
+            data_dir_runtime_override: false,
             settings_draft: None,
             add_form: AddForm::default(),
             rm_dialog: None,

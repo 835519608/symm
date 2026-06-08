@@ -165,7 +165,10 @@ impl SymmApp {
                 Err(err) => {
                     self.pending_settings = Some(pending);
                     self.settings_save_due = Some(now + Duration::from_secs(5));
-                    self.toast(format!("设置保存失败：{err}"), 4200);
+                    self.toast(
+                        self.state.texts().settings_save_failed(&err.to_string()),
+                        4200,
+                    );
                     ctx.request_repaint_after(Duration::from_secs(5));
                 }
             }
@@ -259,6 +262,8 @@ impl SymmApp {
             .sidebar_width
             .clamp(theme::SIDEBAR_WIDTH_MIN, sidebar_max);
         self.state.data_dir = draft.data_dir.trim().to_string();
+        self.state.persisted_data_dir = self.state.data_dir.clone();
+        self.state.data_dir_runtime_override = false;
         theme::pin_side_panel_width(ctx, theme::SIDEBAR_PANEL_ID, self.state.sidebar_width);
 
         let current = from_state(&self.state);
@@ -269,7 +274,10 @@ impl SymmApp {
                 self.settings_save_due = None;
             }
             Err(err) => {
-                self.toast(err.to_string(), 4200);
+                self.toast(
+                    self.state.texts().settings_save_failed(&err.to_string()),
+                    4200,
+                );
             }
         }
         self.needs_reload = true;

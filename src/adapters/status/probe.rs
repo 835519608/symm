@@ -33,8 +33,12 @@ fn is_expected_link_kind(meta: &Metadata, kind: LinkKind) -> bool {
 fn is_junction_like(meta: &Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
 
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    meta.is_dir() && (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    let attrs = meta.file_attributes();
+    !meta.file_type().is_symlink()
+        && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0
+        && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
 }
 
 #[cfg(not(windows))]
@@ -77,15 +81,30 @@ mod tests {
     use tempfile::tempdir;
 
     fn record(link_path: &str, target_path: &str) -> LinkRecord {
+        record_with_kind(link_path, target_path, LinkKind::Symlink)
+    }
+
+    fn record_with_kind(link_path: &str, target_path: &str, link_kind: LinkKind) -> LinkRecord {
         LinkRecord {
             id: 1,
             name: "t".to_string(),
             link_path: link_path.to_string(),
             target_path: target_path.to_string(),
-            link_kind: LinkKind::Symlink,
+            link_kind,
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    #[cfg(windows)]
+    fn create_junction(target: &std::path::Path, link: &std::path::Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status()
+            .expect("run mklink");
+        assert!(status.success(), "mklink /J should succeed");
     }
 
     #[test]
@@ -111,5 +130,40 @@ mod tests {
         std::os::windows::fs::symlink_file(&target, &link).expect("symlink");
         let status = for_record(&record(&link.to_string_lossy(), &target.to_string_lossy()));
         assert_eq!(status, LinkStatus::Ok);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ok_when_junction_points_at_target() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("target-dir");
+        let link = dir.path().join("junction");
+        fs::create_dir(&target).expect("target");
+        create_junction(&target, &link);
+
+        let status = for_record(&record_with_kind(
+            &link.to_string_lossy(),
+            &target.to_string_lossy(),
+            LinkKind::Junction,
+        ));
+        assert_eq!(status, LinkStatus::Ok);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn broken_when_junction_target_is_missing() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("target-dir");
+        let link = dir.path().join("junction");
+        fs::create_dir(&target).expect("target");
+        create_junction(&target, &link);
+        fs::remove_dir(&target).expect("remove target");
+
+        let status = for_record(&record_with_kind(
+            &link.to_string_lossy(),
+            &target.to_string_lossy(),
+            LinkKind::Junction,
+        ));
+        assert_eq!(status, LinkStatus::Broken);
     }
 }

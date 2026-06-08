@@ -100,7 +100,10 @@ fn prepare_symlink_exist(
             Ok(finish_outcome(false, target_existed_at_start, false, false))
         }
         SymlinkConflictChoice::Cancel => Err(SymmError::InvalidArgument {
-            message: "已取消".to_string(),
+            message: format!(
+                "链接路径已是指向其他目标的软链，已按当前策略取消：{}",
+                link.display()
+            ),
         }),
     }
 }
