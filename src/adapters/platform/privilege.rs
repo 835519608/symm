@@ -71,6 +71,21 @@ pub fn spawn_elevated_create_link(target: &Path, link: &Path) -> Result<(), Symm
     ])
 }
 
+#[cfg(windows)]
+pub fn spawn_elevated_create_link_with_kind(
+    target: &Path,
+    link: &Path,
+    link_kind: &str,
+) -> Result<(), SymmError> {
+    spawn_elevated_subcommand([
+        OsStr::new("__elevated-create-link"),
+        OsStr::new("--link-kind"),
+        OsStr::new(link_kind),
+        target.as_os_str(),
+        link.as_os_str(),
+    ])
+}
+
 fn map_runas_spawn_error(error: std::io::Error) -> SymmError {
     #[cfg(windows)]
     if error.raw_os_error() == Some(1223) {

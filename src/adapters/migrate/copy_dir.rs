@@ -24,7 +24,8 @@ where
     let mut deferred_symlinks: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut buf = vec![0u8; COPY_BUFFER_SIZE];
 
-    for entry in WalkDir::new(src).follow_links(false) {
+    let mut entries = WalkDir::new(src).follow_links(false).into_iter();
+    while let Some(entry) = entries.next() {
         let entry = entry.map_err(|e| SymmError::IoError {
             message: format!("扫描迁移内容失败：{e}"),
         })?;
@@ -37,12 +38,13 @@ where
         let rel = src_path.strip_prefix(src).unwrap_or(src_path);
         let dst_path = dst.join(rel);
 
-        let file_type = entry.file_type();
-
-        if file_type.is_symlink() {
+        if rebase::link_kind_at(src_path)?.is_some() {
             deferred_symlinks.push((src_path.to_path_buf(), dst_path));
+            entries.skip_current_dir();
             continue;
         }
+
+        let file_type = entry.file_type();
 
         if file_type.is_dir() {
             fs::create_dir_all(&dst_path).map_err(ioe)?;

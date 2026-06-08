@@ -60,7 +60,12 @@ pub enum Commands {
     /// 内部：提权子进程创建软链接（仅 Windows，用户勿直接调用）
     #[cfg(windows)]
     #[command(hide = true, name = "__elevated-create-link")]
-    ElevatedCreateLink { target: PathBuf, link: PathBuf },
+    ElevatedCreateLink {
+        #[arg(long = "link-kind", hide = true)]
+        link_kind: Option<String>,
+        target: PathBuf,
+        link: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

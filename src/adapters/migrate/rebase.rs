@@ -2,6 +2,7 @@ use crate::adapters::errors::io::ioe;
 use crate::adapters::paths::{rebase_paths, remove};
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
+use crate::domain::model::LinkKind;
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
@@ -19,7 +20,12 @@ pub fn recreate_symlink(
         }
         None => link_target,
     };
-    symlink::write_symlink(dst_link, &rebased_target)
+    symlink::write_symlink_like(src_link, dst_link, &rebased_target)
+}
+
+pub(super) fn link_kind_at(path: &Path) -> Result<Option<LinkKind>, SymmError> {
+    let meta = fs::symlink_metadata(path).map_err(ioe)?;
+    Ok(symlink::kind_from_path_and_metadata(path, &meta))
 }
 
 /// 目录树内是否存在软链接（发现首个即返回，用于避免无意义的 rebase 重写遍历）。
@@ -35,7 +41,7 @@ pub fn tree_contains_symlink(root: &Path) -> Result<bool, SymmError> {
         if entry.path() == root {
             continue;
         }
-        if entry.file_type().is_symlink() {
+        if link_kind_at(entry.path())?.is_some() {
             return Ok(true);
         }
     }
@@ -51,7 +57,8 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
 
     let roots = rebase_paths::source_roots(src_root);
 
-    for entry in WalkDir::new(dst_root).follow_links(false) {
+    let mut entries = WalkDir::new(dst_root).follow_links(false).into_iter();
+    while let Some(entry) = entries.next() {
         let entry = entry.map_err(|e| SymmError::IoError {
             message: format!("扫描软链接 rebase 失败：{e}"),
         })?;
@@ -59,16 +66,18 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
         if link_path == dst_root {
             continue;
         }
-        if !entry.file_type().is_symlink() {
+        if link_kind_at(link_path)?.is_none() {
             continue;
         }
+        entries.skip_current_dir();
         let raw = fs::read_link(link_path).map_err(ioe)?;
         let rebased = rebase_paths::internal_target(dst_root, link_path, &raw, &roots);
         if rebased.as_os_str() == raw.as_os_str() {
             continue;
         }
+        let recreate_spec = symlink::capture_recreate_spec(link_path)?;
         remove::remove_any(link_path)?;
-        symlink::write_symlink(link_path, &rebased)?;
+        symlink::write_symlink_from_spec(recreate_spec, link_path, &rebased)?;
     }
     Ok(())
 }

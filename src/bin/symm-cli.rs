@@ -39,9 +39,15 @@ fn run() -> Result<(), symm::domain::error::SymmError> {
         },
         Commands::ElevatedKill { pids } => symm::adapters::lock::elevated_kill_entry(&pids),
         #[cfg(windows)]
-        Commands::ElevatedCreateLink { target, link } => {
-            symm::adapters::platform::host::elevated_create_link_entry(&target, &link)
-        }
+        Commands::ElevatedCreateLink {
+            link_kind,
+            target,
+            link,
+        } => symm::adapters::platform::host::elevated_create_link_entry(
+            &target,
+            &link,
+            link_kind.as_deref(),
+        ),
         other => {
             let stdout = std::io::stdout();
             let mut lock = stdout.lock();

@@ -164,7 +164,13 @@ fn remove_one<W: Write>(
                 match err {
                     RestoreFailure::LinkUnchanged(err) => return Err(err),
                     RestoreFailure::LinkRemoved(err) => {
-                        link_store::delete_by_id(conn, record.id)?;
+                        if let Err(delete_err) = link_store::delete_by_id(conn, record.id) {
+                            return Err(SymmError::IoError {
+                                message: format!(
+                                    "{err}；链接已删除，但数据库记录删除失败：{delete_err}"
+                                ),
+                            });
+                        }
                         return Err(err);
                     }
                 }

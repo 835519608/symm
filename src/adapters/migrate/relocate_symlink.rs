@@ -17,7 +17,7 @@ pub fn relocate_symlink(src: &Path, dst: &Path) -> Result<(), SymmError> {
     let link_target = fs::read_link(src).map_err(ioe)?;
     let roots = rebase_paths::source_roots(src);
     let rebased = rebase_paths::internal_target(dst, src, &link_target, &roots);
-    symlink::write_symlink(dst, &rebased)?;
+    symlink::write_symlink_like(src, dst, &rebased)?;
     remove::remove_any(src)?;
     Ok(())
 }

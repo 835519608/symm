@@ -34,11 +34,16 @@ pub fn host() -> &'static Host {
 
 /// 提权子进程入口（仅 Windows）。
 #[cfg(windows)]
-pub fn elevated_create_link_entry(target: &Path, link: &Path) -> Result<(), SymmError> {
-    windows::elevated_create_link_entry(target, link)
+pub fn elevated_create_link_entry(
+    target: &Path,
+    link: &Path,
+    link_kind: Option<&str>,
+) -> Result<(), SymmError> {
+    windows::elevated_create_link_entry(target, link, link_kind)
 }
 
 #[cfg(windows)]
 pub(crate) use windows::{
-    create_link_direct, infer_link_kind_after_elevated, needs_link_elevation, write_symlink_direct,
+    LinkWriteKind, create_link_direct, infer_link_kind_after_elevated, infer_link_write_kind,
+    needs_link_elevation, write_link_kind_direct, write_symlink_direct,
 };

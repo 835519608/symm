@@ -172,11 +172,15 @@ fn link_row(ui: &mut Ui, state: &mut AppState, view: &LinkView, name: &str, p: &
             .selected(selected)
             .frame(false)
             .truncate();
-        let mut name_resp = ui.add_sized(egui::vec2(text_w, typo.field_row_h), label);
+        let mut name_resp = ui
+            .add_enabled_ui(!state.busy, |ui| {
+                ui.add_sized(egui::vec2(text_w, typo.field_row_h), label)
+            })
+            .inner;
         if name.chars().count() > 18 {
             name_resp = name_resp.on_hover_text(name);
         }
-        if name_resp.clicked() {
+        if !state.busy && name_resp.clicked() {
             state.selected_id = Some(id);
         }
         right_aligned(ui, |ui| {

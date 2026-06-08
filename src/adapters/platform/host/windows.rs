@@ -5,6 +5,7 @@ use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use std::fs;
+use std::fs::Metadata;
 use std::os::windows::fs::{symlink_dir, symlink_file};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -94,8 +95,44 @@ impl HostFs for Host {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LinkWriteKind {
+    FileSymlink,
+    DirSymlink,
+    Junction,
+}
+
+impl LinkWriteKind {
+    pub(crate) fn as_arg(self) -> &'static str {
+        match self {
+            Self::FileSymlink => "file-symlink",
+            Self::DirSymlink => "dir-symlink",
+            Self::Junction => "junction",
+        }
+    }
+
+    fn from_arg(value: &str) -> Result<Self, SymmError> {
+        match value {
+            "file-symlink" => Ok(Self::FileSymlink),
+            "dir-symlink" => Ok(Self::DirSymlink),
+            "junction" => Ok(Self::Junction),
+            _ => Err(SymmError::InvalidArgument {
+                message: format!("未知链接写入类型：{value}"),
+            }),
+        }
+    }
+}
+
 /// 提权子进程入口：仅创建链接（直接 OS API，不再递归提权）。
-pub fn elevated_create_link_entry(target: &Path, link: &Path) -> Result<(), SymmError> {
+pub fn elevated_create_link_entry(
+    target: &Path,
+    link: &Path,
+    link_kind: Option<&str>,
+) -> Result<(), SymmError> {
+    if let Some(link_kind) = link_kind {
+        let kind = LinkWriteKind::from_arg(link_kind)?;
+        return write_link_kind_direct(kind, target, link);
+    }
     create_link_direct(target, link).map(|_| ())
 }
 
@@ -123,12 +160,38 @@ pub fn write_symlink_direct(link: &Path, target: &Path) -> Result<(), SymmError>
         Ok(m) => m.is_dir(),
         Err(_) => false,
     };
-    if is_dir_link {
-        symlink_dir(target, link).map_err(ioe)?;
+    let kind = if is_dir_link {
+        LinkWriteKind::DirSymlink
     } else {
-        symlink_file(target, link).map_err(ioe)?;
+        LinkWriteKind::FileSymlink
+    };
+    write_link_kind_direct(kind, target, link)
+}
+
+pub(crate) fn infer_link_write_kind(src_link: &Path) -> Result<LinkWriteKind, SymmError> {
+    let meta = fs::symlink_metadata(src_link).map_err(ioe)?;
+    match symlink::kind_from_path_and_metadata(src_link, &meta) {
+        Some(LinkKind::Junction) => Ok(LinkWriteKind::Junction),
+        Some(LinkKind::Symlink) if is_directory_reparse_point(&meta) => {
+            Ok(LinkWriteKind::DirSymlink)
+        }
+        Some(LinkKind::Symlink) => Ok(LinkWriteKind::FileSymlink),
+        None => Err(SymmError::InvalidArgument {
+            message: format!("不是可重建的链接：{}", src_link.display()),
+        }),
     }
-    Ok(())
+}
+
+pub(crate) fn write_link_kind_direct(
+    kind: LinkWriteKind,
+    target: &Path,
+    link: &Path,
+) -> Result<(), SymmError> {
+    match kind {
+        LinkWriteKind::FileSymlink => symlink_file(target, link).map_err(ioe),
+        LinkWriteKind::DirSymlink => symlink_dir(target, link).map_err(ioe),
+        LinkWriteKind::Junction => create_junction(target, link),
+    }
 }
 
 pub fn needs_link_elevation(err: &SymmError) -> bool {
@@ -156,6 +219,15 @@ fn infer_existing_link_kind(link: &Path) -> Option<LinkKind> {
     symlink::kind_from_path_and_metadata(link, &meta)
 }
 
+fn is_directory_reparse_point(meta: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let attrs = meta.file_attributes();
+    (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+}
+
 fn path_prefix(path: &Path) -> Option<String> {
     path.components().find_map(|component| match component {
         Component::Prefix(prefix) => Some(prefix.as_os_str().to_string_lossy().to_string()),
@@ -164,10 +236,10 @@ fn path_prefix(path: &Path) -> Option<String> {
 }
 
 fn create_junction(target: &Path, link: &Path) -> Result<(), SymmError> {
-    let target_s = target.to_string_lossy().to_string();
-    let link_s = link.to_string_lossy().to_string();
     let output = Command::new("cmd")
-        .args(["/C", "mklink", "/J", &link_s, &target_s])
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
         .output()
         .map_err(|e| SymmError::IoError {
             message: e.to_string(),
