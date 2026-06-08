@@ -159,7 +159,17 @@ fn remove_one<W: Write>(
     }
 
     match action {
-        RmAction::RestoreTargetToLink => restore_target_to_link(writer, link, target)?,
+        RmAction::RestoreTargetToLink => {
+            if let Err(err) = restore_target_to_link(writer, link, target) {
+                match err {
+                    RestoreFailure::LinkUnchanged(err) => return Err(err),
+                    RestoreFailure::LinkRemoved(err) => {
+                        link_store::delete_by_id(conn, record.id)?;
+                        return Err(err);
+                    }
+                }
+            }
+        }
         RmAction::DeleteLinkOnly => apply_delete_link_only(writer, record, link, link_status)?,
     }
 
@@ -212,13 +222,20 @@ fn restore_target_to_link<W: Write>(
     writer: &mut W,
     link: &Path,
     target: &Path,
-) -> Result<(), SymmError> {
-    symlink::unlink(link)?;
+) -> Result<(), RestoreFailure> {
+    symlink::unlink(link).map_err(RestoreFailure::LinkUnchanged)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     migrate::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)
     })
-    .map_err(|e| SymmError::IoError {
-        message: format!("移回目标到链接位置失败：{e}"),
+    .map_err(|e| {
+        RestoreFailure::LinkRemoved(SymmError::IoError {
+            message: format!("移回目标到链接位置失败：{e}"),
+        })
     })
+}
+
+enum RestoreFailure {
+    LinkUnchanged(SymmError),
+    LinkRemoved(SymmError),
 }
