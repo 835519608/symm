@@ -19,24 +19,13 @@ pub fn kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkK
     }
 }
 
+#[cfg(not(windows))]
 fn kind_from_metadata(meta: &Metadata) -> Option<LinkKind> {
-    #[cfg(windows)]
-    {
-        windows_kind_from_metadata(meta)
+    if meta.file_type().is_symlink() {
+        Some(LinkKind::Symlink)
+    } else {
+        None
     }
-    #[cfg(not(windows))]
-    {
-        if meta.file_type().is_symlink() {
-            Some(LinkKind::Symlink)
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(windows)]
-fn windows_kind_from_metadata(_meta: &Metadata) -> Option<LinkKind> {
-    None
 }
 
 #[cfg(windows)]
@@ -65,7 +54,6 @@ use windows::Win32::System::SystemServices::{IO_REPARSE_TAG_MOUNT_POINT, IO_REPA
 
 #[cfg(windows)]
 fn reparse_tag_from_path(path: &Path) -> Option<u32> {
-    use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
