@@ -339,7 +339,7 @@ bin / app
   -> adapters::platform
   -> domain
 
-gui -> workflows / adapters::db / domain
+gui -> workflows / adapters::{db, lock, paths, settings, status} / domain
 ui  -> domain
 ```
 
@@ -359,11 +359,11 @@ ui  -> domain
 
 | 能力 | 入口 |
 |------|------|
-| 打开数据库 / CRUD | `adapters::db::repository` |
+| 打开数据库 / CRUD | `adapters::db::link_store` |
 | 查询条件 | `adapters::db::query::LinkQuery` |
 | 链状态 | `adapters::status::{for_record, to_view}` |
 | 建链 / 写链 / 删链 | `adapters::symlink::{create_link, write_symlink, unlink}` |
-| 迁移 | `adapters::migrate::{migrate_path, move_path_with_retry}` |
+| 迁移 | `adapters::migrate::migrate_path` |
 | OS 文件系统能力 | `adapters::platform::host_platform()` |
 | 占用检测 / 解除 | `adapters::lock::*` |
 
@@ -423,14 +423,14 @@ Windows 安装包目前只为 x64 构建；Windows arm64 / x86 提供便携 zip�
 
 | Workflow | 触发 | 说明 |
 |----------|------|------|
-| `ci.yml` | 影响代码、测试、脚本、打包、assets 或 workflow 的 push / PR | 多平台矩阵执行 fmt、clippy、test |
-| `workflow-lint.yml` | 任意 push；workflow 或 action 变化的 PR | 运行 actionlint，检查 GitHub Actions 配置 |
+| `ci.yml` | 影响代码、测试、脚本、打包、assets、workflow、action 或 `.github/scripts` 的 push / PR | 多平台矩阵执行 fmt、clippy、test |
+| `workflow-lint.yml` | 任意 push；workflow、action 或 `.github/scripts` 变化的 PR | 运行 actionlint，检查 GitHub Actions 配置 |
 | `build-release-assets.yml` | `workflow_call` | 正式发布和测试包共用的平台构建流程 |
 | `release.yml` | `vX.Y.Z`，无 `-` 后缀 | 正式 Release，全平台全架构，设为 Latest |
 | `release-test.yml` | `vX.Y.Z-test*` tag 或手动触发 | Pre-release，不设为 Latest，可按目标包控制 |
 | `cleanup-test-releases.yml` | 定时或手动 | 清理旧测试 Pre-release，只保留最新测试包 |
 
-发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验 tag 指向的 commit 位于默认分支，且默认分支 push 触发的 `ci.yml` 和 `workflow-lint.yml` 都已成功。发布 tag 不应指向只修改 README、ADR、AGENTS 或本地工具配置的维护 commit；这类文档-only 变更不触发打包所需的 CI，发布 tag 应指向已有成功默认分支 push CI 的代码、脚本、打包、assets 或 workflow 相关 commit。
+发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验 tag 指向的 commit 位于默认分支，且默认分支 push 触发的 `ci.yml` 和 `workflow-lint.yml` 都已成功。发布 tag 不应指向只修改 README、ADR、AGENTS 或本地工具配置的维护 commit；这类文档-only 变更不触发打包所需的 CI，发布 tag 应指向已有成功默认分支 push CI 的代码、测试、脚本、打包、assets、workflow、action 或 `.github/scripts` 相关 commit。
 
 Runner 矩阵：
 

@@ -443,9 +443,8 @@ fn restore_target_to_link<W: Write>(
 ) -> Result<(), RestoreFailure> {
     let link = Path::new(&record.link_path);
     let target = Path::new(&record.target_path);
-    ensure_restore_link_state_unchanged(record, planned_status)
+    remove_current_link_for_restore(record, link, target, planned_status)
         .map_err(RestoreFailure::LinkUnchanged)?;
-    symlink::unlink(link).map_err(RestoreFailure::LinkUnchanged)?;
     let mut reporter = MigrationProgressReporter::new_with_mode(writer, progress_mode);
     migrate::migrate_path(target, link, &mut |event| {
         let _ = reporter.handle_migration_event(event);
@@ -509,25 +508,76 @@ fn filesystem_applied_but_record_kept(record: &LinkRecord, err: SymmError) -> Sy
     }
 }
 
-fn ensure_restore_link_state_unchanged(
+fn remove_current_link_for_restore(
     record: &LinkRecord,
+    link: &Path,
+    target: &Path,
     planned_status: LinkStatus,
 ) -> Result<(), SymmError> {
-    let current_status = status::try_for_record(record)?;
-    let unchanged = match planned_status {
-        LinkStatus::Ok => current_status == LinkStatus::Ok,
-        LinkStatus::Missing => current_status == LinkStatus::Missing,
-        LinkStatus::Broken | LinkStatus::Stale | LinkStatus::Drift | LinkStatus::Unknown => false,
-    };
-    if unchanged {
+    match planned_status {
+        LinkStatus::Ok => {
+            ensure_restore_link_still_matches_record(record, link, target)?;
+            symlink::unlink(link)?;
+            ensure_restore_link_missing_after_unlink(record, link)
+        }
+        LinkStatus::Missing => ensure_restore_link_still_missing(record, link),
+        LinkStatus::Broken | LinkStatus::Stale | LinkStatus::Drift | LinkStatus::Unknown => {
+            Err(restore_link_state_changed(record))
+        }
+    }
+}
+
+fn ensure_restore_link_still_matches_record(
+    record: &LinkRecord,
+    link: &Path,
+    target: &Path,
+) -> Result<(), SymmError> {
+    match symlink::inspect_link_path(link)? {
+        symlink::LinkPathState::Link { kind } if kind == record.link_kind => {
+            if symlink::link_points_to(link, target)? {
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+    Err(restore_link_state_changed(record))
+}
+
+fn ensure_restore_link_still_missing(record: &LinkRecord, link: &Path) -> Result<(), SymmError> {
+    if matches!(
+        symlink::inspect_link_path(link)?,
+        symlink::LinkPathState::Missing
+    ) {
+        return Ok(());
+    }
+    Err(restore_link_state_changed(record))
+}
+
+fn ensure_restore_link_missing_after_unlink(
+    record: &LinkRecord,
+    link: &Path,
+) -> Result<(), SymmError> {
+    if matches!(
+        symlink::inspect_link_path(link)?,
+        symlink::LinkPathState::Missing
+    ) {
         return Ok(());
     }
     Err(SymmError::InvalidArgument {
         message: format!(
-            "link 路径状态已变化，无法 restore，请重新执行：{}",
+            "link 路径删除后仍被占用，无法 restore，请重新执行：{}",
             record.link_path
         ),
     })
+}
+
+fn restore_link_state_changed(record: &LinkRecord) -> SymmError {
+    SymmError::InvalidArgument {
+        message: format!(
+            "link 路径状态已变化，无法 restore，请重新执行：{}",
+            record.link_path
+        ),
+    }
 }
 
 #[derive(Debug)]
@@ -706,6 +756,46 @@ mod tests {
             "payload"
         );
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn restore_refuses_to_unlink_when_current_link_drifted_after_planned_ok() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let other = temp.path().join("other.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        fs::write(&other, "other").expect("write other");
+        symlink::create_link(&other, &link).expect("create drifted link");
+        let record = record("restore-drift", &link, &target);
+
+        let err = remove_current_link_for_restore(&record, &link, &target, LinkStatus::Ok)
+            .expect_err("drifted link should not be removed");
+
+        assert!(matches!(err, SymmError::InvalidArgument { .. }));
+        assert_eq!(
+            fs::read_to_string(&link).expect("read current drifted link"),
+            "other"
+        );
+    }
+
+    #[test]
+    fn restore_refuses_to_unlink_when_current_path_became_entity_after_planned_ok() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        fs::write(&link, "external").expect("write competing entity");
+        let record = record("restore-stale", &link, &target);
+
+        let err = remove_current_link_for_restore(&record, &link, &target, LinkStatus::Ok)
+            .expect_err("plain entity should not be removed");
+
+        assert!(matches!(err, SymmError::InvalidArgument { .. }));
+        assert_eq!(
+            fs::read_to_string(&link).expect("read competing entity"),
+            "external"
+        );
     }
 
     #[test]
