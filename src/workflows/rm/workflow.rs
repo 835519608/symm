@@ -520,7 +520,7 @@ fn ensure_restore_target_ready(
             path: record.target_path.clone(),
         });
     }
-    if link != target && link.starts_with(target) {
+    if restore_link_path_is_inside_target(link, target)? {
         return Err(SymmError::InvalidArgument {
             message: format!(
                 "link 路径位于 target 目录内部，无法安全 restore：{} -> {}",
@@ -529,6 +529,19 @@ fn ensure_restore_target_ready(
         });
     }
     Ok(())
+}
+
+fn restore_link_path_is_inside_target(link: &Path, target: &Path) -> Result<bool, SymmError> {
+    let Some(link_parent) = link.parent() else {
+        return Ok(false);
+    };
+    let target = dunce::canonicalize(target).map_err(|e| SymmError::IoError {
+        message: format!("无法解析 target 路径：{}：{e}", target.display()),
+    })?;
+    let link_parent = dunce::canonicalize(link_parent).map_err(|e| SymmError::IoError {
+        message: format!("无法解析 link 父目录：{}：{e}", link_parent.display()),
+    })?;
+    Ok(link_parent == target || link_parent.starts_with(&target))
 }
 
 fn remove_current_link_for_restore(
