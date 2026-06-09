@@ -31,6 +31,17 @@ fn create_file_symlink(target: &Path, link: &Path) {
     std::os::windows::fs::symlink_file(target, link).expect("symlink");
 }
 
+fn assert_same_missing_target_path(actual: &Path, expected: &Path) {
+    if actual == expected {
+        return;
+    }
+    assert_eq!(actual.file_name(), expected.file_name());
+    assert_eq!(
+        dunce::canonicalize(actual.parent().expect("actual parent")).expect("actual parent"),
+        dunce::canonicalize(expected.parent().expect("expected parent")).expect("expected parent")
+    );
+}
+
 #[test]
 fn add_then_ls_then_show_then_rm() {
     let temp = tempdir().expect("temp dir");
@@ -1033,9 +1044,9 @@ fn point_broken_symlink_still_checks_link_lock_before_mutation() {
             .expect("message string")
             .contains("链接位置仍被占用，已取消")
     );
-    assert_eq!(
-        fs::read_link(&link).expect("read broken link target"),
-        old_target
+    assert_same_missing_target_path(
+        &fs::read_link(&link).expect("read broken link target"),
+        &old_target,
     );
     let after_ls = cmd()
         .env("SYMM_HOME", &symm_home)
