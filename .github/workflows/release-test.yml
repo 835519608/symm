@@ -150,11 +150,10 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 下载全部临时产物
-        uses: actions/download-artifact@v8.0.1
-        with:
-          pattern: release-test-assets-*
-          path: dist
-          merge-multiple: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/download-release-artifacts.sh 'release-test-assets-*' dist
 
       - name: 校验待发布产物
         uses: ./.github/actions/validate-release-assets
