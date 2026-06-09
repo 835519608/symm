@@ -2,14 +2,23 @@
 /assets/fonts/*.otf
 /assets/fonts/*.ttf
 /assets/fonts/*.ttc
+
+# Agent/skill 生成的本地文档与个人上下文
 /docs
+/CLAUDE.md
+/CONTEXT.md
+AGENTS.md
+/.codex
+/.agents
 /.cursor
 /.skill-compass
 /.scratch
-/CLAUDE.md
-/CONTEXT.md
-.mise.toml
+
+# 本地 mise 配置
+/.mise.toml
+/.mise.local.toml
+/mise.local.toml
+
 packaging/windows/dist/
 packaging/windows/staging/
 packaging/portable/staging/
-AGENTS.md

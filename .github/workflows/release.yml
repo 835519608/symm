@@ -85,11 +85,15 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 下载全部临时产物
-        uses: actions/download-artifact@v8
-        with:
-          pattern: release-assets-*
-          path: dist
-          merge-multiple: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf dist dist-artifacts
+          mkdir -p dist
+          gh run download "${GITHUB_RUN_ID}" --pattern "release-assets-*" --dir dist-artifacts
+          find dist-artifacts -maxdepth 2 -type f -exec mv -t dist {} +
+          find dist -maxdepth 1 -type f -print | sort
 
       - name: 生成 SHA256SUMS
         uses: ./.github/actions/generate-sha256sums

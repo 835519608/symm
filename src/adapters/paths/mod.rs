@@ -1,3 +1,4 @@
+pub(crate) mod entity;
 pub mod home;
 pub(crate) mod lexical;
 pub mod normalize;

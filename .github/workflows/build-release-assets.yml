@@ -56,9 +56,6 @@ jobs:
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
       - name: Windows 安装包与便携包
         uses: ./.github/actions/package-windows
         with:
@@ -84,9 +81,6 @@ jobs:
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
       - name: Windows 便携包
         uses: ./.github/actions/package-windows
         with:
@@ -111,9 +105,6 @@ jobs:
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
 
       - name: Windows 便携包
         uses: ./.github/actions/package-windows
@@ -141,9 +132,6 @@ jobs:
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
@@ -167,9 +155,6 @@ jobs:
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
 
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
@@ -195,9 +180,6 @@ jobs:
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable
         with:
@@ -221,9 +203,6 @@ jobs:
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
 
       - name: 打包便携 zip
         uses: ./.github/actions/package-portable

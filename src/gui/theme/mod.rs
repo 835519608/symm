@@ -6,7 +6,6 @@ use egui::{
     Color32, Context, FontDefinitions, Frame, Margin, Rounding, Stroke, Ui, Visuals, epaint::Shadow,
 };
 pub use palette::UiPalette;
-use std::sync::OnceLock;
 pub use typography::{
     UiTypography, apply_text_styles, rich_body, rich_body_muted, rich_detail_title, rich_section,
     rich_small, typography_from_ui,
@@ -45,21 +44,23 @@ impl ColorScheme {
 }
 
 pub fn system_prefers_dark() -> bool {
-    static SYSTEM_DARK: OnceLock<bool> = OnceLock::new();
-    *SYSTEM_DARK.get_or_init(|| match dark_light::detect() {
+    match dark_light::detect() {
         Ok(dark_light::Mode::Dark) => true,
         Ok(dark_light::Mode::Light) => false,
         Ok(dark_light::Mode::Unspecified) | Err(_) => false,
-    })
+    }
 }
 
-pub fn resolve(theme: ThemeMode, scheme: ColorScheme) -> UiPalette {
-    let dark = match theme {
+pub fn resolve_dark(theme: ThemeMode) -> bool {
+    match theme {
         ThemeMode::Dark => true,
         ThemeMode::Light => false,
         ThemeMode::System => system_prefers_dark(),
-    };
-    palette::for_scheme(scheme, dark)
+    }
+}
+
+pub fn resolve(theme: ThemeMode, scheme: ColorScheme) -> UiPalette {
+    palette::for_scheme(scheme, resolve_dark(theme))
 }
 
 fn set_ctx_palette(ctx: &Context, palette: UiPalette) {
@@ -91,7 +92,7 @@ pub fn apply(ctx: &Context, theme: ThemeMode, scheme: ColorScheme, font_size_pt:
     visuals.override_text_color = Some(p.text);
     visuals.selection.bg_fill = p.accent_soft;
     visuals.selection.stroke = Stroke::new(1.0, p.accent);
-    visuals.hyperlink_color = p.accent;
+    visuals.hyperlink_color = p.accent_text;
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.text);
     // 顶栏 / 侧栏 / 底栏与主区之间的分隔线（egui Panel 默认绘制，读此 stroke）
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
@@ -104,7 +105,7 @@ pub fn apply(ctx: &Context, theme: ThemeMode, scheme: ColorScheme, font_size_pt:
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, p.accent.gamma_multiply(0.45));
     visuals.widgets.hovered.rounding = r;
     visuals.widgets.active.bg_fill = p.surface_active;
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, p.accent);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, p.accent_text);
     visuals.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
     visuals.widgets.active.rounding = r;
     visuals.widgets.open.bg_fill = p.surface_hover;

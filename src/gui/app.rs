@@ -56,6 +56,7 @@ struct ThemeKey {
     theme: ThemePreference,
     color_scheme: ColorScheme,
     font_size_pt: f32,
+    resolved_dark: bool,
 }
 
 fn debug_settings_section() -> Option<SettingsSection> {
@@ -141,6 +142,7 @@ impl SymmApp {
             theme: self.state.theme,
             color_scheme: self.state.color_scheme,
             font_size_pt: self.state.font_size_pt,
+            resolved_dark: theme::resolve_dark(self.state.theme),
         };
         if self.applied_theme == Some(key) {
             return;
@@ -632,6 +634,7 @@ impl eframe::App for SymmApp {
             theme: self.state.theme,
             color_scheme: self.state.color_scheme,
             font_size_pt: self.state.font_size_pt,
+            resolved_dark: theme::resolve_dark(self.state.theme),
         };
         let before_locale = self.state.locale;
         let before_search = self.state.search.clone();
@@ -683,6 +686,7 @@ impl eframe::App for SymmApp {
             theme: self.state.theme,
             color_scheme: self.state.color_scheme,
             font_size_pt: self.state.font_size_pt,
+            resolved_dark: theme::resolve_dark(self.state.theme),
         };
         if self.needs_reload || after_theme != before_theme || self.state.locale != before_locale {
             ctx.request_repaint();

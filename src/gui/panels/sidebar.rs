@@ -65,7 +65,7 @@ fn sidebar_header(
                 *action = SidebarAction::Refresh;
             }
             if state.refresh_notice_active() {
-                ui.label(rich_small(t.refreshed(), p.accent));
+                ui.label(rich_small(t.refreshed(), p.accent_text));
             }
         },
     );
@@ -243,7 +243,7 @@ fn link_row(
                 state.checked_ids.remove(&id);
             }
         }
-        let fg = if selected { p.accent } else { p.text };
+        let fg = if selected { p.accent_text } else { p.text };
         let typo = theme::typography_from_ui(ui);
         let delete_w = typo.icon_btn.x;
         let text_w = (ui.available_width() - delete_w - ui.spacing().item_spacing.x).max(1.0);
