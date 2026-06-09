@@ -1,7 +1,9 @@
 use super::copy_dir;
 use super::path::MigrationEvent;
+use super::rebase;
 use crate::adapters::errors::io::ioe;
 use crate::adapters::paths::{presence, remove};
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use std::fs;
 use std::io::{Read, Write};
@@ -18,10 +20,9 @@ where
         message: format!("无法读取源路径元数据：{e}"),
     })?;
 
-    if meta.file_type().is_symlink() {
-        return Err(SymmError::InvalidArgument {
-            message: "不支持复制软链接路径".to_string(),
-        });
+    if symlink::kind_from_path_and_metadata(src, &meta).is_some() {
+        copy_link_path(src, dst, reporter)?;
+        return Ok(());
     }
 
     if meta.is_dir() {
@@ -69,6 +70,35 @@ where
             })
         },
     ) {
+        let _ = remove::remove_any(dst);
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn copy_link_path<F>(src: &Path, dst: &Path, reporter: &mut F) -> Result<(), SymmError>
+where
+    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+{
+    if presence::path_itself_exists(dst)? {
+        return Err(SymmError::InvalidArgument {
+            message: "迁移失败：目标路径已存在".to_string(),
+        });
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
+            message: format!("无法创建目标父目录：{e}"),
+        })?;
+    }
+    if let Err(err) = rebase::recreate_symlink(src, dst, None).and_then(|()| {
+        reporter(MigrationEvent::Copying {
+            copied_bytes: 0,
+            files_copied: 1,
+            current_item: dst
+                .file_name()
+                .map(|s| Arc::<str>::from(s.to_string_lossy())),
+        })
+    }) {
         let _ = remove::remove_any(dst);
         return Err(err);
     }

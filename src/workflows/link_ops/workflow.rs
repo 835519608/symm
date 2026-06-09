@@ -146,10 +146,12 @@ enum PlannedFilesystemChange {
     },
     AdoptEntity {
         target: PathBuf,
+        entity: EntityFingerprint,
     },
     ReplaceExistingLink {
         target_norm: String,
         existing_kind: LinkKind,
+        existing_target: PathBuf,
     },
 }
 
@@ -160,8 +162,99 @@ impl PlannedFilesystemChange {
 }
 
 enum LinkPathMutation<'a> {
-    Create { target_norm: &'a str },
-    Replace { target_norm: &'a str },
+    Create {
+        target_norm: &'a str,
+    },
+    Replace {
+        target_norm: &'a str,
+        existing_kind: LinkKind,
+        existing_target: &'a Path,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EntityFingerprint {
+    inner: EntityFingerprintInner,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EntityFingerprintInner {
+    #[cfg(unix)]
+    Unix {
+        dev: u64,
+        ino: u64,
+        ctime: i64,
+        ctime_nsec: i64,
+        len: u64,
+    },
+    #[cfg(windows)]
+    Windows {
+        volume: Option<u32>,
+        index: Option<u64>,
+        creation_time: u64,
+        last_write_time: u64,
+        len: u64,
+    },
+}
+
+impl EntityFingerprint {
+    fn for_entity(path: &Path) -> Result<Self, SymmError> {
+        let meta = fs::symlink_metadata(path).map_err(|e| SymmError::IoError {
+            message: format!("无法确认 link 路径实体身份：{e}"),
+        })?;
+        if symlink::kind_from_path_and_metadata(path, &meta).is_some() {
+            return Err(link_state_changed(path));
+        }
+        Self::from_metadata(path, &meta)
+    }
+
+    #[cfg(unix)]
+    fn from_metadata(_path: &Path, meta: &fs::Metadata) -> Result<Self, SymmError> {
+        use std::os::unix::fs::MetadataExt;
+        Ok(Self {
+            inner: EntityFingerprintInner::Unix {
+                dev: meta.dev(),
+                ino: meta.ino(),
+                ctime: meta.ctime(),
+                ctime_nsec: meta.ctime_nsec(),
+                len: meta.len(),
+            },
+        })
+    }
+
+    #[cfg(windows)]
+    fn from_metadata(path: &Path, meta: &fs::Metadata) -> Result<Self, SymmError> {
+        use std::os::windows::fs::MetadataExt;
+        let volume = meta.volume_serial_number();
+        let index = meta.file_index();
+        if volume.is_none() || index.is_none() {
+            return Err(SymmError::InvalidArgument {
+                message: format!(
+                    "无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
+                    path.display()
+                ),
+            });
+        }
+        Ok(Self {
+            inner: EntityFingerprintInner::Windows {
+                volume,
+                index,
+                creation_time: meta.creation_time(),
+                last_write_time: meta.last_write_time(),
+                len: meta.file_size(),
+            },
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn from_metadata(path: &Path, _meta: &fs::Metadata) -> Result<Self, SymmError> {
+        Err(SymmError::InvalidArgument {
+            message: format!(
+                "当前平台无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
+                path.display()
+            ),
+        })
+    }
 }
 
 impl LinkOperation {
@@ -238,6 +331,7 @@ fn plan_adopt(
     match link_state {
         symlink::LinkPathState::Entity => Ok(PlannedFilesystemChange::AdoptEntity {
             target: target.to_path_buf(),
+            entity: EntityFingerprint::for_entity(link_path)?,
         }),
         symlink::LinkPathState::Link { .. } => Err(SymmError::InvalidArgument {
             message: format!(
@@ -260,10 +354,16 @@ fn plan_point(
     match link_state {
         symlink::LinkPathState::Link {
             kind: existing_kind,
-        } => Ok(PlannedFilesystemChange::ReplaceExistingLink {
-            target_norm,
-            existing_kind,
-        }),
+        } => {
+            let existing_target = fs::read_link(link_path).map_err(|e| SymmError::IoError {
+                message: format!("无法读取当前 link 指向：{e}"),
+            })?;
+            Ok(PlannedFilesystemChange::ReplaceExistingLink {
+                target_norm,
+                existing_kind,
+                existing_target,
+            })
+        }
         symlink::LinkPathState::Missing => Err(SymmError::InvalidArgument {
             message: format!("link 路径不存在，无法 point：{}", link_path.display()),
         }),
@@ -294,8 +394,9 @@ fn apply_filesystem_change<W: Write>(
             Ok((target_norm, link_kind))
         }
         PlannedFilesystemChange::ReuseExistingLink { target_norm, kind } => Ok((target_norm, kind)),
-        PlannedFilesystemChange::AdoptEntity { target } => {
+        PlannedFilesystemChange::AdoptEntity { target, entity } => {
             ensure_link_not_locked(reporter, decisions, link_path)?;
+            ensure_entity_unchanged(link_path, &entity)?;
             ensure_target_parent_dir(&target)?;
             migrate::migrate_path(link_path, &target, &mut |event| {
                 reporter.handle_migration_event(event)
@@ -314,7 +415,8 @@ fn apply_filesystem_change<W: Write>(
         }
         PlannedFilesystemChange::ReplaceExistingLink {
             target_norm,
-            existing_kind: _,
+            existing_kind,
+            existing_target,
         } => {
             let link_kind = mutate_link_path_after_lock(
                 reporter,
@@ -323,6 +425,8 @@ fn apply_filesystem_change<W: Write>(
                 link_norm,
                 LinkPathMutation::Replace {
                     target_norm: &target_norm,
+                    existing_kind,
+                    existing_target: &existing_target,
                 },
             )?;
             Ok((target_norm, link_kind))
@@ -345,11 +449,22 @@ fn ensure_planned_link_state_unchanged(
             }
             _ => false,
         },
-        PlannedFilesystemChange::AdoptEntity { .. } => {
+        PlannedFilesystemChange::AdoptEntity { entity, .. } => {
             matches!(current, symlink::LinkPathState::Entity)
+                && EntityFingerprint::for_entity(link_path)? == *entity
         }
-        PlannedFilesystemChange::ReplaceExistingLink { existing_kind, .. } => match current {
-            symlink::LinkPathState::Link { kind } => kind == *existing_kind,
+        PlannedFilesystemChange::ReplaceExistingLink {
+            existing_kind,
+            existing_target,
+            ..
+        } => match current {
+            symlink::LinkPathState::Link { kind } if kind == *existing_kind => {
+                fs::read_link(link_path)
+                    .map(|target| target == *existing_target)
+                    .map_err(|e| SymmError::IoError {
+                        message: format!("无法读取当前 link 指向：{e}"),
+                    })?
+            }
             _ => false,
         },
     };
@@ -364,6 +479,58 @@ fn ensure_planned_link_state_unchanged(
     })
 }
 
+fn ensure_link_missing(link_path: &Path) -> Result<(), SymmError> {
+    if matches!(
+        symlink::inspect_link_path(link_path)?,
+        symlink::LinkPathState::Missing
+    ) {
+        return Ok(());
+    }
+    Err(link_state_changed(link_path))
+}
+
+fn ensure_existing_link_unchanged(
+    link_path: &Path,
+    expected_kind: LinkKind,
+    expected_target: &Path,
+) -> Result<(), SymmError> {
+    match symlink::inspect_link_path(link_path)? {
+        symlink::LinkPathState::Link { kind } if kind == expected_kind => {
+            let current_target = fs::read_link(link_path).map_err(|e| SymmError::IoError {
+                message: format!("无法读取当前 link 指向：{e}"),
+            })?;
+            if current_target == expected_target {
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+    Err(link_state_changed(link_path))
+}
+
+fn ensure_entity_unchanged(
+    link_path: &Path,
+    expected: &EntityFingerprint,
+) -> Result<(), SymmError> {
+    if matches!(
+        symlink::inspect_link_path(link_path)?,
+        symlink::LinkPathState::Entity
+    ) && EntityFingerprint::for_entity(link_path)? == *expected
+    {
+        return Ok(());
+    }
+    Err(link_state_changed(link_path))
+}
+
+fn link_state_changed(link_path: &Path) -> SymmError {
+    SymmError::InvalidArgument {
+        message: format!(
+            "link 路径状态已变化，请重新执行本次操作：{}",
+            link_path.display()
+        ),
+    }
+}
+
 fn mutate_link_path_after_lock<W: Write>(
     reporter: &mut MigrationProgressReporter<'_, W>,
     decisions: &mut impl LinkOpDecisionProvider,
@@ -374,9 +541,15 @@ fn mutate_link_path_after_lock<W: Write>(
     ensure_link_not_locked(reporter, decisions, link_path)?;
     match mutation {
         LinkPathMutation::Create { target_norm } => {
+            ensure_link_missing(link_path)?;
             create_managed_link(reporter, link_path, link_norm, target_norm)
         }
-        LinkPathMutation::Replace { target_norm } => {
+        LinkPathMutation::Replace {
+            target_norm,
+            existing_kind,
+            existing_target,
+        } => {
+            ensure_existing_link_unchanged(link_path, existing_kind, existing_target)?;
             emit_creating_link(reporter, link_norm, target_norm)?;
             replace_link_via_temp(link_path, link_norm, target_norm)
         }
@@ -637,6 +810,26 @@ mod tests {
         fn name(&mut self, _default_name: &str) -> Result<String, SymmError> {
             std::fs::write(&self.link, "late entity").expect("create competing link path entity");
             Ok("raced".to_string())
+        }
+
+        fn lock_choice(
+            &mut self,
+            _procs: &[crate::adapters::lock::ProcInfo],
+        ) -> Result<LinkOpLockChoice, SymmError> {
+            Ok(LinkOpLockChoice::Cancel)
+        }
+    }
+
+    struct RepointLinkDuringNameDecisions {
+        link: PathBuf,
+        target: PathBuf,
+    }
+
+    impl LinkOpDecisionProvider for RepointLinkDuringNameDecisions {
+        fn name(&mut self, _default_name: &str) -> Result<String, SymmError> {
+            symlink::unlink(&self.link).expect("remove existing link");
+            symlink::create_link(&self.target, &self.link).expect("create competing link");
+            Ok("raced-point".to_string())
         }
 
         fn lock_choice(
@@ -911,6 +1104,69 @@ mod tests {
                 .expect("query link")
                 .is_none(),
             "changed link path should not be persisted"
+        );
+    }
+
+    #[test]
+    fn point_link_target_change_during_prompt_aborts_before_repointing() {
+        let temp = tempdir().expect("temp dir");
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        let link = temp.path().join("link.txt");
+        let old_target = temp.path().join("old.txt");
+        let new_target = temp.path().join("new.txt");
+        let competing_target = temp.path().join("competing.txt");
+        std::fs::write(&old_target, "old").expect("write old target");
+        std::fs::write(&new_target, "new").expect("write new target");
+        std::fs::write(&competing_target, "competing").expect("write competing target");
+        symlink::create_link(&old_target, &link).expect("create existing link");
+
+        let mut decisions = RepointLinkDuringNameDecisions {
+            link: link.clone(),
+            target: competing_target.clone(),
+        };
+        let mut out = Vec::new();
+        let err = run_operation(
+            &conn,
+            LinkOperation::Point,
+            &link,
+            &new_target,
+            &mut decisions,
+            &mut out,
+        )
+        .expect_err("changed point source link should abort before mutation");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("状态已变化")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link).expect("read competing link"),
+            "competing"
+        );
+        assert!(
+            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
+                .expect("query link")
+                .is_none(),
+            "changed point source link should not be persisted"
+        );
+    }
+
+    #[test]
+    fn entity_fingerprint_detects_replaced_adopt_entity() {
+        let temp = tempdir().expect("temp dir");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&link, "first").expect("write first entity");
+        let fingerprint = EntityFingerprint::for_entity(&link).expect("fingerprint first entity");
+        std::fs::remove_file(&link).expect("remove first entity");
+        std::fs::write(&link, "second").expect("write replacement entity");
+
+        let err = ensure_entity_unchanged(&link, &fingerprint)
+            .expect_err("replacement entity should be detected");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("状态已变化")),
+            "unexpected error: {err:?}"
         );
     }
 }

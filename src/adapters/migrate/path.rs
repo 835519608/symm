@@ -1,8 +1,10 @@
-use super::relocate_symlink::relocate_symlink;
+use super::relocate_symlink::{relocate_symlink, relocate_symlink_preserving_target};
 use super::{copy_file, rebase};
 use crate::adapters::paths::{presence, remove};
 use crate::adapters::platform::{HostFs, format_relocate_failure, host_platform};
+use crate::adapters::symlink;
 use crate::domain::error::SymmError;
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -41,7 +43,9 @@ where
             target: dst.display().to_string(),
         })?;
         move_path_with_retry(src, dst, "迁移项")?;
-        rebase::rebase_symlinks_in_tree(dst, src)?;
+        if !path_is_link(dst)? {
+            rebase::rebase_symlinks_in_tree(dst, src)?;
+        }
         return Ok(());
     }
 
@@ -70,6 +74,13 @@ where
     Ok(())
 }
 
+fn path_is_link(path: &Path) -> Result<bool, SymmError> {
+    let meta = fs::symlink_metadata(path).map_err(|e| SymmError::IoError {
+        message: format!("无法读取迁移路径元数据：{e}"),
+    })?;
+    Ok(symlink::kind_from_path_and_metadata(path, &meta).is_some())
+}
+
 #[cfg(test)]
 fn move_path_without_progress(src: &Path, dst: &Path) -> Result<(), SymmError> {
     let mut noop = |_event: MigrationEvent| Ok(());
@@ -93,7 +104,12 @@ pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), Sy
     match host_platform().relocate_path(src, dst) {
         Ok(()) => Ok(()),
         Err(failure) if failure.symlink_needs_recreate => {
-            relocate_symlink(src, dst).map_err(|inner| SymmError::IoError {
+            let relocate = if path_is_link(src)? {
+                relocate_symlink_preserving_target(src, dst)
+            } else {
+                relocate_symlink(src, dst)
+            };
+            relocate.map_err(|inner| SymmError::IoError {
                 message: format!("无法移动 {role}：{inner}"),
             })
         }
@@ -253,6 +269,53 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_path_with_progress_preserves_top_level_symlink() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let src = temp.path().join("src-link");
+        let dst = temp.path().join("dst-link");
+        fs::write(&target, "payload").expect("write target");
+        symlink(&target, &src).expect("symlink");
+
+        copy_path_with_progress(&src, &dst, &mut |_event| Ok(())).expect("copy symlink");
+
+        assert_eq!(fs::read_link(&dst).expect("read copied symlink"), target);
+        assert_eq!(
+            fs::read_to_string(&dst).expect("read through copied symlink"),
+            "payload"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_path_with_progress_cleans_top_level_symlink_when_reporter_aborts() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let src = temp.path().join("src-link");
+        let dst = temp.path().join("dst-link");
+        fs::write(&target, "payload").expect("write target");
+        symlink(&target, &src).expect("symlink");
+
+        let err = copy_path_with_progress(&src, &dst, &mut |_event| {
+            Err(SymmError::IoError {
+                message: "stop".to_string(),
+            })
+        })
+        .expect_err("reporter abort should stop top-level symlink copy");
+
+        assert!(
+            matches!(err, SymmError::IoError { ref message } if message == "stop"),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            fs::symlink_metadata(&dst).is_err(),
+            "partial symlink destination should be cleaned"
+        );
+        assert!(fs::symlink_metadata(&src).is_ok(), "source should remain");
     }
 
     #[cfg(unix)]

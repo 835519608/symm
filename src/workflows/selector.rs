@@ -130,7 +130,7 @@ fn fill_name_records(
     resolved: &mut [Option<LinkRecord>],
 ) -> Result<(), SymmError> {
     let names = name_positions.keys().cloned().collect::<Vec<_>>();
-    for record in link_store::find_by_names(conn, &names)? {
+    for record in link_store::find_existing_by_names(conn, &names)? {
         if let Some(positions) = name_positions.get(&record.name) {
             for &pos in positions {
                 resolved[pos] = Some(record.clone());
@@ -138,4 +138,31 @@ fn fill_name_records(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::db::{link_store, schema};
+    use crate::domain::model::LinkKind;
+    use rusqlite::Connection;
+
+    #[test]
+    fn mixed_missing_selectors_report_first_input_order_miss() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        link_store::upsert_link(
+            &conn,
+            "exists",
+            "/tmp/link",
+            "/tmp/target",
+            LinkKind::Symlink,
+        )
+        .expect("insert");
+
+        let selectors = vec!["999".to_string(), "aaa-missing".to_string()];
+        let err = records_from_tokens(&conn, &selectors).expect_err("missing selector");
+
+        assert!(matches!(err, SymmError::NotFound { selector } if selector == "999"));
+    }
 }

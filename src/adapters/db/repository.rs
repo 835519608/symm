@@ -225,6 +225,7 @@ pub fn find_many_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord
     Ok(ordered)
 }
 
+#[cfg(test)]
 pub fn find_many_by_names(
     conn: &Connection,
     names: &[String],
@@ -246,6 +247,17 @@ pub fn find_many_by_names(
         }
     }
     Ok(ordered)
+}
+
+pub fn find_existing_by_names(
+    conn: &Connection,
+    names: &[String],
+) -> Result<Vec<LinkRecord>, SymmError> {
+    let mut records = Vec::new();
+    for chunk in names.chunks(MAX_QUERY_PARAMS) {
+        records.extend(find_many_by_name_chunk(conn, chunk)?);
+    }
+    Ok(records)
 }
 
 #[cfg(feature = "gui")]

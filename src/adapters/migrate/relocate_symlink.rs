@@ -8,6 +8,18 @@ use std::fs;
 use std::path::Path;
 
 pub fn relocate_symlink(src: &Path, dst: &Path) -> Result<(), SymmError> {
+    relocate_symlink_with_rebase(src, dst, true)
+}
+
+pub fn relocate_symlink_preserving_target(src: &Path, dst: &Path) -> Result<(), SymmError> {
+    relocate_symlink_with_rebase(src, dst, false)
+}
+
+fn relocate_symlink_with_rebase(
+    src: &Path,
+    dst: &Path,
+    rebase_target: bool,
+) -> Result<(), SymmError> {
     if presence::path_itself_exists(dst)? {
         remove::remove_any(dst)?;
     }
@@ -15,9 +27,44 @@ pub fn relocate_symlink(src: &Path, dst: &Path) -> Result<(), SymmError> {
         fs::create_dir_all(parent).map_err(ioe)?;
     }
     let link_target = fs::read_link(src).map_err(ioe)?;
-    let roots = rebase_paths::source_roots(src);
-    let rebased = rebase_paths::internal_target(dst, src, &link_target, &roots);
+    let rebased = if rebase_target {
+        let roots = rebase_paths::source_roots(src);
+        rebase_paths::internal_target(dst, src, &link_target, &roots)
+    } else {
+        link_target
+    };
     symlink::write_symlink_like(src, dst, &rebased)?;
     remove::remove_any(src)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relocate_symlink_preserving_target;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
+    #[cfg(unix)]
+    #[test]
+    fn relocate_symlink_preserving_target_keeps_raw_target() {
+        let temp = tempdir().expect("temp dir");
+        let src_root = temp.path().join("src");
+        let dst_root = temp.path().join("dst");
+        fs::create_dir_all(&src_root).expect("src dir");
+        fs::create_dir_all(&dst_root).expect("dst dir");
+        fs::write(src_root.join("data.txt"), "payload").expect("write data");
+        let link = src_root.join("link");
+        symlink(src_root.join("data.txt"), &link).expect("symlink");
+        let dst = dst_root.join("link");
+
+        relocate_symlink_preserving_target(&link, &dst).expect("relocate preserving target");
+
+        assert_eq!(
+            fs::read_link(&dst).expect("read relocated link"),
+            src_root.join("data.txt")
+        );
+    }
 }

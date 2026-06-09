@@ -48,8 +48,16 @@ pub fn find_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord>, Sy
     repository::find_many_by_ids(conn, ids)
 }
 
+#[cfg(test)]
 pub fn find_by_names(conn: &Connection, names: &[String]) -> Result<Vec<LinkRecord>, SymmError> {
     repository::find_many_by_names(conn, names)
+}
+
+pub fn find_existing_by_names(
+    conn: &Connection,
+    names: &[String],
+) -> Result<Vec<LinkRecord>, SymmError> {
+    repository::find_existing_by_names(conn, names)
 }
 
 #[cfg(feature = "gui")]
