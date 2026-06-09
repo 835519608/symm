@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p /tmp/actionlint
-          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) v1.7.12 /tmp/actionlint
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.12 /tmp/actionlint
           echo "/tmp/actionlint" >> "$GITHUB_PATH"
 
       - name: 检查 workflow 和 action

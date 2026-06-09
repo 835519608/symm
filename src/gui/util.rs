@@ -52,9 +52,9 @@ panel.setCanChooseFiles(true);
 panel.setCanChooseDirectories(true);
 panel.setAllowsMultipleSelection(false);
 panel.setPrompt("{prompt}");
-if (panel.runModal() === $.NSFileHandlingPanelOKButton) {
+if (panel.runModal() === $.NSFileHandlingPanelOKButton) {{
     panel.URL.path.js;
-}
+}}
 "#
     );
     let out = Command::new("osascript")
