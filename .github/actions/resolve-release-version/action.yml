@@ -5,6 +5,10 @@ inputs:
   release_tag:
     description: 例如 v0.2.7-test；默认 github.ref_name
     required: false
+  release_semver:
+    description: workflow_dispatch 的 test-run-* 可显式指定 X.Y.Z；留空则读取 Cargo.toml
+    required: false
+    default: ""
 
 outputs:
   version:
@@ -22,12 +26,21 @@ runs:
       run: |
         set -euo pipefail
         tag="${{ inputs.release_tag }}"
+        semver_override="${{ inputs.release_semver }}"
         if [ -z "${tag}" ]; then
           tag="${GITHUB_REF_NAME:-}"
         fi
         version="${tag#v}"
         if [[ "${version}" =~ ^test-run- ]]; then
-          semver="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ -n "${semver_override}" ]; then
+            if [[ ! "${semver_override}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Invalid release_semver '${semver_override}'. Expected X.Y.Z."
+              exit 1
+            fi
+            semver="${semver_override}"
+          else
+            semver="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          fi
           version="${semver}"
         elif [[ "${version}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
           semver="${BASH_REMATCH[1]}"

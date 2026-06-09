@@ -359,7 +359,10 @@ fn apply_filesystem_change<W: Write>(
             )?;
             Ok((target_norm, link_kind))
         }
-        PlannedFilesystemChange::ReuseExistingLink { target_norm, kind } => Ok((target_norm, kind)),
+        PlannedFilesystemChange::ReuseExistingLink { target_norm, kind } => {
+            ensure_target_still_exists(&target_norm)?;
+            Ok((target_norm, kind))
+        }
         PlannedFilesystemChange::AdoptEntity { target, entity } => {
             ensure_link_not_locked(reporter, decisions, link_path)?;
             ensure_entity_unchanged(link_path, &entity)?;
@@ -1200,6 +1203,47 @@ mod tests {
                 .expect("query link")
                 .is_none(),
             "removed target should not be persisted"
+        );
+    }
+
+    #[test]
+    fn add_existing_link_target_removed_during_prompt_aborts_before_persisting() {
+        let temp = tempdir().expect("temp dir");
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        let link = temp.path().join("link.txt");
+        let target = temp.path().join("target.txt");
+        std::fs::write(&target, "payload").expect("write target");
+        symlink::create_link(&target, &link).expect("create existing link");
+
+        let mut decisions = RemoveTargetDuringNameDecisions {
+            target: target.clone(),
+        };
+        let mut out = Vec::new();
+        let err = run_operation(
+            &conn,
+            LinkOperation::Add,
+            &link,
+            &target,
+            &mut decisions,
+            &mut out,
+        )
+        .expect_err("removed target should abort before existing link is persisted");
+
+        assert!(
+            matches!(err, SymmError::TargetNotFound { .. })
+                || matches!(err, SymmError::InvalidArgument { ref message } if message.contains("状态已变化")),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
+                .expect("query link")
+                .is_none(),
+            "removed target should not be persisted"
+        );
+        assert!(
+            symlink::inspect_link_path(&link).is_ok(),
+            "existing link should be left on disk"
         );
     }
 

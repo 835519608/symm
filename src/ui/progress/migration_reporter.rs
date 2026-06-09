@@ -62,7 +62,7 @@ impl<'a, W: Write> MigrationProgressReporter<'a, W> {
     pub fn handle_workflow_event(&mut self, event: WorkflowProgressEvent) -> Result<(), SymmError> {
         match event {
             WorkflowProgressEvent::CreatingLink { link, target } => {
-                self.write_line(&format!("正在创建软链：{link} → {target}"))
+                self.write_line(&format!("正在创建链接：{link} → {target}"))
             }
             WorkflowProgressEvent::PersistingDb { link } => {
                 self.write_line(&format!("正在保存记录：{link}"))

@@ -106,7 +106,7 @@ fn cli_parse_errors_are_rendered_as_json_but_help_stays_text() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(contains("软链接管理命令行工具"));
+        .stdout(contains("链接管理命令行工具"));
 }
 
 #[test]
@@ -674,7 +674,7 @@ fn adopt_moves_existing_link_entity_when_target_missing() {
         .success()
         .stdout(contains("正在扫描："))
         .stdout(contains("正在同盘移动："))
-        .stdout(contains("正在创建软链："))
+        .stdout(contains("正在创建链接："))
         .stdout(contains("正在保存记录："));
 
     // 原实体应被移动到 target
@@ -1547,7 +1547,7 @@ fn ls_status_filters_broken_and_missing() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["name"], "missing-item-2");
 
-    cmd()
+    let output = cmd()
         .env("SYMM_HOME", &symm_home)
         .args(["ls", "--status", "missing", "--limit", "1"])
         .assert()
@@ -1557,7 +1557,19 @@ fn ls_status_filters_broken_and_missing() {
         .stdout(contains("显示匹配结果 1-1"))
         .stdout(contains(
             "下一页：symm-cli ls --limit 1 --offset 1 --status missing",
-        ));
+        ))
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).expect("table stdout");
+    let first_missing_row = text
+        .lines()
+        .find(|line| line.contains("missing-item"))
+        .expect("missing row");
+    assert!(
+        first_missing_row.trim_start().starts_with("3"),
+        "status-filtered table rows must keep full-list ls index: {first_missing_row}"
+    );
 }
 
 #[cfg(unix)]

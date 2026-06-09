@@ -6,7 +6,8 @@ use crate::gui::panels::{open_rm_dialog_batch_ids, validate_link_op_form};
 use crate::gui::settings_store;
 use crate::gui::shell::{self, LinkOpDialogAction, RmDialogAction, SettingsDialogAction};
 use crate::gui::state::{
-    AppState, LinkOpLockConfirmation, LinkSnapshot, RmDialog, SettingsDraft, SettingsSection,
+    AppState, LinkOpForm, LinkOpLockConfirmation, LinkSnapshot, RmDialog, SettingsDraft,
+    SettingsSection,
 };
 use crate::gui::tasks::{GuiTask, GuiTaskResult, SettingsApplyOutcome, TaskPoll};
 use crate::gui::theme;
@@ -558,11 +559,10 @@ impl SymmApp {
                     .last()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| t.added().to_string());
-                form.status_message = Some(message.clone());
-                form.link_path.clear();
-                form.target_path.clear();
-                form.name.clear();
-                form.lock_confirmation = None;
+                *form = LinkOpForm {
+                    status_message: Some(message.clone()),
+                    ..LinkOpForm::default()
+                };
                 self.needs_reload = true;
                 self.state.show_link_op_dialog = false;
                 self.toast(message, 3000);
@@ -846,6 +846,99 @@ mod tests {
             .expect("confirmation message");
         assert!(err.contains("42"));
         assert!(err.contains("demo.exe"));
+    }
+
+    #[test]
+    fn link_op_success_resets_form_and_lock_policy() {
+        let mut app = test_app();
+        app.state.show_link_op_dialog = true;
+        app.state.link_op_form.operation =
+            crate::workflows::link_ops::workflow::LinkOperation::Adopt;
+        app.state.link_op_form.link_path = "/tmp/link".to_string();
+        app.state.link_op_form.target_path = "/tmp/target".to_string();
+        app.state.link_op_form.name = "demo".to_string();
+        app.state.link_op_form.lock_policy = crate::gui::state::LinkOpLockPolicy::Unlock;
+        app.state.link_op_form.error = Some("old error".to_string());
+        app.state.link_op_form.lock_confirmation = Some(LinkOpLockConfirmation::new(
+            crate::workflows::link_ops::workflow::LinkOperation::Adopt,
+            "/tmp/link".to_string(),
+            "/tmp/target".to_string(),
+            "demo".to_string(),
+        ));
+
+        app.finish_link_op(Ok("正在保存记录：/tmp/link\n已接管：/tmp/link".to_string()));
+
+        let form = &app.state.link_op_form;
+        assert_eq!(
+            form.lock_policy,
+            crate::gui::state::LinkOpLockPolicy::Cancel
+        );
+        assert_eq!(
+            form.operation,
+            crate::workflows::link_ops::workflow::LinkOperation::Add
+        );
+        assert!(form.link_path.is_empty());
+        assert!(form.target_path.is_empty());
+        assert!(form.name.is_empty());
+        assert!(form.error.is_none());
+        assert!(form.lock_confirmation.is_none());
+        assert_eq!(form.status_message.as_deref(), Some("已接管：/tmp/link"));
+        assert!(!app.state.show_link_op_dialog);
+        assert!(app.needs_reload);
+    }
+
+    #[test]
+    fn settings_apply_hard_failure_restores_draft() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        let mut draft = SettingsDraft::from_state(&app.state);
+        draft.data_dir = "/tmp/failed-settings-dir".to_string();
+
+        app.finish_settings_apply(draft, Err("无法打开数据目录".to_string()), &ctx);
+
+        let restored = app
+            .state
+            .settings_draft
+            .as_ref()
+            .expect("draft should be restored");
+        assert_eq!(restored.data_dir, "/tmp/failed-settings-dir");
+        assert_eq!(app.state.toast.as_deref(), Some("无法打开数据目录"));
+    }
+
+    #[test]
+    fn settings_apply_save_error_consumes_draft_and_keeps_old_persisted_data_dir() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        app.state.settings_draft = None;
+        app.state.data_dir = "/tmp/old-active-dir".to_string();
+        app.state.persisted_data_dir = "/tmp/old-persisted-dir".to_string();
+        let settings = GuiSettings {
+            data_dir: Some("/tmp/new-active-dir".to_string()),
+            ..GuiSettings::default()
+        };
+        let draft = SettingsDraft::from_state(&app.state);
+
+        app.finish_settings_apply(
+            draft,
+            Ok(SettingsApplyOutcome {
+                settings,
+                snapshot: None,
+                data_dir_changed: true,
+                save_error: Some("disk full".to_string()),
+            }),
+            &ctx,
+        );
+
+        assert!(app.state.settings_draft.is_none());
+        assert_eq!(app.state.data_dir, "/tmp/new-active-dir");
+        assert_eq!(app.state.persisted_data_dir, "/tmp/old-persisted-dir");
+        assert!(
+            app.state
+                .toast
+                .as_deref()
+                .expect("save error toast")
+                .contains("disk full")
+        );
     }
 
     #[test]

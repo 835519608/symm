@@ -7,6 +7,10 @@ pub fn data_home() -> Result<PathBuf, SymmError> {
     super::home::data_home()
 }
 
+pub fn symm_home_override() -> Option<PathBuf> {
+    super::home::symm_home_override()
+}
+
 pub fn default_data_home() -> Result<PathBuf, SymmError> {
     super::home::default_data_home()
 }

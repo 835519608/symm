@@ -308,7 +308,7 @@ src/
   adapters/
     db/                          # SQLite schema、query、repository
     paths/                       # SYMM_HOME、路径规范化、remove、rebase 路径计算
-    status/                      # 读盘探测 ok/broken/missing/stale/drift
+    status/                      # 读盘探测 ok/broken/missing/stale/drift/unknown
     symlink/                     # 建链、写链、删链；Windows 策略在 windows.rs
     migrate/                     # rename / copy / rebase 编排
     lock/                        # 占用检测、解除占用、提权子进程协议
@@ -423,13 +423,13 @@ Windows 安装包目前只为 x64 构建；Windows arm64 / x86 提供便携 zip�
 | Workflow | 触发 | 说明 |
 |----------|------|------|
 | `ci.yml` | 影响代码、测试、脚本、打包、assets 或 workflow 的 push / PR | 多平台矩阵执行 fmt、clippy、test |
-| `workflow-lint.yml` | workflow 或 action 变化的 push / PR | 运行 actionlint，检查 GitHub Actions 配置 |
+| `workflow-lint.yml` | 任意 push；workflow 或 action 变化的 PR | 运行 actionlint，检查 GitHub Actions 配置 |
 | `build-release-assets.yml` | `workflow_call` | 正式发布和测试包共用的平台构建流程 |
 | `release.yml` | `vX.Y.Z`，无 `-` 后缀 | 正式 Release，全平台全架构，设为 Latest |
 | `release-test.yml` | `vX.Y.Z-test*` tag 或手动触发 | Pre-release，不设为 Latest，可按目标包控制 |
 | `cleanup-test-releases.yml` | 定时或手动 | 清理旧测试 Pre-release，只保留最新测试包 |
 
-发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 的 `ci.yml` 已成功。发布 tag 不应指向只修改 README、ADR、AGENTS 或本地工具配置的维护 commit；这类文档-only 变更不触发打包所需的 CI，发布 tag 应指向已有成功 CI 的代码、脚本、打包、assets 或 workflow 相关 commit。若该 commit 修改了 workflow 或 action，还会校验 `workflow-lint.yml` 已成功。
+发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 最新的 `ci.yml` 和 `workflow-lint.yml` 都已成功。发布 tag 不应指向只修改 README、ADR、AGENTS 或本地工具配置的维护 commit；这类文档-only 变更不触发打包所需的 CI，发布 tag 应指向已有成功 CI 的代码、脚本、打包、assets 或 workflow 相关 commit。
 
 Runner 矩阵：
 
@@ -475,6 +475,7 @@ Runner 矩阵：
 | `build_macos_x64` | `true` | macOS x64 便携包 |
 | `build_macos_arm64` | `false` | macOS arm64 便携包 |
 | `release_notes` | 空 | 可选，覆盖测试 Release 正文 |
+| `release_semver` | 空 | 可选，手动 `test-run-*` 写入产物的 `X.Y.Z` |
 
 手动触发默认只构建 `windows-x64`、`linux-x64`、`macos-x64`。
 
@@ -491,9 +492,16 @@ gh workflow run release-test.yml \
   -f build_linux_x64=false \
   -f build_macos_x64=false \
   -f build_linux_arm64=true
+
+# 用手动 test-run 验证候选版本写入
+gh workflow run release-test.yml \
+  -f release_semver=0.2.1 \
+  -f build_windows_x64=true \
+  -f build_linux_x64=false \
+  -f build_macos_x64=false
 ```
 
-手动触发没有 semver tag，Release tag 会使用 `test-run-<run_id>`；版本号来自当前 `Cargo.toml`。
+手动触发没有 semver tag，Release tag 会使用 `test-run-<run_id>`；未传 `release_semver` 时版本号来自当前 `Cargo.toml`。
 
 ## 维护约定
 

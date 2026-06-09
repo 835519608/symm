@@ -5,13 +5,16 @@ use std::path::{Path, PathBuf};
 pub const DB_FILE_NAME: &str = "symm.db";
 
 pub fn data_home() -> Result<PathBuf, SymmError> {
-    if let Ok(v) = std::env::var("SYMM_HOME") {
-        let p = PathBuf::from(v);
+    if let Some(p) = symm_home_override() {
         ensure_dir(&p)?;
         return Ok(p);
     }
 
     default_data_home()
+}
+
+pub fn symm_home_override() -> Option<PathBuf> {
+    symm_home_override_value(std::env::var("SYMM_HOME").ok().as_deref())
 }
 
 pub fn default_data_home() -> Result<PathBuf, SymmError> {
@@ -49,9 +52,17 @@ fn ensure_dir(path: &Path) -> Result<(), SymmError> {
     })
 }
 
+fn symm_home_override_value(value: Option<&str>) -> Option<PathBuf> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(trimmed))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::data_dir_for_exe_dir;
+    use super::{data_dir_for_exe_dir, symm_home_override_value};
     use std::path::Path;
 
     #[test]
@@ -66,6 +77,21 @@ mod tests {
         assert_eq!(
             data_dir_for_exe_dir(dir),
             Path::new("/apps/symm/current/data")
+        );
+    }
+
+    #[test]
+    fn symm_home_override_ignores_empty_values() {
+        assert_eq!(symm_home_override_value(None), None);
+        assert_eq!(symm_home_override_value(Some("")), None);
+        assert_eq!(symm_home_override_value(Some("  \t\n")), None);
+    }
+
+    #[test]
+    fn symm_home_override_trims_non_empty_values() {
+        assert_eq!(
+            symm_home_override_value(Some("  /tmp/symm-home  ")),
+            Some(Path::new("/tmp/symm-home").to_path_buf())
         );
     }
 }

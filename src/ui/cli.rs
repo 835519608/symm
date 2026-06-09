@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 #[derive(Debug, Parser)]
-#[command(name = "symm-cli", version, about = "软链接管理命令行工具")]
+#[command(name = "symm-cli", version, about = "链接管理命令行工具")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -13,7 +13,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     Add {
-        /// 软链接位置；省略则交互填写（可先选库中模板）
+        /// link 路径；省略则交互填写（可先选库中模板）
         link: Option<PathBuf>,
         /// 实体数据位置；省略则交互填写
         target: Option<PathBuf>,
@@ -75,7 +75,7 @@ pub enum Commands {
         #[arg(value_delimiter = ',')]
         pids: Vec<u32>,
     },
-    /// 内部：提权子进程创建软链接（仅 Windows，用户勿直接调用）
+    /// 内部：提权子进程创建链接（仅 Windows，用户勿直接调用）
     #[cfg(windows)]
     #[command(hide = true, name = "__elevated-create-link")]
     ElevatedCreateLink {

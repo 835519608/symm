@@ -1,0 +1,95 @@
+name: Validate release assets
+description: 校验本地 dist 文件和已发布 Release 的资产集合
+
+inputs:
+  dist_dir:
+    description: 发布产物目录
+    required: false
+    default: dist
+  expected_assets:
+    description: 预期资产文件名，一行一个
+    required: true
+  release_tag:
+    description: 可选；提供时同时校验 GitHub Release
+    required: false
+    default: ""
+  target_commitish:
+    description: 可选；校验 Release 指向的 commit
+    required: false
+    default: ""
+  prerelease:
+    description: 可选；true/false，校验 Release 是否为 Pre-release
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: 校验资产集合
+      shell: bash
+      env:
+        DIST_DIR: ${{ inputs.dist_dir }}
+        EXPECTED_ASSETS: ${{ inputs.expected_assets }}
+        RELEASE_TAG: ${{ inputs.release_tag }}
+        TARGET_COMMITISH: ${{ inputs.target_commitish }}
+        PRERELEASE: ${{ inputs.prerelease }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        expected_file="$(mktemp)"
+        actual_file="$(mktemp)"
+        trap 'rm -f "${expected_file}" "${actual_file}"' EXIT
+
+        printf '%s\n' "${EXPECTED_ASSETS}" \
+          | awk '{$1=$1}; NF {print}' \
+          | sort > "${expected_file}"
+
+        if [ ! -d "${DIST_DIR}" ]; then
+          echo "::error::发布产物目录不存在：${DIST_DIR}"
+          exit 1
+        fi
+
+        find "${DIST_DIR}" -maxdepth 1 -type f -printf '%f\n' | sort > "${actual_file}"
+        if ! diff -u "${expected_file}" "${actual_file}"; then
+          echo "::error::发布产物集合与预期不一致"
+          exit 1
+        fi
+
+        echo "本地产物集合已校验："
+        cat "${actual_file}"
+
+        if [ -z "${RELEASE_TAG}" ]; then
+          exit 0
+        fi
+
+        release_json="$(gh release view "${RELEASE_TAG}" --json tagName,isPrerelease,targetCommitish,assets)"
+        if [ "${PRERELEASE}" = "true" ]; then
+          jq -e '.isPrerelease == true' <<< "${release_json}" >/dev/null
+        elif [ "${PRERELEASE}" = "false" ]; then
+          jq -e '.isPrerelease == false' <<< "${release_json}" >/dev/null
+        fi
+
+        if [ -n "${TARGET_COMMITISH}" ]; then
+          tag_refs="$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}" "refs/tags/${RELEASE_TAG}^{}")"
+          actual_target="$(awk -v peeled="refs/tags/${RELEASE_TAG}^{}" '$2 == peeled {print $1}' <<< "${tag_refs}")"
+          if [ -z "${actual_target}" ]; then
+            actual_target="$(awk -v tag="refs/tags/${RELEASE_TAG}" '$2 == tag {print $1}' <<< "${tag_refs}")"
+          fi
+          if [ -z "${actual_target}" ]; then
+            echo "::error::未找到 Release tag：${RELEASE_TAG}"
+            exit 1
+          fi
+          if [ "${actual_target}" != "${TARGET_COMMITISH}" ]; then
+            echo "::error::Release tag 指向 ${actual_target}，预期 ${TARGET_COMMITISH}"
+            exit 1
+          fi
+        fi
+
+        jq -r '.assets[].name' <<< "${release_json}" | sort > "${actual_file}"
+        if ! diff -u "${expected_file}" "${actual_file}"; then
+          echo "::error::Release 资产集合与预期不一致：${RELEASE_TAG}"
+          exit 1
+        fi
+
+        echo "Release 资产集合已校验：${RELEASE_TAG}"

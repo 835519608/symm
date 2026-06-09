@@ -7,10 +7,8 @@ use std::path::PathBuf;
 pub fn load_into(state: &mut AppState) {
     let settings = settings_store::load();
     apply(state, &settings);
-    if let Ok(home) = std::env::var("SYMM_HOME")
-        && !home.trim().is_empty()
-    {
-        state.data_dir = home.trim().to_string();
+    if let Some(home) = crate::adapters::paths::runtime_paths::symm_home_override() {
+        state.data_dir = home.to_string_lossy().to_string();
         state.data_dir_runtime_override = true;
     }
 }

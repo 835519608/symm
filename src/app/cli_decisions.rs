@@ -29,7 +29,7 @@ pub fn resolve_link_op_paths(
 
     if link.is_none() {
         let default = template.as_ref().map(|r| r.link_path.as_str());
-        link = Some(prompt_path("链接放在哪（软链路径）", default)?);
+        link = Some(prompt_path("链接放在哪（link 路径）", default)?);
     }
     if target.is_none() {
         let default = template.as_ref().map(|r| r.target_path.as_str());
