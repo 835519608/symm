@@ -1,4 +1,4 @@
-# 定时清理测试 Pre-release：全库只保留发布时间最新的一条 *-test* / test-run-* Release（含 tag）。
+# 定时清理测试 Pre-release 和遗留测试 tag：全库只保留发布时间最新的一条 *-test* / test-run-* 测试包。
 #
 # 调度：每日北京时间 01:00（GitHub Actions cron 使用 UTC，即前一日 17:00 UTC）。
 # 手动：gh workflow run cleanup-test-releases.yml

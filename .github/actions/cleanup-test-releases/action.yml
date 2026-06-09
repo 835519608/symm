@@ -1,5 +1,5 @@
 name: Cleanup test releases
-description: Keep one test pre-release and delete older test releases with their tags.
+description: Keep one test pre-release and delete older test releases/tags.
 
 inputs:
   github-token:
@@ -38,10 +38,10 @@ runs:
           keep_tag="$(gh release list --limit 200 --json tagName,isPrerelease,publishedAt \
             --jq "${selector} | sort_by(.publishedAt) | reverse | .[0].tagName // empty")"
           if [ -z "${keep_tag}" ]; then
-            echo "无测试 Pre-release，跳过"
-            exit 0
+            echo "无测试 Pre-release，将清理所有遗留测试 tag"
+          else
+            echo "保留最新测试包：${keep_tag}"
           fi
-          echo "保留最新测试包：${keep_tag}"
         fi
 
         mapfile -t to_delete < <(
@@ -51,10 +51,25 @@ runs:
 
         if [ "${#to_delete[@]}" -eq 0 ]; then
           echo "没有需要删除的旧测试包"
-          exit 0
+        else
+          for tag in "${to_delete[@]}"; do
+            echo "删除旧测试包：${tag}"
+            gh release delete "${tag}" --yes --cleanup-tag
+          done
         fi
 
-        for tag in "${to_delete[@]}"; do
-          echo "删除旧测试包：${tag}"
-          gh release delete "${tag}" --yes --cleanup-tag
+        mapfile -t stale_tags < <(
+          gh api "repos/${GH_REPO}/git/matching-refs/tags" --paginate \
+            --jq '.[]?.ref | sub("^refs/tags/"; "") | select(test("-test|^test-run-"))' \
+            | sort -u
+        )
+
+        for tag in "${stale_tags[@]}"; do
+          if [ -n "${keep_tag}" ] && [ "${tag}" = "${keep_tag}" ]; then
+            echo "保留测试 tag：${tag}"
+            continue
+          fi
+
+          echo "删除旧测试 tag：${tag}"
+          gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${tag}" >/dev/null
         done
