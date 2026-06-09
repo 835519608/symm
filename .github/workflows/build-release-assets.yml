@@ -62,7 +62,7 @@ jobs:
           release_semver: ${{ inputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ inputs.artifact_prefix }}-windows-x64
           path: |
@@ -89,7 +89,7 @@ jobs:
           build_installer: "false"
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ inputs.artifact_prefix }}-windows-arm64
           path: symm-portable-windows-arm64.zip
@@ -115,7 +115,7 @@ jobs:
           build_installer: "false"
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ inputs.artifact_prefix }}-windows-x86
           path: symm-portable-windows-x86.zip
@@ -139,7 +139,7 @@ jobs:
           release_semver: ${{ inputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ inputs.artifact_prefix }}-linux-x64
           path: symm-portable-linux-x64.zip
@@ -163,7 +163,7 @@ jobs:
           release_semver: ${{ inputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ inputs.artifact_prefix }}-linux-arm64
           path: symm-portable-linux-arm64.zip
@@ -187,7 +187,7 @@ jobs:
           release_semver: ${{ inputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ inputs.artifact_prefix }}-macos-x64
           path: symm-portable-macos-x64.zip
@@ -211,7 +211,7 @@ jobs:
           release_semver: ${{ inputs.release_semver }}
 
       - name: 上传临时产物
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ inputs.artifact_prefix }}-macos-arm64
           path: symm-portable-macos-arm64.zip

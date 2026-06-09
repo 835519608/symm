@@ -75,7 +75,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: 下载全部临时产物
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v8.0.1
         with:
           pattern: release-assets-*
           path: dist
