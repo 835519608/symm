@@ -9,6 +9,7 @@ use rusqlite::{
 use std::collections::HashMap;
 #[cfg(any(feature = "gui", test))]
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn now_ts() -> i64 {
@@ -20,11 +21,29 @@ fn now_ts() -> i64 {
 
 pub fn open_db() -> Result<Connection, SymmError> {
     let path = runtime_paths::db_path()?;
-    let conn = Connection::open(&path).map_err(|e| SymmError::DbError {
+    open_db_file(&path)
+}
+
+#[cfg(feature = "gui")]
+pub fn open_db_at(data_dir: &Path) -> Result<Connection, SymmError> {
+    let path = if data_dir.as_os_str().is_empty() {
+        runtime_paths::default_data_home()?
+    } else {
+        std::fs::create_dir_all(data_dir).map_err(|e| SymmError::IoError {
+            message: e.to_string(),
+        })?;
+        data_dir.to_path_buf()
+    }
+    .join(runtime_paths::DB_FILE_NAME);
+    open_db_file(&path)
+}
+
+fn open_db_file(path: &Path) -> Result<Connection, SymmError> {
+    let conn = Connection::open(path).map_err(|e| SymmError::DbError {
         message: e.to_string(),
     })?;
     schema::tune_connection(&conn)?;
-    schema::migrate_file(&conn, &path)?;
+    schema::migrate_file(&conn, path)?;
     Ok(conn)
 }
 
@@ -206,6 +225,29 @@ pub fn find_many_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord
     Ok(ordered)
 }
 
+pub fn find_many_by_names(
+    conn: &Connection,
+    names: &[String],
+) -> Result<Vec<LinkRecord>, SymmError> {
+    let mut ordered = Vec::with_capacity(names.len());
+    for chunk in names.chunks(MAX_QUERY_PARAMS) {
+        let by_name: HashMap<String, LinkRecord> = find_many_by_name_chunk(conn, chunk)?
+            .into_iter()
+            .map(|record| (record.name.clone(), record))
+            .collect();
+        for name in chunk {
+            let record = by_name
+                .get(name)
+                .cloned()
+                .ok_or_else(|| SymmError::NotFound {
+                    selector: name.clone(),
+                })?;
+            ordered.push(record);
+        }
+    }
+    Ok(ordered)
+}
+
 #[cfg(feature = "gui")]
 pub fn find_optional_by_id(conn: &Connection, id: i64) -> Result<Option<LinkRecord>, SymmError> {
     let mut records = find_many_by_id_chunk(conn, &[id])?;
@@ -237,6 +279,24 @@ pub(super) fn find_many_by_id_chunk(
     let mut stmt = conn.prepare(&sql).map_err(db_err)?;
     let mapped = stmt
         .query_map(params_from_iter(ids.iter()), map_link_row)
+        .map_err(db_err)?;
+    mapped.collect::<Result<Vec<_>, _>>().map_err(db_err)
+}
+
+fn find_many_by_name_chunk(
+    conn: &Connection,
+    names: &[String],
+) -> Result<Vec<LinkRecord>, SymmError> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", names.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("{SELECT_ROW} WHERE name IN ({placeholders}) ORDER BY id ASC");
+    let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+    let mapped = stmt
+        .query_map(params_from_iter(names.iter()), map_link_row)
         .map_err(db_err)?;
     mapped.collect::<Result<Vec<_>, _>>().map_err(db_err)
 }

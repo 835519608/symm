@@ -162,7 +162,7 @@ fn query_rm_chunk(paths: &[PathBuf]) -> Result<Vec<RM_PROCESS_INFO>, SymmError> 
 fn query_rm_chunk_once(paths: &[PathBuf]) -> Result<Vec<RM_PROCESS_INFO>, WIN32_ERROR> {
     let wide_paths = paths
         .iter()
-        .map(|p| path_to_wide_null(p))
+        .map(|p| file_path_to_wide_null_unchecked(p))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| ERROR_ACCESS_DENIED)?;
 
@@ -236,13 +236,12 @@ fn format_rm_process(info: &RM_PROCESS_INFO, pid: u32) -> String {
     }
 }
 
-fn path_to_wide_null(path: &Path) -> Result<Vec<u16>, SymmError> {
+fn file_path_to_wide_null_unchecked(path: &Path) -> Result<Vec<u16>, SymmError> {
     use std::os::windows::ffi::OsStrExt;
-    if path.is_dir() {
-        return Err(SymmError::IoError {
-            message: "Restart Manager 资源须为文件路径，不能注册目录".to_string(),
-        });
-    }
+    debug_assert!(
+        !path.is_dir(),
+        "Restart Manager 资源须为文件路径，不能注册目录"
+    );
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     if wide.len() <= 1 {
         return Err(SymmError::IoError {

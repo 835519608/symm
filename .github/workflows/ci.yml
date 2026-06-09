@@ -100,3 +100,14 @@ jobs:
             args+=(--target "${BUILD_TARGET}")
           fi
           cargo "${args[@]}"
+
+      - name: GUI 单元测试
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          args=(test --features gui --lib)
+          if [ -n "${BUILD_TARGET}" ]; then
+            args+=(--target "${BUILD_TARGET}")
+          fi
+          cargo "${args[@]}"

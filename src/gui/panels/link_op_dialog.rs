@@ -3,7 +3,7 @@ use crate::gui::icons::Icon;
 use crate::gui::state::{AppState, LinkOpForm, LinkOpLockPolicy};
 use crate::gui::theme;
 use crate::gui::widgets::{
-    ModalOptions, ModalSection, ModalSize, PathBrowse, PathPickMode, button, form_page, path_field,
+    ModalOptions, ModalSection, ModalSize, PathBrowse, PathPickMode, button, path_field,
     show_modal, split_row, text_field,
 };
 use crate::workflows::link_ops::workflow::LinkOperation;
@@ -58,7 +58,7 @@ pub fn show_link_op_dialog(ctx: &egui::Context, state: &mut AppState) -> LinkOpD
         |section| match section {
             ModalSection::Main(ui) => {
                 ui.add_enabled_ui(enabled, |ui| {
-                    form_page(ui, |ui| {
+                    ui.vertical(|ui| {
                         show_link_op_form(ui, &p, &t, &mut state.link_op_form, browse);
                     });
                 });
@@ -243,7 +243,7 @@ mod tests {
             |section| match section {
                 ModalSection::Main(ui) => {
                     main_rect = Some(ui.max_rect());
-                    form_page(ui, |ui| {
+                    ui.vertical(|ui| {
                         show_link_op_form(ui, &p, &t, &mut form, browse);
                         form_rect = Some(ui.min_rect());
                     });

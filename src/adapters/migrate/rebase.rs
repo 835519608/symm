@@ -67,10 +67,11 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
         if link_path == dst_root {
             continue;
         }
-        if link_kind_at(link_path)?.is_none() {
+        let file_type = entry.file_type();
+        if file_type.is_file() || link_kind_at(link_path)?.is_none() {
             continue;
         }
-        if entry.file_type().is_dir() {
+        if file_type.is_dir() {
             entries.skip_current_dir();
         }
         let raw = fs::read_link(link_path).map_err(ioe)?;

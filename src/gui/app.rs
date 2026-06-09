@@ -1,6 +1,6 @@
 use crate::domain::gui_settings::{ColorScheme, GuiSettings, data_dir_from_settings};
 use crate::domain::model::{LinkKind, LinkRecord, LinkStatus, LinkView};
-use crate::gui::data::ReloadedLinks;
+use crate::gui::data::{ReloadedLinks, RemoveOutcome};
 use crate::gui::icon;
 use crate::gui::panels::{open_rm_dialog_batch_ids, validate_link_op_form};
 use crate::gui::settings_store;
@@ -37,6 +37,7 @@ pub struct SymmApp {
     needs_reload: bool,
     task: Option<GuiTask>,
     toast_until: Option<Instant>,
+    search_reload_at: Option<Instant>,
     manual_refresh_pending: bool,
     applied_theme: Option<ThemeKey>,
     debug_open_settings: bool,
@@ -111,6 +112,7 @@ impl SymmApp {
             needs_reload: true,
             task: None,
             toast_until: None,
+            search_reload_at: None,
             manual_refresh_pending: false,
             applied_theme: None,
             debug_open_settings: std::env::var_os("SYMM_DEBUG_OPEN_SETTINGS").is_some(),
@@ -169,11 +171,19 @@ impl SymmApp {
         let page_index = self.state.page_index;
         let page_size = self.state.page_size;
         let selected_id = self.state.selected_id;
+        let data_dir = PathBuf::from(self.state.data_dir.trim());
         let checked_ids = self.state.checked_ids.iter().copied().collect::<Vec<_>>();
         self.spawn_task(ctx, move || {
             GuiTaskResult::Reload(
-                crate::gui::data::reload(&search, page_index, page_size, selected_id, &checked_ids)
-                    .map_err(|err| err.to_string()),
+                crate::gui::data::reload(
+                    &data_dir,
+                    &search,
+                    page_index,
+                    page_size,
+                    selected_id,
+                    &checked_ids,
+                )
+                .map_err(|err| err.to_string()),
             )
         });
     }
@@ -222,19 +232,13 @@ impl SymmApp {
         let sidebar_max = theme::sidebar_max_width(ctx);
         let settings = self.settings_from_draft(&draft, sidebar_max);
         let new_data_dir = data_dir_from_settings(&settings);
-        let previous_data_dir = self.state.data_dir.clone();
         let page_size = self.state.page_size;
         let data_dir_changed =
-            !self.state.data_dir_runtime_override && previous_data_dir != new_data_dir;
+            !self.state.data_dir_runtime_override && self.state.data_dir != new_data_dir;
 
         self.spawn_task(ctx, move || GuiTaskResult::SettingsApply {
             draft,
-            result: crate::gui::data::apply_settings(
-                settings,
-                previous_data_dir,
-                data_dir_changed,
-                page_size,
-            ),
+            result: crate::gui::data::apply_settings(settings, data_dir_changed, page_size),
         });
     }
 
@@ -365,17 +369,34 @@ impl SymmApp {
         }
     }
 
-    fn request_repaint_when_needed(&self, ctx: &egui::Context) {
-        if self.state.busy {
-            ctx.request_repaint();
+    fn queue_search_reload(&mut self) {
+        self.search_reload_at = Some(Instant::now() + Duration::from_millis(250));
+    }
+
+    fn apply_deferred_search_reload(&mut self, ctx: &egui::Context) {
+        let Some(deadline) = self.search_reload_at else {
             return;
-        }
+        };
         let now = Instant::now();
-        let next_deadline = [self.toast_until, self.state.refresh_notice_until]
-            .into_iter()
-            .flatten()
-            .filter(|deadline| *deadline > now)
-            .min();
+        if now >= deadline {
+            self.search_reload_at = None;
+            self.needs_reload = true;
+        } else {
+            ctx.request_repaint_after(deadline.saturating_duration_since(now));
+        }
+    }
+
+    fn request_repaint_when_needed(&self, ctx: &egui::Context) {
+        let now = Instant::now();
+        let next_deadline = [
+            self.toast_until,
+            self.state.refresh_notice_until,
+            self.search_reload_at,
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|deadline| *deadline > now)
+        .min();
         if let Some(deadline) = next_deadline {
             ctx.request_repaint_after(deadline.saturating_duration_since(now));
         }
@@ -440,26 +461,39 @@ impl SymmApp {
         };
         let ids = dialog.ids;
         let mode = dialog.mode;
+        let data_dir = PathBuf::from(self.state.data_dir.trim());
         self.spawn_task(ctx, move || {
             GuiTaskResult::Remove(
-                crate::gui::data::remove_links(&ids, mode).map_err(|err| err.to_string()),
+                crate::gui::data::remove_links(&data_dir, &ids, mode)
+                    .map_err(|err| err.to_string()),
             )
         });
     }
 
-    fn finish_remove(&mut self, result: Result<String, String>) {
+    fn finish_remove(&mut self, result: Result<RemoveOutcome, String>) {
         match result {
-            Ok(log) => {
+            Ok(outcome) => {
                 self.state.rm_dialog = None;
                 self.needs_reload = true;
-                self.state.selected_id = None;
-                self.state.checked_ids.clear();
-                let msg = log
-                    .lines()
-                    .next()
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| self.state.texts().deleted().to_string());
-                self.toast(msg, 3600);
+                self.state.checked_ids = outcome.remaining_ids;
+                if self
+                    .state
+                    .selected_id
+                    .is_some_and(|id| !self.state.checked_ids.contains(&id))
+                {
+                    self.state.selected_id = None;
+                    self.selected_view = None;
+                }
+                let first_log_line = outcome.log.lines().next();
+                let msg = match (first_log_line, outcome.error.as_deref()) {
+                    (Some(line), Some(err)) => {
+                        format!("{line}\n{}", self.state.texts().delete_failed(err))
+                    }
+                    (Some(line), None) => line.to_string(),
+                    (None, Some(err)) => self.state.texts().delete_failed(err),
+                    (None, None) => self.state.texts().deleted().to_string(),
+                };
+                self.toast(msg, if outcome.error.is_some() { 4200 } else { 3600 });
             }
             Err(err) => {
                 self.state.rm_dialog = None;
@@ -488,15 +522,15 @@ impl SymmApp {
         let name = form.name.trim().to_string();
         let operation = form.operation;
         let lock = form.lock_policy;
+        let data_dir = PathBuf::from(self.state.data_dir.trim());
         self.spawn_task(ctx, move || {
-            GuiTaskResult::LinkOp(
-                crate::gui::data::apply_link_op(operation, &link, &target, &name, lock)
-                    .map_err(|err| err.to_string()),
-            )
+            GuiTaskResult::LinkOp(crate::gui::data::apply_link_op(
+                &data_dir, operation, &link, &target, &name, lock,
+            ))
         });
     }
 
-    fn finish_link_op(&mut self, result: Result<String, String>) {
+    fn finish_link_op(&mut self, result: Result<String, crate::domain::error::SymmError>) {
         let t = self.state.texts();
         let form = &mut self.state.link_op_form;
         match result {
@@ -514,9 +548,22 @@ impl SymmApp {
                 self.state.show_link_op_dialog = false;
                 self.toast(message, 3000);
             }
-            Err(err) => form.error = Some(err),
+            Err(err) => {
+                if link_op_error_needs_reload(&err) {
+                    self.needs_reload = true;
+                }
+                form.error = Some(err.to_string());
+            }
         }
     }
+}
+
+fn link_op_error_needs_reload(err: &crate::domain::error::SymmError) -> bool {
+    matches!(
+        err,
+        crate::domain::error::SymmError::FilesystemAppliedButDbFailed { .. }
+            | crate::domain::error::SymmError::EntityMigratedButLinkCreateFailed { .. }
+    )
 }
 
 impl eframe::App for SymmApp {
@@ -529,6 +576,7 @@ impl eframe::App for SymmApp {
         self.handle_debug_screenshot_events(ctx);
         self.poll_task(ctx);
         self.apply_theme(ctx);
+        self.apply_deferred_search_reload(ctx);
         if self.needs_reload && self.task.is_none() {
             self.start_reload(ctx);
         }
@@ -569,7 +617,7 @@ impl eframe::App for SymmApp {
         );
         if self.state.search != before_search {
             self.state.page_index = 0;
-            self.needs_reload = true;
+            self.queue_search_reload();
         }
         if self.state.selected_id != before_selected_id {
             self.selected_view = self
@@ -579,11 +627,13 @@ impl eframe::App for SymmApp {
             ctx.request_repaint();
         }
         if frame_actions.refresh_requested {
+            self.search_reload_at = None;
             self.needs_reload = true;
             self.state.refresh_notice_until = None;
             self.manual_refresh_pending = true;
         }
         if frame_actions.page_changed {
+            self.search_reload_at = None;
             self.needs_reload = true;
         }
         if frame_actions.delete_checked_requested {
@@ -625,5 +675,107 @@ impl eframe::App for SymmApp {
             self.debug_screenshot_requested = true;
         }
         self.request_repaint_when_needed(ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn test_app() -> SymmApp {
+        SymmApp {
+            state: AppState::default(),
+            snapshot: LinkSnapshot::default(),
+            selected_view: None,
+            needs_reload: false,
+            task: None,
+            toast_until: None,
+            search_reload_at: None,
+            manual_refresh_pending: false,
+            applied_theme: None,
+            debug_open_settings: false,
+            debug_settings_section: None,
+            debug_open_link_op: false,
+            debug_open_rm: false,
+            debug_sample_data: false,
+            debug_screenshot_to: None,
+            debug_screenshot_requested: false,
+        }
+    }
+
+    #[test]
+    fn remove_partial_failure_keeps_remaining_selection() {
+        let mut app = test_app();
+        app.state.selected_id = Some(2);
+        app.state.checked_ids = [1, 2].into_iter().collect();
+
+        app.finish_remove(Ok(RemoveOutcome {
+            log: "已删除链接关系：demo\n失败：other：权限不足".to_string(),
+            remaining_ids: HashSet::from([2]),
+            error: Some("部分删除失败：other".to_string()),
+        }));
+
+        assert!(app.needs_reload);
+        assert_eq!(app.state.selected_id, Some(2));
+        assert_eq!(app.state.checked_ids, HashSet::from([2]));
+        let toast = app.state.toast.as_deref().expect("toast");
+        assert!(toast.contains("demo"));
+        assert!(toast.contains("删除失败"));
+    }
+
+    #[test]
+    fn remove_success_clears_selection() {
+        let mut app = test_app();
+        app.state.selected_id = Some(1);
+        app.state.checked_ids = [1].into_iter().collect();
+
+        app.finish_remove(Ok(RemoveOutcome {
+            log: "已删除链接关系：demo".to_string(),
+            remaining_ids: HashSet::new(),
+            error: None,
+        }));
+
+        assert!(app.needs_reload);
+        assert_eq!(app.state.selected_id, None);
+        assert!(app.state.checked_ids.is_empty());
+    }
+
+    #[test]
+    fn remove_partial_failure_clears_deleted_selected_id() {
+        let mut app = test_app();
+        app.state.selected_id = Some(1);
+        app.state.checked_ids = [1, 2].into_iter().collect();
+
+        app.finish_remove(Ok(RemoveOutcome {
+            log: "已删除链接关系：demo\n失败：other：权限不足".to_string(),
+            remaining_ids: HashSet::from([2]),
+            error: Some("部分删除失败：other".to_string()),
+        }));
+
+        assert_eq!(app.state.selected_id, None);
+        assert_eq!(app.state.checked_ids, HashSet::from([2]));
+    }
+
+    #[test]
+    fn search_change_defers_reload() {
+        let mut app = test_app();
+
+        app.queue_search_reload();
+
+        assert!(!app.needs_reload);
+        assert!(app.search_reload_at.is_some());
+    }
+
+    #[test]
+    fn expired_search_reload_marks_reload_needed() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        app.search_reload_at = Some(Instant::now() - Duration::from_millis(1));
+
+        app.apply_deferred_search_reload(&ctx);
+
+        assert_eq!(app.search_reload_at, None);
+        assert!(app.needs_reload);
     }
 }

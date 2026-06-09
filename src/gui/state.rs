@@ -3,6 +3,7 @@ use crate::domain::model::{LinkKind, LinkView};
 use crate::gui::i18n::GuiTexts;
 use crate::workflows::link_ops::workflow::LinkOperation;
 use crate::workflows::rm::workflow::RemoveMode;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -107,7 +108,7 @@ pub struct AppState {
     pub color_scheme: ColorScheme,
     pub locale: Locale,
     pub font_size_pt: f32,
-    /// 当前生效的数据目录（空 = 默认）；应用时写入 `SYMM_HOME`。
+    /// 当前生效的数据目录（空 = 默认）。
     pub data_dir: String,
     /// 稳定设置中保存的数据目录；`SYMM_HOME` 运行时覆盖不会自动写入这里。
     pub persisted_data_dir: String,
@@ -121,7 +122,6 @@ pub struct AppState {
 #[derive(Debug, Default)]
 pub struct LinkSnapshot {
     pub views: Vec<LinkView>,
-    display_names: Vec<String>,
     id_to_index: HashMap<i64, usize>,
     total_count: usize,
     matched_count: usize,
@@ -151,18 +151,13 @@ impl LinkSnapshot {
         matched_count: usize,
         kind_counts: (usize, usize),
     ) -> Self {
-        let mut display_names = Vec::with_capacity(views.len());
-        let mut id_to_index = HashMap::with_capacity(views.len());
-
-        for (i, view) in views.iter().enumerate() {
-            let display_name = display_name_for(view);
-            display_names.push(display_name);
-            id_to_index.insert(view.id, i);
-        }
-
+        let id_to_index = views
+            .iter()
+            .enumerate()
+            .map(|(index, view)| (view.id, index))
+            .collect();
         Self {
             views,
-            display_names,
             id_to_index,
             total_count,
             matched_count,
@@ -192,8 +187,8 @@ impl LinkSnapshot {
         self.views.get(index)
     }
 
-    pub fn display_name_at(&self, index: usize) -> Option<&str> {
-        self.display_names.get(index).map(String::as_str)
+    pub fn display_name_at(&self, index: usize) -> Option<Cow<'_, str>> {
+        self.views.get(index).map(|view| view.display_name())
     }
 
     pub fn view_by_id(&self, id: i64) -> Option<&LinkView> {
@@ -201,10 +196,6 @@ impl LinkSnapshot {
             .get(&id)
             .and_then(|&index| self.views.get(index))
     }
-}
-
-fn display_name_for(view: &LinkView) -> String {
-    view.display_name().into_owned()
 }
 
 impl AppState {

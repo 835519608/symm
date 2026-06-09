@@ -1,6 +1,7 @@
 use crate::domain::model::LinkStatus;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 #[derive(Debug, Parser)]
 #[command(name = "symm-cli", version, about = "软链接管理命令行工具")]
@@ -42,8 +43,8 @@ pub enum Commands {
     Ls {
         #[arg(long)]
         json: bool,
-        #[arg(long)]
-        status: Option<StatusArg>,
+        #[arg(long, value_parser = parse_status_arg)]
+        status: Option<LinkStatus>,
         #[arg(long)]
         limit: Option<u32>,
         #[arg(long, default_value_t = 0)]
@@ -85,25 +86,8 @@ pub enum Commands {
     },
 }
 
-#[derive(Debug, Clone, clap::ValueEnum)]
-pub enum StatusArg {
-    Ok,
-    Broken,
-    Missing,
-    Stale,
-    Drift,
-    Unknown,
-}
-
-impl StatusArg {
-    pub fn to_model(self) -> LinkStatus {
-        match self {
-            StatusArg::Ok => LinkStatus::Ok,
-            StatusArg::Broken => LinkStatus::Broken,
-            StatusArg::Missing => LinkStatus::Missing,
-            StatusArg::Stale => LinkStatus::Stale,
-            StatusArg::Drift => LinkStatus::Drift,
-            StatusArg::Unknown => LinkStatus::Unknown,
-        }
-    }
+fn parse_status_arg(raw: &str) -> Result<LinkStatus, String> {
+    LinkStatus::from_str(raw).map_err(|_| {
+        format!("状态无效：{raw}（可选：ok / broken / missing / stale / drift / unknown）")
+    })
 }

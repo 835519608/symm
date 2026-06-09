@@ -7,39 +7,55 @@ use std::path::PathBuf;
 
 pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmError> {
     match command {
-        Commands::Add { link, target } => {
+        Commands::Add { .. }
+        | Commands::Adopt { .. }
+        | Commands::Point { .. }
+        | Commands::Rm { .. }
+        | Commands::Restore { .. }
+        | Commands::Ls { .. }
+        | Commands::Show { .. } => {
             let conn = crate::adapters::db::link_store::open()?;
-            execute_link_operation(&conn, LinkOperation::Add, link, target, writer)
+            execute_with_conn(&conn, command, writer)
+        }
+        Commands::ElevatedListLocks { .. } | Commands::ElevatedKill { .. } => {
+            Err(SymmError::InvalidArgument {
+                message: "内部提权子命令应由 CLI 入口直接处理".to_string(),
+            })
+        }
+        #[cfg(windows)]
+        Commands::ElevatedCreateLink { .. } => Err(SymmError::InvalidArgument {
+            message: "内部提权子命令应由 CLI 入口直接处理".to_string(),
+        }),
+    }
+}
+
+fn execute_with_conn<W: Write>(
+    conn: &rusqlite::Connection,
+    command: Commands,
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    match command {
+        Commands::Add { link, target } => {
+            execute_link_operation(conn, LinkOperation::Add, link, target, writer)
         }
         Commands::Adopt { link, target } => {
-            let conn = crate::adapters::db::link_store::open()?;
-            execute_link_operation(&conn, LinkOperation::Adopt, link, target, writer)
+            execute_link_operation(conn, LinkOperation::Adopt, link, target, writer)
         }
         Commands::Point { link, target } => {
-            let conn = crate::adapters::db::link_store::open()?;
-            execute_link_operation(&conn, LinkOperation::Point, link, target, writer)
+            execute_link_operation(conn, LinkOperation::Point, link, target, writer)
         }
-        Commands::Rm { selectors } => {
-            let conn = crate::adapters::db::link_store::open()?;
-            workflows::rm::workflow::run_rm(&conn, &selectors, writer)
-        }
+        Commands::Rm { selectors } => workflows::rm::workflow::run_rm(conn, &selectors, writer),
         Commands::Restore { selectors } => {
-            let conn = crate::adapters::db::link_store::open()?;
-            workflows::rm::workflow::run_restore(&conn, &selectors, writer)
+            workflows::rm::workflow::run_restore(conn, &selectors, writer)
         }
         Commands::Ls {
             json,
-            status,
+            status: wanted,
             limit,
             offset,
-        } => {
-            let conn = crate::adapters::db::link_store::open()?;
-            let wanted = status.map(|value| value.to_model());
-            workflows::ls::workflow::run(&conn, json, wanted, limit, offset, writer)
-        }
+        } => workflows::ls::workflow::run(conn, json, wanted, limit, offset, writer),
         Commands::Show { selector, json } => {
-            let conn = crate::adapters::db::link_store::open()?;
-            workflows::show::workflow::run(&conn, selector.as_deref(), json, writer)
+            workflows::show::workflow::run(conn, selector.as_deref(), json, writer)
         }
         Commands::ElevatedListLocks { .. } | Commands::ElevatedKill { .. } => {
             Err(SymmError::InvalidArgument {

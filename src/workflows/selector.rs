@@ -28,6 +28,7 @@ pub fn records_from_tokens(
 ) -> Result<Vec<LinkRecord>, SymmError> {
     let mut resolved = vec![None; tokens.len()];
     let mut numeric_positions: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    let mut name_positions: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for (pos, raw) in tokens.iter().enumerate() {
         let token = raw.trim();
@@ -39,12 +40,18 @@ pub fn records_from_tokens(
         if let Some(index) = parse_list_index(token)? {
             numeric_positions.entry(index).or_default().push(pos);
         } else {
-            resolved[pos] = Some(link_store::find_by_name(conn, token)?);
+            name_positions
+                .entry(token.to_string())
+                .or_default()
+                .push(pos);
         }
     }
 
     if !numeric_positions.is_empty() {
         fill_numeric_records(conn, &numeric_positions, &mut resolved)?;
+    }
+    if !name_positions.is_empty() {
+        fill_name_records(conn, &name_positions, &mut resolved)?;
     }
 
     let mut records = Vec::with_capacity(tokens.len());
@@ -114,5 +121,21 @@ fn fill_numeric_records(
         }
         Ok(row_index < max_index)
     })?;
+    Ok(())
+}
+
+fn fill_name_records(
+    conn: &rusqlite::Connection,
+    name_positions: &BTreeMap<String, Vec<usize>>,
+    resolved: &mut [Option<LinkRecord>],
+) -> Result<(), SymmError> {
+    let names = name_positions.keys().cloned().collect::<Vec<_>>();
+    for record in link_store::find_by_names(conn, &names)? {
+        if let Some(positions) = name_positions.get(&record.name) {
+            for &pos in positions {
+                resolved[pos] = Some(record.clone());
+            }
+        }
+    }
     Ok(())
 }

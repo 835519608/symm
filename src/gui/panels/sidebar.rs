@@ -138,8 +138,8 @@ fn sidebar_list(
                 let Some(view) = snapshot.view_at(row) else {
                     continue;
                 };
-                let name = snapshot.display_name_at(row).unwrap_or("");
-                link_row(ui, state, view, name, p);
+                let name = snapshot.display_name_at(row).unwrap_or_default();
+                link_row(ui, state, view, name.as_ref(), p);
             }
         });
 }

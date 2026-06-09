@@ -17,8 +17,9 @@ pub fn view_for_record(
     conn: &rusqlite::Connection,
     record: LinkRecord,
 ) -> Result<LinkView, SymmError> {
-    let mut view = status::to_view(record.clone());
-    view.index = selector::index_in_list(conn, &record)?;
+    let index = selector::index_in_list(conn, &record)?;
+    let mut view = status::to_view(record);
+    view.index = index;
     Ok(view)
 }
 
@@ -57,38 +58,14 @@ where
         });
     }
 
-    let Some(wanted) = wanted else {
-        unreachable!("wanted was checked above");
-    };
-    let start = offset as usize;
-    let take = limit.map(|lim| lim as usize).unwrap_or(usize::MAX);
-    let mut scanned = 0usize;
-    let mut matched = 0usize;
-    let mut emitted = 0usize;
-    link_store::for_each(conn, |record| {
-        scanned += 1;
-        let mut view = status::to_view(record);
-        view.index = scanned as u32;
-        if view.status != wanted {
-            return Ok(true);
-        }
-        if matched < start {
-            matched += 1;
-            return Ok(true);
-        }
-        if emitted >= take {
-            return Ok(false);
-        }
-        matched += 1;
-        emitted += 1;
-        f(view)?;
-        Ok(emitted < take)
-    })?;
-    Ok(ViewStreamStats {
-        scanned,
-        emitted,
-        has_more: false,
-    })
+    scan_status_filtered_views(
+        conn,
+        wanted.expect("wanted checked above"),
+        limit,
+        offset,
+        false,
+        f,
+    )
 }
 
 pub fn for_each_view_page<F>(
@@ -131,10 +108,29 @@ where
         });
     }
 
-    let Some(wanted) = wanted else {
-        unreachable!("wanted was checked above");
-    };
+    scan_status_filtered_views(
+        conn,
+        wanted.expect("wanted checked above"),
+        Some(limit),
+        offset,
+        true,
+        f,
+    )
+}
+
+fn scan_status_filtered_views<F>(
+    conn: &rusqlite::Connection,
+    wanted: LinkStatus,
+    limit: Option<u32>,
+    offset: u32,
+    detect_has_more: bool,
+    mut f: F,
+) -> Result<ViewStreamStats, SymmError>
+where
+    F: FnMut(LinkView) -> Result<(), SymmError>,
+{
     let start = offset as usize;
+    let take = limit.map(|lim| lim as usize).unwrap_or(usize::MAX);
     let mut scanned = 0usize;
     let mut matched = 0usize;
     let mut emitted = 0usize;
@@ -151,13 +147,13 @@ where
             return Ok(true);
         }
         if emitted >= take {
-            has_more = true;
+            has_more = detect_has_more;
             return Ok(false);
         }
         matched += 1;
         emitted += 1;
         f(view)?;
-        Ok(true)
+        Ok(detect_has_more || emitted < take)
     })?;
     Ok(ViewStreamStats {
         scanned,

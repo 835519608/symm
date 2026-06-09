@@ -77,6 +77,7 @@ fn execute_operation<W: Write>(
     let change = plan_filesystem_change(operation, link_path, target, link_state)?;
     let applies_filesystem_change = change.applies_filesystem_change();
     let name_input = prepare_record_name(conn, decisions, existing.as_ref())?;
+    ensure_planned_link_state_unchanged(link_path, &change)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     let (target_norm, link_kind) =
         apply_filesystem_change(&mut reporter, decisions, &link_norm, link_path, change)?;
@@ -104,16 +105,19 @@ fn execute_operation<W: Write>(
             verb: operation.verb(),
         },
     )?;
-    if let Err(err) = persist_result {
-        if !applies_filesystem_change {
-            return Err(err);
+    match persist_result {
+        PersistOutcome::Done => {}
+        PersistOutcome::DbFailed(err) => {
+            if !applies_filesystem_change {
+                return Err(err);
+            }
+            return Err(filesystem_applied_but_db_failed(
+                operation,
+                &link_norm,
+                &target_norm,
+                err,
+            ));
         }
-        return Err(filesystem_applied_but_db_failed(
-            operation,
-            &link_norm,
-            &target_norm,
-            err,
-        ));
     }
     Ok((link_norm, target_norm))
 }
@@ -133,10 +137,20 @@ fn filesystem_applied_but_db_failed(
 }
 
 enum PlannedFilesystemChange {
-    CreateNewLink { target_norm: String },
-    ReuseExistingLink { target_norm: String, kind: LinkKind },
-    AdoptEntity { target: PathBuf },
-    ReplaceExistingLink { target_norm: String },
+    CreateNewLink {
+        target_norm: String,
+    },
+    ReuseExistingLink {
+        target_norm: String,
+        kind: LinkKind,
+    },
+    AdoptEntity {
+        target: PathBuf,
+    },
+    ReplaceExistingLink {
+        target_norm: String,
+        existing_kind: LinkKind,
+    },
 }
 
 impl PlannedFilesystemChange {
@@ -244,9 +258,12 @@ fn plan_point(
 ) -> Result<PlannedFilesystemChange, SymmError> {
     let target_norm = runtime_paths::normalize_target(target)?;
     match link_state {
-        symlink::LinkPathState::Link { .. } => {
-            Ok(PlannedFilesystemChange::ReplaceExistingLink { target_norm })
-        }
+        symlink::LinkPathState::Link {
+            kind: existing_kind,
+        } => Ok(PlannedFilesystemChange::ReplaceExistingLink {
+            target_norm,
+            existing_kind,
+        }),
         symlink::LinkPathState::Missing => Err(SymmError::InvalidArgument {
             message: format!("link 路径不存在，无法 point：{}", link_path.display()),
         }),
@@ -295,7 +312,10 @@ fn apply_filesystem_change<W: Write>(
                 })?;
             Ok((target_norm, link_kind))
         }
-        PlannedFilesystemChange::ReplaceExistingLink { target_norm } => {
+        PlannedFilesystemChange::ReplaceExistingLink {
+            target_norm,
+            existing_kind: _,
+        } => {
             let link_kind = mutate_link_path_after_lock(
                 reporter,
                 decisions,
@@ -308,6 +328,40 @@ fn apply_filesystem_change<W: Write>(
             Ok((target_norm, link_kind))
         }
     }
+}
+
+fn ensure_planned_link_state_unchanged(
+    link_path: &Path,
+    change: &PlannedFilesystemChange,
+) -> Result<(), SymmError> {
+    let current = symlink::inspect_link_path(link_path)?;
+    let unchanged = match change {
+        PlannedFilesystemChange::CreateNewLink { .. } => {
+            matches!(current, symlink::LinkPathState::Missing)
+        }
+        PlannedFilesystemChange::ReuseExistingLink { target_norm, kind } => match current {
+            symlink::LinkPathState::Link { kind: current_kind } if current_kind == *kind => {
+                symlink::link_points_to(link_path, Path::new(target_norm))?
+            }
+            _ => false,
+        },
+        PlannedFilesystemChange::AdoptEntity { .. } => {
+            matches!(current, symlink::LinkPathState::Entity)
+        }
+        PlannedFilesystemChange::ReplaceExistingLink { existing_kind, .. } => match current {
+            symlink::LinkPathState::Link { kind } => kind == *existing_kind,
+            _ => false,
+        },
+    };
+    if unchanged {
+        return Ok(());
+    }
+    Err(SymmError::InvalidArgument {
+        message: format!(
+            "link 路径状态已变化，请重新执行本次操作：{}",
+            link_path.display()
+        ),
+    })
 }
 
 fn mutate_link_path_after_lock<W: Write>(
@@ -324,7 +378,7 @@ fn mutate_link_path_after_lock<W: Write>(
         }
         LinkPathMutation::Replace { target_norm } => {
             emit_creating_link(reporter, link_norm, target_norm)?;
-            replace_link_via_temp(link_path, Path::new(target_norm))
+            replace_link_via_temp(link_path, link_norm, target_norm)
         }
     }
 }
@@ -378,11 +432,16 @@ struct PersistRecord<'a> {
     verb: &'a str,
 }
 
+enum PersistOutcome {
+    Done,
+    DbFailed(SymmError),
+}
+
 fn persist_record<W: Write>(
     conn: &rusqlite::Connection,
     reporter: &mut MigrationProgressReporter<'_, W>,
     input: PersistRecord<'_>,
-) -> Result<Result<(), SymmError>, SymmError> {
+) -> Result<PersistOutcome, SymmError> {
     let name = match link_store::upsert_link(
         conn,
         &input.name_input,
@@ -391,7 +450,7 @@ fn persist_record<W: Write>(
         input.link_kind,
     ) {
         Ok(name) => name,
-        Err(err) => return Ok(Err(err)),
+        Err(err) => return Ok(PersistOutcome::DbFailed(err)),
     };
     if input.name_input != name && !input.name_input.is_empty() {
         reporter.write_line(&format!(
@@ -411,7 +470,7 @@ fn persist_record<W: Write>(
         "{}：{}（名称：{display_name}）",
         input.verb, input.link_norm
     ))?;
-    Ok(Ok(()))
+    Ok(PersistOutcome::Done)
 }
 
 fn prepare_record_name(
@@ -435,7 +494,12 @@ fn prepare_record_name(
     Ok(name_input)
 }
 
-fn replace_link_via_temp(link: &Path, target: &Path) -> Result<LinkKind, SymmError> {
+fn replace_link_via_temp(
+    link: &Path,
+    link_norm: &str,
+    target_norm: &str,
+) -> Result<LinkKind, SymmError> {
+    let target = Path::new(target_norm);
     let old_target = fs::read_link(link).map_err(|e| SymmError::IoError {
         message: format!("改指向失败：无法读取旧 link 指向：{e}"),
     })?;
@@ -465,12 +529,37 @@ fn replace_link_via_temp(link: &Path, target: &Path) -> Result<LinkKind, SymmErr
             ),
         });
     }
-    let meta = fs::symlink_metadata(link).map_err(|e| SymmError::IoError {
-        message: format!("改指向失败：无法确认新 link 类型：{e}"),
+    let meta = fs::symlink_metadata(link).map_err(|e| {
+        point_applied_but_record_unwritten(
+            link_norm,
+            target_norm,
+            SymmError::IoError {
+                message: format!("改指向失败：无法确认新 link 类型：{e}"),
+            },
+        )
     })?;
-    symlink::kind_from_path_and_metadata(link, &meta).ok_or_else(|| SymmError::IoError {
-        message: format!("改指向失败：新 link 类型无效：{}", link.display()),
+    symlink::kind_from_path_and_metadata(link, &meta).ok_or_else(|| {
+        point_applied_but_record_unwritten(
+            link_norm,
+            target_norm,
+            SymmError::IoError {
+                message: format!("改指向失败：新 link 类型无效：{}", link.display()),
+            },
+        )
     })
+}
+
+fn point_applied_but_record_unwritten(
+    link_norm: &str,
+    target_norm: &str,
+    err: SymmError,
+) -> SymmError {
+    SymmError::FilesystemAppliedButDbFailed {
+        operation: "point".to_string(),
+        link_path: link_norm.to_string(),
+        target_path: target_norm.to_string(),
+        message: err.to_string(),
+    }
 }
 
 fn unique_temp_link_path(link: &Path) -> PathBuf {
@@ -507,6 +596,7 @@ mod tests {
     use crate::adapters::db::{link_store, schema};
     use rusqlite::Connection;
     use std::io::Write;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     struct TestDecisions;
@@ -529,6 +619,24 @@ mod tests {
     impl LinkOpDecisionProvider for NumericNameDecisions {
         fn name(&mut self, _default_name: &str) -> Result<String, SymmError> {
             Ok("42".to_string())
+        }
+
+        fn lock_choice(
+            &mut self,
+            _procs: &[crate::adapters::lock::ProcInfo],
+        ) -> Result<LinkOpLockChoice, SymmError> {
+            Ok(LinkOpLockChoice::Cancel)
+        }
+    }
+
+    struct CreateLinkDuringNameDecisions {
+        link: PathBuf,
+    }
+
+    impl LinkOpDecisionProvider for CreateLinkDuringNameDecisions {
+        fn name(&mut self, _default_name: &str) -> Result<String, SymmError> {
+            std::fs::write(&self.link, "late entity").expect("create competing link path entity");
+            Ok("raced".to_string())
         }
 
         fn lock_choice(
@@ -766,6 +874,43 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&link).expect("read existing link"),
             "payload"
+        );
+    }
+
+    #[test]
+    fn link_state_change_during_prompt_aborts_before_filesystem_mutation() {
+        let temp = tempdir().expect("temp dir");
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        let link = temp.path().join("link.txt");
+        let target = temp.path().join("target.txt");
+        std::fs::write(&target, "payload").expect("write target");
+
+        let mut decisions = CreateLinkDuringNameDecisions { link: link.clone() };
+        let mut out = Vec::new();
+        let err = run_operation(
+            &conn,
+            LinkOperation::Add,
+            &link,
+            &target,
+            &mut decisions,
+            &mut out,
+        )
+        .expect_err("changed link path state should abort before mutation");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("状态已变化")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link).expect("read competing entity"),
+            "late entity"
+        );
+        assert!(
+            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
+                .expect("query link")
+                .is_none(),
+            "changed link path should not be persisted"
         );
     }
 }

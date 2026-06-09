@@ -37,16 +37,15 @@ where
 
         let rel = src_path.strip_prefix(src).unwrap_or(src_path);
         let dst_path = dst.join(rel);
+        let file_type = entry.file_type();
 
-        if rebase::link_kind_at(src_path)?.is_some() {
+        if !file_type.is_file() && rebase::link_kind_at(src_path)?.is_some() {
             deferred_symlinks.push((src_path.to_path_buf(), dst_path));
-            if entry.file_type().is_dir() {
+            if file_type.is_dir() {
                 entries.skip_current_dir();
             }
             continue;
         }
-
-        let file_type = entry.file_type();
 
         if file_type.is_dir() {
             fs::create_dir_all(&dst_path).map_err(ioe)?;

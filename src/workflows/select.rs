@@ -16,7 +16,7 @@ pub fn pick_one_selector(conn: &rusqlite::Connection) -> Result<String, SymmErro
     if entries.is_truncated() {
         return pick_record::prompt_one_selector(entries.total(), entries.option_limit());
     }
-    let options: Vec<String> = entries.iter().map(pick_list::format_label).collect();
+    let options = entries.labels();
     let selected = pick_record::pick_one_option(&options)?;
     let index =
         pick_list::parse_label_index(&selected).ok_or_else(|| SymmError::InvalidArgument {
@@ -37,7 +37,7 @@ pub fn pick_many_records(conn: &rusqlite::Connection) -> Result<Vec<LinkRecord>,
             pick_record::prompt_many_selectors(entries.total(), entries.option_limit())?;
         return records_from_selectors(conn, &selectors);
     }
-    let options: Vec<String> = entries.iter().map(pick_list::format_label).collect();
+    let options = entries.labels();
     let selected = pick_record::pick_many_options(&options)?;
     if selected.is_empty() {
         return Err(SymmError::InvalidArgument {

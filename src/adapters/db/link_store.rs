@@ -4,9 +4,16 @@ use crate::domain::model::{LinkKind, LinkRecord};
 use rusqlite::Connection;
 #[cfg(feature = "gui")]
 use std::collections::HashSet;
+#[cfg(feature = "gui")]
+use std::path::Path;
 
 pub fn open() -> Result<Connection, SymmError> {
     repository::open_db()
+}
+
+#[cfg(feature = "gui")]
+pub fn open_at(data_dir: &Path) -> Result<Connection, SymmError> {
+    repository::open_db_at(data_dir)
 }
 
 pub fn upsert_link(
@@ -39,6 +46,10 @@ pub fn find_by_name_optional(
 
 pub fn find_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord>, SymmError> {
     repository::find_many_by_ids(conn, ids)
+}
+
+pub fn find_by_names(conn: &Connection, names: &[String]) -> Result<Vec<LinkRecord>, SymmError> {
+    repository::find_many_by_names(conn, names)
 }
 
 #[cfg(feature = "gui")]
@@ -140,6 +151,25 @@ mod tests {
         let err = find_by_ids(&conn, &[1, 99]).expect_err("missing id should fail");
 
         assert!(matches!(err, SymmError::NotFound { selector } if selector == "#99"));
+    }
+
+    #[test]
+    fn find_by_names_preserves_requested_order_and_duplicates() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        upsert_link(&conn, "a", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+        upsert_link(&conn, "b", "/tmp/b", "/tmp/t2", LinkKind::Symlink).expect("insert");
+
+        let names = vec!["b".to_string(), "a".to_string(), "b".to_string()];
+        let records = find_by_names(&conn, &names).expect("find many");
+
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b", "a", "b"]
+        );
     }
 
     #[test]

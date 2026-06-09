@@ -35,6 +35,14 @@ impl PickEntries {
     pub fn is_truncated(&self) -> bool {
         self.total > self.items.len()
     }
+
+    pub fn labels(&self) -> Vec<String> {
+        self.items.iter().map(format_label).collect()
+    }
+
+    pub fn record_for_label(&self, label: &str) -> Option<&PickEntry> {
+        entry_for_label(&self.items, label)
+    }
 }
 
 impl Deref for PickEntries {

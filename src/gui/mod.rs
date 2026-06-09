@@ -2,7 +2,6 @@
 
 mod app;
 mod data;
-mod env;
 mod fonts;
 mod i18n;
 mod icon;

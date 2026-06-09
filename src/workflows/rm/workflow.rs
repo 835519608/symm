@@ -20,6 +20,29 @@ pub enum RemoveMode {
     RestoreTargetToLink,
 }
 
+impl RemoveMode {
+    fn success_hint(self) -> &'static str {
+        match self {
+            RemoveMode::DeleteLinkOnly => "已删除链接关系",
+            RemoveMode::RestoreTargetToLink => "已恢复实体位置",
+        }
+    }
+
+    fn partial_failure_hint(self) -> &'static str {
+        match self {
+            RemoveMode::DeleteLinkOnly => "部分删除失败",
+            RemoveMode::RestoreTargetToLink => "部分恢复失败",
+        }
+    }
+
+    fn perf_action(self) -> &'static str {
+        match self {
+            RemoveMode::DeleteLinkOnly => "delete_link_only",
+            RemoveMode::RestoreTargetToLink => "restore_target_to_link",
+        }
+    }
+}
+
 /// CLI：删除链接关系，不移动 target。
 #[cfg_attr(not(feature = "gui"), allow(dead_code))]
 pub fn run_rm<W: Write>(
@@ -116,10 +139,7 @@ fn run_resolved_records<W: Write>(
         return Err(batch_failure_error(failures));
     }
 
-    let action_hint = match mode {
-        RemoveMode::DeleteLinkOnly => "已删除链接关系",
-        RemoveMode::RestoreTargetToLink => "已恢复实体位置",
-    };
+    let action_hint = mode.success_hint();
     let summary = if labels.len() == 1 {
         labels[0].clone()
     } else {
@@ -138,12 +158,16 @@ fn run_resolved_records<W: Write>(
         vec![
             ("count", labels.len().to_string()),
             ("failures", failures.len().to_string()),
-            ("action", format!("{mode:?}")),
+            ("action", mode.perf_action().to_string()),
         ]
     });
     if !failures.is_empty() {
         return Err(SymmError::BatchFailure {
-            message: format!("部分删除失败：{}", format_failures(&failures)),
+            message: format!(
+                "{}：{}",
+                mode.partial_failure_hint(),
+                format_failures(&failures)
+            ),
         });
     }
     Ok(())

@@ -6,8 +6,8 @@ use crate::gui::theme::SIDEBAR_WIDTH_MIN;
 use crate::gui::theme::{self, rich_body, rich_body_muted, rich_section};
 use crate::gui::widgets::{
     ModalOptions, ModalSection, ModalSize, PathBrowse, PathPickMode, button, fill_ui_width,
-    form_page, modal_scroll_vertical, path_control_row, settings_content_frame, settings_nav,
-    show_modal, split_row,
+    modal_scroll_vertical, path_control_row, settings_content_frame, settings_nav, show_modal,
+    split_row,
 };
 use egui::{Grid, Ui};
 
@@ -155,7 +155,7 @@ fn settings_main_body(
         settings_content_pane(ui, |ui| {
             settings_content_frame(ui, SETTINGS_CONTENT_PAD, |ui| {
                 modal_scroll_vertical(ui, "settings_dialog_body", |ui| {
-                    form_page(ui, |ui| match draft.section {
+                    ui.vertical(|ui| match draft.section {
                         SettingsSection::Appearance => {
                             appearance_page(ui, p, t, draft, sidebar_max, data_dir_runtime_override)
                         }

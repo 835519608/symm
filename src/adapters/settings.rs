@@ -53,28 +53,15 @@ fn io_err(e: std::io::Error) -> SymmError {
 mod tests {
     use super::*;
     use crate::domain::gui_settings::ThemeMode;
-    use std::env;
     use tempfile::tempdir;
-
-    fn with_symm_home(dir: &Path, f: impl FnOnce(&Path)) {
-        let home = dir.to_string_lossy().to_string();
-        unsafe {
-            env::set_var("SYMM_HOME", &home);
-        }
-        f(dir);
-        unsafe {
-            env::remove_var("SYMM_HOME");
-        }
-    }
 
     #[test]
     fn missing_file_returns_default() {
         let dir = tempdir().expect("tempdir");
-        with_symm_home(dir.path(), |home| {
-            let path = home.join(SETTINGS_FILE_NAME);
-            assert!(!path.exists());
-            assert_eq!(load(), GuiSettings::default());
-        });
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+
+        assert!(!path.exists());
+        assert_eq!(load_from(&path), GuiSettings::default());
     }
 
     #[test]
@@ -96,10 +83,9 @@ mod tests {
     #[test]
     fn corrupt_file_returns_default() {
         let dir = tempdir().expect("tempdir");
-        with_symm_home(dir.path(), |home| {
-            let path = home.join(SETTINGS_FILE_NAME);
-            fs::write(&path, "{not json").expect("write");
-            assert_eq!(load(), GuiSettings::default());
-        });
+        let path = dir.path().join(SETTINGS_FILE_NAME);
+
+        fs::write(&path, "{not json").expect("write");
+        assert_eq!(load_from(&path), GuiSettings::default());
     }
 }

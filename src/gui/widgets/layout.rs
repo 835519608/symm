@@ -25,11 +25,6 @@ pub fn split_row<L, R>(
     .inner
 }
 
-/// 表单页：占满主区可用宽度，各行控件右缘对齐。
-pub fn form_page<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.vertical(add).inner
-}
-
 /// 内容卡片（egui [`Frame::group`]）。
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     Frame::group(ui.style())

@@ -106,18 +106,18 @@ fn pick_optional_template(conn: &rusqlite::Connection) -> Result<Option<LinkReco
     }
 
     let mut options = vec![MANUAL_OPTION.to_string()];
-    options.extend(entries.iter().map(pick_list::format_label));
+    options.extend(entries.labels());
 
     let selected = pick_record::pick_one_option(&options)?;
     if selected.starts_with("(自己") {
         return Ok(None);
     }
 
-    let entry = pick_list::entry_for_label(&entries, &selected).ok_or_else(|| {
-        SymmError::InvalidArgument {
+    let entry = entries
+        .record_for_label(&selected)
+        .ok_or_else(|| SymmError::InvalidArgument {
             message: "无法识别所选记录".to_string(),
-        }
-    })?;
+        })?;
     Ok(Some(entry.record.clone()))
 }
 
