@@ -39,15 +39,13 @@ fn relocate_symlink_with_rebase(
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::relocate_symlink_preserving_target;
     use std::fs;
+    use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
-    #[cfg(unix)]
-    use std::os::unix::fs::symlink;
-
-    #[cfg(unix)]
     #[test]
     fn relocate_symlink_preserving_target_keeps_raw_target() {
         let temp = tempdir().expect("temp dir");

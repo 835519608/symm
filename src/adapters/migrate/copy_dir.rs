@@ -5,6 +5,7 @@ use super::{
 };
 use crate::adapters::errors::io::ioe;
 use crate::domain::error::SymmError;
+use std::cmp::Reverse;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -99,7 +100,7 @@ where
 }
 
 fn apply_deferred_dir_permissions(mut dirs: Vec<(PathBuf, PathBuf)>) -> Result<(), SymmError> {
-    dirs.sort_by(|a, b| b.1.components().count().cmp(&a.1.components().count()));
+    dirs.sort_by_key(|(_, dst)| Reverse(dst.components().count()));
     for (src, dst) in dirs {
         copy_permissions(&src, &dst)?;
     }
