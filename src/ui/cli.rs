@@ -45,7 +45,7 @@ pub enum Commands {
         json: bool,
         #[arg(long, value_parser = parse_status_arg)]
         status: Option<LinkStatus>,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_positive_limit_arg, allow_hyphen_values = true)]
         limit: Option<u32>,
         #[arg(long, default_value_t = 0)]
         offset: u32,
@@ -90,4 +90,14 @@ fn parse_status_arg(raw: &str) -> Result<LinkStatus, String> {
     LinkStatus::from_str(raw).map_err(|_| {
         format!("状态无效：{raw}（可选：ok / broken / missing / stale / drift / unknown）")
     })
+}
+
+fn parse_positive_limit_arg(raw: &str) -> Result<u32, String> {
+    let limit = raw
+        .parse::<u32>()
+        .map_err(|_| format!("limit 无效：{raw}（必须是正整数）"))?;
+    if limit == 0 {
+        return Err("limit 无效：0（必须是正整数）".to_string());
+    }
+    Ok(limit)
 }

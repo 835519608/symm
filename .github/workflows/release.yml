@@ -1,5 +1,5 @@
 # 正式发布：触发 v* 且排除带连字符 tag；semver 合法性由 resolve-release-version 校验。
-# 打包前不重复跑测试：校验当前 commit 上 ci.yml 已成功。
+# 打包前不重复跑测试：校验当前 commit 上必需的检查已成功。
 name: Release
 
 on:
@@ -24,6 +24,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/verify-ci-passed
+      - id: workflow_lint_scope
+        name: 判断是否需要 workflow lint
+        shell: bash
+        run: |
+          if git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -E '^\.github/(workflows|actions)/' >/dev/null; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 校验当前 commit 的 Workflow Lint 已通过
+        if: steps.workflow_lint_scope.outputs.required == 'true'
+        uses: ./.github/actions/verify-ci-passed
+        with:
+          workflow_file: workflow-lint.yml
 
   prepare-release:
     name: 准备 Release 说明
@@ -41,179 +55,27 @@ jobs:
       - id: notes
         uses: ./.github/actions/prepare-release-notes
 
-  build-windows-x64:
-    name: 构建产物 (windows-x64)
+  build_assets:
+    name: 构建平台产物
     needs: prepare-release
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-2025-vs2026
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v5
-
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
-      - name: Windows 安装包与便携包
-        uses: ./.github/actions/package-windows
-        with:
-          release_semver: ${{ needs.prepare-release.outputs.release_semver }}
-
-      - name: 上传临时产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-assets-windows-x64
-          path: |
-            symm-setup-windows-x64.exe
-            symm-portable-windows-x64.zip
-          if-no-files-found: error
-
-  build-windows-arm64:
-    name: 构建产物 (windows-arm64)
-    needs: prepare-release
-    if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-11-arm
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v5
-
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
-      - name: Windows 便携包
-        uses: ./.github/actions/package-windows
-        with:
-          release_semver: ${{ needs.prepare-release.outputs.release_semver }}
-          portable_name: symm-portable-windows-arm64.zip
-          build_installer: "false"
-
-      - name: 上传临时产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-assets-windows-arm64
-          path: symm-portable-windows-arm64.zip
-          if-no-files-found: error
-
-  build-windows-x86:
-    name: 构建产物 (windows-x86)
-    needs: prepare-release
-    if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-2025-vs2026
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v5
-
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
-      - name: Windows 便携包
-        uses: ./.github/actions/package-windows
-        with:
-          release_semver: ${{ needs.prepare-release.outputs.release_semver }}
-          build_target: i686-pc-windows-msvc
-          portable_name: symm-portable-windows-x86.zip
-          build_installer: "false"
-
-      - name: 上传临时产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-assets-windows-x86
-          path: symm-portable-windows-x86.zip
-          if-no-files-found: error
-
-  build-linux:
-    name: 构建产物 (linux-${{ matrix.arch }})
-    needs: prepare-release
-    if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: ubuntu-24.04
-            archive_name: symm-portable-linux-x64.zip
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            archive_name: symm-portable-linux-arm64.zip
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v5
-
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
-      - name: 打包便携 zip
-        uses: ./.github/actions/package-portable
-        with:
-          archive_name: ${{ matrix.archive_name }}
-          release_semver: ${{ needs.prepare-release.outputs.release_semver }}
-
-      - name: 上传临时产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-assets-linux-${{ matrix.arch }}
-          path: ${{ matrix.archive_name }}
-          if-no-files-found: error
-
-  build-macos:
-    name: 构建产物 (macos-${{ matrix.arch }})
-    needs: prepare-release
-    if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            runner: macos-15-intel
-            archive_name: symm-portable-macos-x64.zip
-          - arch: arm64
-            runner: macos-15
-            archive_name: symm-portable-macos-arm64.zip
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v5
-
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: 启用 Cargo 缓存
-        uses: Swatinem/rust-cache@v2
-
-      - name: 打包便携 zip
-        uses: ./.github/actions/package-portable
-        with:
-          archive_name: ${{ matrix.archive_name }}
-          release_semver: ${{ needs.prepare-release.outputs.release_semver }}
-
-      - name: 上传临时产物
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-assets-macos-${{ matrix.arch }}
-          path: ${{ matrix.archive_name }}
-          if-no-files-found: error
+    uses: ./.github/workflows/build-release-assets.yml
+    with:
+      release_semver: ${{ needs.prepare-release.outputs.release_semver }}
+      artifact_prefix: release-assets
+      build_windows_x64: true
+      build_windows_arm64: true
+      build_windows_x86: true
+      build_linux_x64: true
+      build_linux_arm64: true
+      build_macos_x64: true
+      build_macos_arm64: true
 
   publish-release:
     name: 发布 Release
     needs:
       - prepare-release
-      - build-windows-x64
-      - build-windows-arm64
-      - build-windows-x86
-      - build-linux
-      - build-macos
+      - build_assets
     if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-24.04
     steps:

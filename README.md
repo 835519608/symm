@@ -28,7 +28,7 @@ symm 是一个跨平台软链接管理工具，包含桌面 GUI（`symm`）和�
 
 依赖：
 
-- Rust stable（推荐本地通过 `mise` 按 `.mise.toml` 管理）
+- Rust stable
 - Git
 - Windows 安装包以 GitHub Actions 的 Windows runner + Inno Setup 构建结果为准；本地不提供 installer 构建入口
 
@@ -41,7 +41,7 @@ scripts/fetch-gui-font.sh
 构建 GUI 与 CLI：
 
 ```bash
-mise run build
+cargo build --release --features gui --bin symm --bin symm-cli
 ```
 
 产物：
@@ -53,15 +53,15 @@ mise run build
 本地开发推荐入口：
 
 ```bash
-mise run run-gui
-mise run run-help
-mise run fmt-check
-mise run clippy
-mise run test
-mise run ci
+cargo run --bin symm --features gui
+cargo run --bin symm-cli -- --help
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo test --features gui --lib
 ```
 
-没有 `mise` 的临时环境可以直接运行等价 `cargo` 命令；`mise` 只是本地环境管理入口，发布门禁仍以 GitHub Actions 为准。
+发布门禁以 GitHub Actions 为准；本地检查用于提前发现问题，不代替远端 CI。
 
 ## CLI 使用
 
@@ -81,7 +81,7 @@ symm-cli restore [序号或名称]...
 - 非纯数字选择器按 `name` 查找。
 - `show` 省略选择器时进入交互选择。
 - `rm` / `restore` 可一次传多个选择器；省略时进入交互多选。
-- `ls` 表格默认每页 100 条；`--json` 默认返回全量数组，只有显式 `--limit` / `--offset` 时分页。
+- `ls` 表格默认每页 100 条；`--json` 默认返回全量数组，只有显式 `--limit` / `--offset` 时分页；`--limit` 必须是正整数。
 
 示例：
 
@@ -419,12 +419,14 @@ Windows 安装包目前只为 x64 构建；Windows arm64 / x86 提供便携 zip�
 
 | Workflow | 触发 | 说明 |
 |----------|------|------|
-| `ci.yml` | 影响代码、测试、打包、assets 或 workflow 的 push / PR | 多平台矩阵执行 fmt、clippy、test |
+| `ci.yml` | 影响代码、测试、脚本、打包、assets 或 workflow 的 push / PR | 多平台矩阵执行 fmt、clippy、test |
+| `workflow-lint.yml` | workflow 或 action 变化的 push / PR | 运行 actionlint，检查 GitHub Actions 配置 |
+| `build-release-assets.yml` | `workflow_call` | 正式发布和测试包共用的平台构建流程 |
 | `release.yml` | `vX.Y.Z`，无 `-` 后缀 | 正式 Release，全平台全架构，设为 Latest |
 | `release-test.yml` | `vX.Y.Z-test*` tag 或手动触发 | Pre-release，不设为 Latest，可按目标包控制 |
 | `cleanup-test-releases.yml` | 定时或手动 | 清理旧测试 Pre-release，只保留最新测试包 |
 
-发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 的 `ci.yml` 已成功。
+发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 的 `ci.yml` 已成功。若该 commit 修改了 workflow 或 action，还会校验 `workflow-lint.yml` 已成功。
 
 Runner 矩阵：
 
@@ -492,7 +494,7 @@ gh workflow run release-test.yml \
 
 ## 维护约定
 
-- 改 Rust 代码后优先跑 `mise run fmt-check`，需要整体本地检查时跑 `mise run ci`。
+- 改 Rust 代码后优先跑 `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets` 和 `cargo test --features gui --lib`。
 - 发布和测试包以 GitHub Actions 结果为准，不以本地 `target/release/*` 作为交付物。
-- 改 workflow 或 action 时，优先用 YAML 解析和远端 Actions 验证；本机没有 `actionlint` 时不要声称已跑。
+- 改 workflow 或 action 时，远端 `workflow-lint.yml` 必须通过；本机没有 `actionlint` 时不要声称已跑。
 - 修改分层相关代码时，保持 `workflows` 无平台分支，平台差异集中在 adapters。

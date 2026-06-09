@@ -24,37 +24,41 @@ impl VecWriter {
 
 /// 选择文件（返回文件路径）。
 #[cfg(not(target_os = "macos"))]
-pub fn pick_path_file() -> Option<PathBuf> {
-    rfd::FileDialog::new().set_title("选择文件").pick_file()
+pub fn pick_path_file(title: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title(title).pick_file()
 }
 
 /// 选择文件夹（返回目录路径）。
-pub fn pick_path_folder() -> Option<PathBuf> {
-    rfd::FileDialog::new().set_title("选择文件夹").pick_folder()
+pub fn pick_path_folder(title: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new().set_title(title).pick_folder()
 }
 
 /// macOS：同一对话框可选文件或文件夹。
 #[cfg(target_os = "macos")]
-pub fn pick_path_file_or_folder() -> Option<PathBuf> {
-    pick_path_macos()
+pub fn pick_path_file_or_folder(title: &str, prompt: &str) -> Option<PathBuf> {
+    pick_path_macos(title, prompt)
 }
 
 #[cfg(target_os = "macos")]
-fn pick_path_macos() -> Option<PathBuf> {
-    let script = r#"
+fn pick_path_macos(title: &str, prompt: &str) -> Option<PathBuf> {
+    let title = escape_js_string(title);
+    let prompt = escape_js_string(prompt);
+    let script = format!(
+        r#"
 ObjC.import("AppKit");
 var panel = $.NSOpenPanel.openPanel;
-panel.setTitle("选择路径");
+panel.setTitle("{title}");
 panel.setCanChooseFiles(true);
 panel.setCanChooseDirectories(true);
 panel.setAllowsMultipleSelection(false);
-panel.setPrompt("选择");
+panel.setPrompt("{prompt}");
 if (panel.runModal() === $.NSFileHandlingPanelOKButton) {
     panel.URL.path.js;
 }
-"#;
+"#
+    );
     let out = Command::new("osascript")
-        .args(["-l", "JavaScript", "-e", script])
+        .args(["-l", "JavaScript", "-e", &script])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -66,4 +70,9 @@ if (panel.runModal() === $.NSFileHandlingPanelOKButton) {
     } else {
         Some(PathBuf::from(path))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn escape_js_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }

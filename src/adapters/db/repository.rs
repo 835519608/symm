@@ -260,12 +260,6 @@ pub fn find_existing_by_names(
     Ok(records)
 }
 
-#[cfg(feature = "gui")]
-pub fn find_optional_by_id(conn: &Connection, id: i64) -> Result<Option<LinkRecord>, SymmError> {
-    let mut records = find_many_by_id_chunk(conn, &[id])?;
-    Ok(records.pop())
-}
-
 #[cfg(any(feature = "gui", test))]
 pub fn existing_ids(conn: &Connection, ids: &[i64]) -> Result<HashSet<i64>, SymmError> {
     let mut existing = HashSet::with_capacity(ids.len());

@@ -145,13 +145,11 @@ fn run_resolved_records<W: Write>(
     } else {
         format!("共 {} 条：{}", labels.len(), labels.join("、"))
     };
-    writeln!(writer, "{action_hint}：{summary}").map_err(|e| SymmError::IoError {
-        message: e.to_string(),
-    })?;
+    writeln!(writer, "{action_hint}：{summary}")
+        .map_err(|e| output_error_after_failures(&failures, e))?;
     for (label, err) in &failures {
-        writeln!(writer, "失败：{label}：{err}").map_err(|e| SymmError::IoError {
-            message: e.to_string(),
-        })?;
+        writeln!(writer, "失败：{label}：{err}")
+            .map_err(|e| output_error_after_failures(&failures, e))?;
     }
 
     perf::log_perf_lazy("rm", started.elapsed(), || {
@@ -162,13 +160,7 @@ fn run_resolved_records<W: Write>(
         ]
     });
     if !failures.is_empty() {
-        return Err(SymmError::BatchFailure {
-            message: format!(
-                "{}：{}",
-                mode.partial_failure_hint(),
-                format_failures(&failures)
-            ),
-        });
+        return Err(partial_failure_error(mode, &failures));
     }
     Ok(())
 }
@@ -177,9 +169,45 @@ fn batch_failure_error(mut failures: Vec<(String, SymmError)>) -> SymmError {
     if failures.len() == 1 {
         return failures.remove(0).1;
     }
-    SymmError::BatchFailure {
-        message: format_failures(&failures),
+    batch_error_with_message(&failures, format_failures(&failures))
+}
+
+fn partial_failure_error(mode: RemoveMode, failures: &[(String, SymmError)]) -> SymmError {
+    batch_error_with_message(
+        failures,
+        format!(
+            "{}：{}",
+            mode.partial_failure_hint(),
+            format_failures(failures)
+        ),
+    )
+}
+
+fn output_error_after_failures(failures: &[(String, SymmError)], err: std::io::Error) -> SymmError {
+    if failures.iter().any(|(_, err)| is_half_applied_error(err)) {
+        return SymmError::BatchFilesystemAppliedButRecordIncomplete {
+            message: format!("输出批量结果失败：{}\n{}", err, format_failures(failures)),
+        };
     }
+    SymmError::IoError {
+        message: err.to_string(),
+    }
+}
+
+fn batch_error_with_message(failures: &[(String, SymmError)], message: String) -> SymmError {
+    if failures.iter().any(|(_, err)| is_half_applied_error(err)) {
+        return SymmError::BatchFilesystemAppliedButRecordIncomplete { message };
+    }
+    SymmError::BatchFailure { message }
+}
+
+fn is_half_applied_error(err: &SymmError) -> bool {
+    matches!(
+        err,
+        SymmError::FilesystemAppliedButRecordDeleteFailed { .. }
+            | SymmError::FilesystemAppliedButRecordKept { .. }
+            | SymmError::BatchFilesystemAppliedButRecordIncomplete { .. }
+    )
 }
 
 fn format_failures(failures: &[(String, SymmError)]) -> String {
@@ -228,7 +256,7 @@ fn remove_one<W: Write>(
     let link = Path::new(&record.link_path);
     let link_status = status::try_for_record(record)?;
 
-    match mode {
+    let filesystem_applied = match mode {
         RemoveMode::RestoreTargetToLink => {
             ensure_restorable(record, link_status)?;
             if let Err(err) = restore_target_to_link(writer, record, link_status) {
@@ -237,11 +265,18 @@ fn remove_one<W: Write>(
                     RestoreFailure::LinkRemoved(err) => return Err(err),
                 }
             }
+            true
         }
         RemoveMode::DeleteLinkOnly => apply_delete_link_only(writer, record, link, link_status)?,
-    }
+    };
 
-    link_store::delete_known_id(conn, record.id)?;
+    link_store::delete_known_id(conn, record.id).map_err(|err| {
+        if filesystem_applied {
+            filesystem_applied_but_record_delete_failed(record, mode, err)
+        } else {
+            err
+        }
+    })?;
     Ok(record_label(record))
 }
 
@@ -278,9 +313,21 @@ fn apply_delete_link_only<W: Write>(
     record: &LinkRecord,
     link: &Path,
     link_status: LinkStatus,
-) -> Result<(), SymmError> {
+) -> Result<bool, SymmError> {
     if should_unlink_on_disk(link_status) {
-        symlink::unlink(link)?;
+        let current_status = status::try_for_record(record)?;
+        if should_unlink_on_disk(current_status) {
+            symlink::unlink(link)?;
+            return Ok(true);
+        }
+        writeln!(
+            writer,
+            "提示：{} 状态已变化，只删记录（当前路径不再按原计划删除）",
+            record.link_path
+        )
+        .map_err(|e| SymmError::IoError {
+            message: e.to_string(),
+        })?;
     } else if link_status == LinkStatus::Stale {
         writeln!(
             writer,
@@ -300,7 +347,7 @@ fn apply_delete_link_only<W: Write>(
             message: e.to_string(),
         })?;
     }
-    Ok(())
+    Ok(false)
 }
 
 fn record_label(record: &LinkRecord) -> String {
@@ -324,13 +371,31 @@ fn restore_target_to_link<W: Write>(
     migrate::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)
     })
-    .map_err(|e| {
-        RestoreFailure::LinkRemoved(SymmError::IoError {
-            message: format!(
-                "移回目标到链接位置失败：link 已移除，数据库记录已保留，可修复原因后重试 restore：{e}"
-            ),
-        })
-    })
+    .map_err(|e| RestoreFailure::LinkRemoved(filesystem_applied_but_record_kept(record, e)))
+}
+
+fn filesystem_applied_but_record_delete_failed(
+    record: &LinkRecord,
+    mode: RemoveMode,
+    err: SymmError,
+) -> SymmError {
+    SymmError::FilesystemAppliedButRecordDeleteFailed {
+        operation: mode.perf_action().to_string(),
+        link_path: record.link_path.clone(),
+        target_path: record.target_path.clone(),
+        message: err.to_string(),
+    }
+}
+
+fn filesystem_applied_but_record_kept(record: &LinkRecord, err: SymmError) -> SymmError {
+    SymmError::FilesystemAppliedButRecordKept {
+        operation: RemoveMode::RestoreTargetToLink.perf_action().to_string(),
+        link_path: record.link_path.clone(),
+        target_path: record.target_path.clone(),
+        message: format!(
+            "移回目标到链接位置失败：link 已移除，数据库记录已保留，可修复原因后重试 restore：{err}"
+        ),
+    }
 }
 
 fn ensure_restore_link_state_unchanged(
@@ -354,7 +419,253 @@ fn ensure_restore_link_state_unchanged(
     })
 }
 
+#[derive(Debug)]
 enum RestoreFailure {
     LinkUnchanged(SymmError),
     LinkRemoved(SymmError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::db::schema;
+    use crate::domain::model::LinkKind;
+    use rusqlite::Connection;
+    use std::fs;
+    use std::io;
+    use tempfile::tempdir;
+
+    struct FailWriter;
+
+    impl Write for FailWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("writer failed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn path_text(path: &Path) -> String {
+        path.to_string_lossy().to_string()
+    }
+
+    fn insert_record(conn: &Connection, name: &str, link: &Path, target: &Path) {
+        link_store::upsert_link(
+            conn,
+            name,
+            &path_text(link),
+            &path_text(target),
+            LinkKind::Symlink,
+        )
+        .expect("insert link record");
+    }
+
+    fn record(name: &str, link: &Path, target: &Path) -> LinkRecord {
+        LinkRecord {
+            id: 1,
+            name: name.to_string(),
+            link_path: path_text(link),
+            target_path: path_text(target),
+            link_kind: LinkKind::Symlink,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate schema");
+        conn
+    }
+
+    #[test]
+    fn delete_link_only_does_not_unlink_when_current_link_drifted_after_planned_ok() {
+        let temp = tempdir().expect("temp dir");
+        let target_a = temp.path().join("target-a.txt");
+        let target_b = temp.path().join("target-b.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target_a, "a").expect("write target a");
+        fs::write(&target_b, "b").expect("write target b");
+        symlink::create_link(&target_b, &link).expect("create drifted link");
+        let record = record("drifted", &link, &target_a);
+        let mut output = Vec::new();
+
+        let applied =
+            apply_delete_link_only(&mut output, &record, &link, LinkStatus::Ok).expect("apply rm");
+
+        assert!(!applied);
+        assert_eq!(
+            fs::read_to_string(&link).expect("read current link"),
+            "b",
+            "rm must not delete a link that drifted after the planned status was read"
+        );
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(text.contains("状态已变化"));
+    }
+
+    #[test]
+    fn rm_reports_half_applied_error_when_record_delete_fails_after_unlink() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        symlink::create_link(&target, &link).expect("create link");
+        let conn = memory_db();
+        insert_record(&conn, "rm-half", &link, &target);
+        conn.execute_batch("PRAGMA query_only = ON;")
+            .expect("make db readonly");
+        let mut output = Vec::new();
+
+        let err = run_rm(&conn, &["rm-half".to_string()], &mut output)
+            .expect_err("delete record should fail after unlink");
+
+        let SymmError::FilesystemAppliedButRecordDeleteFailed {
+            operation,
+            link_path,
+            target_path,
+            ..
+        } = err
+        else {
+            panic!("unexpected error: {err:?}");
+        };
+        assert_eq!(operation, "delete_link_only");
+        assert_eq!(link_path, path_text(&link));
+        assert_eq!(target_path, path_text(&target));
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(target.exists());
+    }
+
+    #[test]
+    fn restore_reports_half_applied_error_when_record_delete_fails_after_migration() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        symlink::create_link(&target, &link).expect("create link");
+        let conn = memory_db();
+        insert_record(&conn, "restore-half", &link, &target);
+        conn.execute_batch("PRAGMA query_only = ON;")
+            .expect("make db readonly");
+        let mut output = Vec::new();
+
+        let err = run_restore(&conn, &["restore-half".to_string()], &mut output)
+            .expect_err("delete record should fail after restore");
+
+        let SymmError::FilesystemAppliedButRecordDeleteFailed {
+            operation,
+            link_path,
+            target_path,
+            ..
+        } = err
+        else {
+            panic!("unexpected error: {err:?}");
+        };
+        assert_eq!(operation, "restore_target_to_link");
+        assert_eq!(link_path, path_text(&link));
+        assert_eq!(target_path, path_text(&target));
+        assert_eq!(
+            fs::read_to_string(&link).expect("read restored entity"),
+            "payload"
+        );
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn restore_reports_record_kept_when_progress_output_fails_after_unlink() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        symlink::create_link(&target, &link).expect("create link");
+        let record = record("restore-kept", &link, &target);
+        let mut writer = FailWriter;
+
+        let err = restore_target_to_link(&mut writer, &record, LinkStatus::Ok)
+            .expect_err("progress write should fail after unlink");
+
+        let RestoreFailure::LinkRemoved(SymmError::FilesystemAppliedButRecordKept {
+            operation,
+            link_path,
+            target_path,
+            ..
+        }) = err
+        else {
+            panic!("unexpected error: {err:?}");
+        };
+        assert_eq!(operation, "restore_target_to_link");
+        assert_eq!(link_path, path_text(&link));
+        assert_eq!(target_path, path_text(&target));
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(target.exists());
+    }
+
+    #[test]
+    fn partial_batch_preserves_half_applied_record_code() {
+        let failures = vec![(
+            "half".to_string(),
+            SymmError::FilesystemAppliedButRecordDeleteFailed {
+                operation: "delete_link_only".to_string(),
+                link_path: "/tmp/link".to_string(),
+                target_path: "/tmp/target".to_string(),
+                message: "db failed".to_string(),
+            },
+        )];
+
+        let err = partial_failure_error(RemoveMode::DeleteLinkOnly, &failures);
+
+        assert!(matches!(
+            err,
+            SymmError::BatchFilesystemAppliedButRecordIncomplete { .. }
+        ));
+        assert_eq!(err.code(), "filesystem_applied_but_record_incomplete");
+    }
+
+    #[test]
+    fn output_failure_after_partial_half_applied_batch_preserves_record_code() {
+        let temp = tempdir().expect("temp dir");
+        let success_target = temp.path().join("success-target.txt");
+        let success_link = temp.path().join("success-link.txt");
+        let half_target = temp.path().join("half-target.txt");
+        let half_link = temp.path().join("half-link.txt");
+        fs::write(&success_target, "success").expect("write success target");
+        fs::write(&half_target, "half").expect("write half target");
+        symlink::create_link(&success_target, &success_link).expect("create success link");
+        symlink::create_link(&half_target, &half_link).expect("create half link");
+        let conn = memory_db();
+        insert_record(&conn, "success", &success_link, &success_target);
+        insert_record(&conn, "half", &half_link, &half_target);
+        conn.execute_batch(
+            "CREATE TRIGGER block_half_delete
+             BEFORE DELETE ON links
+             WHEN old.name = 'half'
+             BEGIN
+                 SELECT RAISE(FAIL, 'blocked half delete');
+             END;",
+        )
+        .expect("create delete trigger");
+        let records =
+            link_store::find_by_names(&conn, &["success".to_string(), "half".to_string()])
+                .expect("load records");
+        let mut writer = FailWriter;
+
+        let err = run_resolved_records(
+            &conn,
+            records,
+            RemoveMode::DeleteLinkOnly,
+            &mut writer,
+            Instant::now(),
+        )
+        .expect_err("summary output should fail after collecting half-applied failure");
+
+        assert!(matches!(
+            err,
+            SymmError::BatchFilesystemAppliedButRecordIncomplete { .. }
+        ));
+        assert_eq!(err.code(), "filesystem_applied_but_record_incomplete");
+        assert!(fs::symlink_metadata(&success_link).is_err());
+        assert!(fs::symlink_metadata(&half_link).is_err());
+        assert!(half_target.exists());
+    }
 }

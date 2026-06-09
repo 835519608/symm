@@ -11,6 +11,7 @@ pub enum SidebarAction {
     Refresh,
     DeleteChecked,
     PageChanged,
+    Selected(i64),
     None,
 }
 
@@ -25,7 +26,7 @@ pub fn show_sidebar(ui: &mut Ui, state: &mut AppState, snapshot: &LinkSnapshot) 
         let pagination_h = typo.btn_h + 2.0 * theme::gap(ui);
         let list_h = (ui.available_height() - pagination_h).max(0.0);
         if list_h > 1.0 {
-            sidebar_list(ui, state, snapshot, &p, &t, list_h);
+            sidebar_list(ui, state, snapshot, &p, &t, list_h, &mut action);
         }
         ui.add_space(theme::gap(ui));
         sidebar_pagination(ui, state, snapshot, &p, &t, &mut action);
@@ -114,6 +115,7 @@ fn sidebar_list(
     p: &UiPalette,
     t: &crate::gui::i18n::GuiTexts,
     max_height: f32,
+    action: &mut SidebarAction,
 ) {
     let item_count = snapshot.views.len();
     if item_count == 0 {
@@ -139,7 +141,7 @@ fn sidebar_list(
                     continue;
                 };
                 let name = snapshot.display_name_at(row).unwrap_or_default();
-                link_row(ui, state, view, name.as_ref(), p);
+                link_row(ui, state, view, name.as_ref(), p, action);
             }
         });
 }
@@ -211,7 +213,14 @@ fn sidebar_pagination(
     }
 }
 
-fn link_row(ui: &mut Ui, state: &mut AppState, view: &LinkView, name: &str, p: &UiPalette) {
+fn link_row(
+    ui: &mut Ui,
+    state: &mut AppState,
+    view: &LinkView,
+    name: &str,
+    p: &UiPalette,
+    action: &mut SidebarAction,
+) {
     let id = view.id;
     let selected = state.selected_id == Some(id);
     let t = state.texts();
@@ -252,6 +261,7 @@ fn link_row(ui: &mut Ui, state: &mut AppState, view: &LinkView, name: &str, p: &
         }
         if !state.busy && name_resp.clicked() {
             state.selected_id = Some(id);
+            *action = SidebarAction::Selected(id);
         }
         right_aligned(ui, |ui| {
             if button(ui)

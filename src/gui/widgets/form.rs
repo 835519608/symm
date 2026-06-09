@@ -111,7 +111,7 @@ fn path_input_row(
             |ui| match browse.pick {
                 PathPickMode::FolderOnly => {
                     if ui.button(browse.pick_folder).clicked() {
-                        picked = pick_path_folder();
+                        picked = pick_path_folder(browse.pick_folder_title);
                         ui.close_menu();
                     }
                 }
@@ -119,18 +119,21 @@ fn path_input_row(
                     #[cfg(target_os = "macos")]
                     {
                         if ui.button(browse.pick_unified).clicked() {
-                            picked = pick_path_file_or_folder();
+                            picked = pick_path_file_or_folder(
+                                browse.pick_unified_title,
+                                browse.pick_unified_prompt,
+                            );
                             ui.close_menu();
                         }
                     }
                     #[cfg(not(target_os = "macos"))]
                     {
                         if ui.button(browse.pick_file).clicked() {
-                            picked = pick_path_file();
+                            picked = pick_path_file(browse.pick_file_title);
                             ui.close_menu();
                         }
                         if ui.button(browse.pick_folder).clicked() {
-                            picked = pick_path_folder();
+                            picked = pick_path_folder(browse.pick_folder_title);
                             ui.close_menu();
                         }
                     }
@@ -216,10 +219,17 @@ pub struct PathBrowse<'a> {
     pub pick: PathPickMode,
     #[cfg(not(target_os = "macos"))]
     pub pick_file: &'a str,
+    #[cfg(not(target_os = "macos"))]
+    pub pick_file_title: &'a str,
     pub pick_folder: &'a str,
+    pub pick_folder_title: &'a str,
     /// macOS 统一选择器菜单项（其它平台可传空串）。
     #[cfg(target_os = "macos")]
     pub pick_unified: &'a str,
+    #[cfg(target_os = "macos")]
+    pub pick_unified_title: &'a str,
+    #[cfg(target_os = "macos")]
+    pub pick_unified_prompt: &'a str,
 }
 
 /// 路径行：标签 + 输入框 + 浏览按钮；选中路径时返回 `Some`。
@@ -268,9 +278,16 @@ mod tests {
             pick: PathPickMode::FileOrFolder,
             #[cfg(not(target_os = "macos"))]
             pick_file: "文件",
+            #[cfg(not(target_os = "macos"))]
+            pick_file_title: "选择文件",
             pick_folder: "文件夹",
+            pick_folder_title: "选择文件夹",
             #[cfg(target_os = "macos")]
             pick_unified: "选择",
+            #[cfg(target_os = "macos")]
+            pick_unified_title: "选择路径",
+            #[cfg(target_os = "macos")]
+            pick_unified_prompt: "选择",
         };
 
         theme::apply(

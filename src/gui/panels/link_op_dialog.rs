@@ -43,9 +43,16 @@ pub fn show_link_op_dialog(ctx: &egui::Context, state: &mut AppState) -> LinkOpD
         pick: PathPickMode::FileOrFolder,
         #[cfg(not(target_os = "macos"))]
         pick_file: t.browse_pick_file(),
+        #[cfg(not(target_os = "macos"))]
+        pick_file_title: t.browse_pick_file_title(),
         pick_folder: t.browse_pick_folder(),
+        pick_folder_title: t.browse_pick_folder_title(),
         #[cfg(target_os = "macos")]
         pick_unified: t.browse_tip(),
+        #[cfg(target_os = "macos")]
+        pick_unified_title: t.browse_pick_unified_title(),
+        #[cfg(target_os = "macos")]
+        pick_unified_prompt: t.browse_pick_unified_prompt(),
     };
 
     let Some(modal) = show_modal(
@@ -215,9 +222,16 @@ mod tests {
             pick: PathPickMode::FileOrFolder,
             #[cfg(not(target_os = "macos"))]
             pick_file: t.browse_pick_file(),
+            #[cfg(not(target_os = "macos"))]
+            pick_file_title: t.browse_pick_file_title(),
             pick_folder: t.browse_pick_folder(),
+            pick_folder_title: t.browse_pick_folder_title(),
             #[cfg(target_os = "macos")]
             pick_unified: t.browse_tip(),
+            #[cfg(target_os = "macos")]
+            pick_unified_title: t.browse_pick_unified_title(),
+            #[cfg(target_os = "macos")]
+            pick_unified_prompt: t.browse_pick_unified_prompt(),
         };
 
         theme::apply(

@@ -13,6 +13,7 @@ pub struct FrameActions {
     pub refresh_requested: bool,
     pub delete_checked_requested: bool,
     pub page_changed: bool,
+    pub selected_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -84,6 +85,9 @@ fn show_sidebar_panel(
             }
             SidebarAction::PageChanged => {
                 actions.page_changed = true;
+            }
+            SidebarAction::Selected(id) => {
+                actions.selected_id = Some(id);
             }
             SidebarAction::None => {}
         });

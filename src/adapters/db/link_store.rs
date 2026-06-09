@@ -61,11 +61,6 @@ pub fn find_existing_by_names(
 }
 
 #[cfg(feature = "gui")]
-pub fn find_by_id_optional(conn: &Connection, id: i64) -> Result<Option<LinkRecord>, SymmError> {
-    repository::find_optional_by_id(conn, id)
-}
-
-#[cfg(feature = "gui")]
 pub fn existing_ids(conn: &Connection, ids: &[i64]) -> Result<HashSet<i64>, SymmError> {
     repository::existing_ids(conn, ids)
 }

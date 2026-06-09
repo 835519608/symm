@@ -16,7 +16,6 @@ use std::path::Path;
 
 pub struct ReloadedLinks {
     pub snapshot: LinkSnapshot,
-    pub selected_view: Option<LinkView>,
     pub all_ids: HashSet<i64>,
     pub page_index: u32,
 }
@@ -52,17 +51,12 @@ pub fn reload(
         .into_iter()
         .map(|(index, record)| view_for_page_record(index, record))
         .collect::<Result<Vec<_>, _>>()?;
-    let selected_view = selected_id
-        .map(|id| selected_view_from_page_or_db(&conn, id, &items))
-        .transpose()?
-        .flatten();
     let mut ids_to_check = checked_ids.to_vec();
     if let Some(id) = selected_id {
         ids_to_check.push(id);
     }
     Ok(ReloadedLinks {
         snapshot: LinkSnapshot::with_counts(items, total_count, matched_count, kind_counts),
-        selected_view,
         all_ids: link_store::existing_ids(&conn, &ids_to_check)?,
         page_index,
     })
@@ -106,21 +100,6 @@ fn view_for_page_record(index: u32, record: LinkRecord) -> Result<LinkView, Symm
     let mut view = status::to_view(record);
     view.index = index;
     Ok(view)
-}
-
-fn selected_view_from_page_or_db(
-    conn: &rusqlite::Connection,
-    id: i64,
-    page_items: &[LinkView],
-) -> Result<Option<LinkView>, SymmError> {
-    if let Some(view) = page_items.iter().find(|view| view.id == id) {
-        return Ok(Some(view.clone()));
-    }
-    let Some(record) = link_store::find_by_id_optional(conn, id)? else {
-        return Ok(None);
-    };
-    let index = link_store::index_for_id(conn, id)?.unwrap_or(1);
-    view_for_page_record(index, record).map(Some)
 }
 
 pub fn apply_link_op(

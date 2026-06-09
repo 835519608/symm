@@ -431,10 +431,40 @@ impl GuiTexts {
         }
     }
 
+    pub fn browse_pick_file_title(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "选择文件",
+            Locale::En => "Choose file",
+        }
+    }
+
     pub fn browse_pick_folder(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "选择文件夹",
             Locale::En => "Choose folder",
+        }
+    }
+
+    pub fn browse_pick_folder_title(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "选择文件夹",
+            Locale::En => "Choose folder",
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn browse_pick_unified_title(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "选择路径",
+            Locale::En => "Choose path",
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn browse_pick_unified_prompt(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "选择",
+            Locale::En => "Choose",
         }
     }
 

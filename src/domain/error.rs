@@ -26,6 +26,26 @@ pub enum SymmError {
         message: String,
     },
     #[error(
+        "文件系统已变更但链接记录删除失败：operation={operation}, link={link_path}, target={target_path}；{message}"
+    )]
+    FilesystemAppliedButRecordDeleteFailed {
+        operation: String,
+        link_path: String,
+        target_path: String,
+        message: String,
+    },
+    #[error(
+        "文件系统已变更但链接记录已保留：operation={operation}, link={link_path}, target={target_path}；{message}"
+    )]
+    FilesystemAppliedButRecordKept {
+        operation: String,
+        link_path: String,
+        target_path: String,
+        message: String,
+    },
+    #[error("批量操作包含文件系统已变更但记录未完成的失败：{message}")]
+    BatchFilesystemAppliedButRecordIncomplete { message: String },
+    #[error(
         "实体已迁移但创建 link 失败：link={link_path}, target={target_path}；链接记录尚未写入；{message}"
     )]
     EntityMigratedButLinkCreateFailed {
@@ -48,6 +68,15 @@ impl SymmError {
             SymmError::DbError { .. } => "db_error",
             SymmError::IoError { .. } => "io_error",
             SymmError::FilesystemAppliedButDbFailed { .. } => "filesystem_applied_but_db_failed",
+            SymmError::FilesystemAppliedButRecordDeleteFailed { .. } => {
+                "filesystem_applied_but_record_delete_failed"
+            }
+            SymmError::FilesystemAppliedButRecordKept { .. } => {
+                "filesystem_applied_but_record_kept"
+            }
+            SymmError::BatchFilesystemAppliedButRecordIncomplete { .. } => {
+                "filesystem_applied_but_record_incomplete"
+            }
             SymmError::EntityMigratedButLinkCreateFailed { .. } => {
                 "entity_migrated_but_link_create_failed"
             }

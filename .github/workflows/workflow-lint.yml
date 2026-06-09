@@ -1,0 +1,33 @@
+name: Workflow Lint
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 actionlint
+        shell: bash
+        run: |
+          mkdir -p /tmp/actionlint
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) v1.7.12 /tmp/actionlint
+          echo "/tmp/actionlint" >> "$GITHUB_PATH"
+
+      - name: 检查 workflow 和 action
+        run: actionlint

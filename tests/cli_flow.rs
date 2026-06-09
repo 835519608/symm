@@ -84,6 +84,55 @@ fn add_then_ls_then_show_then_rm() {
 }
 
 #[test]
+fn cli_parse_errors_are_rendered_as_json_but_help_stays_text() {
+    let output = cmd()
+        .args(["ls", "--status", "nope"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let text = String::from_utf8(output).expect("stderr utf8");
+    let json: Value = serde_json::from_str(&text).expect("parse error should be json");
+    assert_eq!(json["code"], "invalid_argument");
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message")
+            .contains("状态无效")
+    );
+
+    cmd()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("软链接管理命令行工具"));
+}
+
+#[test]
+fn ls_invalid_limits_are_rejected_as_json_parse_errors() {
+    for raw in ["0", "-1", "abc", "4294967296"] {
+        let output = cmd()
+            .args(["ls", "--limit", raw])
+            .assert()
+            .failure()
+            .get_output()
+            .stderr
+            .clone();
+        let text = String::from_utf8(output).expect("stderr utf8");
+        let json: Value = serde_json::from_str(&text).expect("parse error should be json");
+        assert_eq!(json["code"], "invalid_argument");
+        assert!(
+            json["message"]
+                .as_str()
+                .expect("message")
+                .contains("limit 无效"),
+            "unexpected message for {raw}: {json:?}"
+        );
+    }
+}
+
+#[test]
 fn add_normalizes_lexically_equivalent_link_paths() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
@@ -1688,7 +1737,7 @@ fn restore_failure_after_unlink_keeps_record_and_reports_retry_boundary() {
         .args(["restore", "retry-restore"])
         .assert()
         .failure()
-        .stderr(contains("\"code\": \"io_error\""))
+        .stderr(contains("\"code\": \"filesystem_applied_but_record_kept\""))
         .stderr(contains("link 已移除"))
         .stderr(contains("可修复原因后重试 restore"));
 
@@ -1708,6 +1757,26 @@ fn restore_failure_after_unlink_keeps_record_and_reports_retry_boundary() {
         .success()
         .stdout(contains("retry-restore"))
         .stdout(contains("链接没了"));
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["restore", "retry-restore"])
+        .assert()
+        .success()
+        .stdout(contains("已恢复实体位置：retry-restore"));
+
+    assert_eq!(
+        fs::read_to_string(&link).expect("read restored link path entity"),
+        "payload"
+    );
+    assert!(!target.exists(), "target should be moved back to link path");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"retry-restore\"").not());
 }
 
 #[test]

@@ -192,7 +192,6 @@ impl SymmApp {
         match result {
             Ok(reloaded) => {
                 self.snapshot = reloaded.snapshot;
-                self.selected_view = reloaded.selected_view;
                 self.state.page_index = reloaded.page_index;
                 self.state.db_error = None;
                 if self.manual_refresh_pending {
@@ -219,6 +218,13 @@ impl SymmApp {
             }
         }
         self.manual_refresh_pending = false;
+    }
+
+    fn refresh_selected_view_from_snapshot(&mut self) {
+        self.selected_view = self
+            .state
+            .selected_id
+            .and_then(|id| self.snapshot.view_by_id(id).cloned());
     }
 
     fn apply_settings_draft(&mut self, ctx: &egui::Context) {
@@ -618,11 +624,8 @@ impl eframe::App for SymmApp {
             self.state.page_index = 0;
             self.queue_search_reload();
         }
-        if self.state.selected_id != before_selected_id {
-            self.selected_view = self
-                .state
-                .selected_id
-                .and_then(|id| self.snapshot.view_by_id(id).cloned());
+        if self.state.selected_id != before_selected_id || frame_actions.selected_id.is_some() {
+            self.refresh_selected_view_from_snapshot();
             ctx.request_repaint();
         }
         if frame_actions.refresh_requested {
@@ -789,6 +792,108 @@ mod tests {
         assert_eq!(app.state.selected_id, Some(9));
         assert!(app.selected_view.is_some());
         assert!(app.state.checked_ids.is_empty());
+    }
+
+    #[test]
+    fn reload_keeps_cached_selected_detail_when_selected_id_still_exists() {
+        let mut app = test_app();
+        app.state.selected_id = Some(9);
+        app.selected_view = Some(LinkView {
+            record: LinkRecord {
+                id: 9,
+                name: "cached-detail".to_string(),
+                link_path: "/tmp/cached-link".to_string(),
+                target_path: "/tmp/cached-target".to_string(),
+                link_kind: LinkKind::Symlink,
+                created_at: 0,
+                updated_at: 0,
+            },
+            index: 9,
+            status: LinkStatus::Ok,
+            status_error: None,
+        });
+
+        app.apply_reload_result(Ok(ReloadedLinks {
+            snapshot: LinkSnapshot::new(Vec::new()),
+            all_ids: HashSet::from([9]),
+            page_index: 0,
+        }));
+
+        assert_eq!(app.state.selected_id, Some(9));
+        assert_eq!(
+            app.selected_view.as_ref().map(|view| view.name.as_str()),
+            Some("cached-detail")
+        );
+    }
+
+    #[test]
+    fn reload_clears_cached_selected_detail_when_selected_id_disappears() {
+        let mut app = test_app();
+        app.state.selected_id = Some(9);
+        app.selected_view = Some(LinkView {
+            record: LinkRecord {
+                id: 9,
+                name: "cached-detail".to_string(),
+                link_path: "/tmp/cached-link".to_string(),
+                target_path: "/tmp/cached-target".to_string(),
+                link_kind: LinkKind::Symlink,
+                created_at: 0,
+                updated_at: 0,
+            },
+            index: 9,
+            status: LinkStatus::Ok,
+            status_error: None,
+        });
+
+        app.apply_reload_result(Ok(ReloadedLinks {
+            snapshot: LinkSnapshot::new(Vec::new()),
+            all_ids: HashSet::new(),
+            page_index: 0,
+        }));
+
+        assert_eq!(app.state.selected_id, None);
+        assert!(app.selected_view.is_none());
+    }
+
+    #[test]
+    fn selected_detail_refreshes_from_snapshot_on_explicit_click() {
+        let mut app = test_app();
+        app.state.selected_id = Some(9);
+        app.snapshot = LinkSnapshot::new(vec![LinkView {
+            record: LinkRecord {
+                id: 9,
+                name: "fresh-detail".to_string(),
+                link_path: "/tmp/fresh-link".to_string(),
+                target_path: "/tmp/fresh-target".to_string(),
+                link_kind: LinkKind::Symlink,
+                created_at: 0,
+                updated_at: 0,
+            },
+            index: 9,
+            status: LinkStatus::Ok,
+            status_error: None,
+        }]);
+        app.selected_view = Some(LinkView {
+            record: LinkRecord {
+                id: 9,
+                name: "cached-detail".to_string(),
+                link_path: "/tmp/cached-link".to_string(),
+                target_path: "/tmp/cached-target".to_string(),
+                link_kind: LinkKind::Symlink,
+                created_at: 0,
+                updated_at: 0,
+            },
+            index: 9,
+            status: LinkStatus::Missing,
+            status_error: None,
+        });
+
+        app.refresh_selected_view_from_snapshot();
+
+        assert_eq!(
+            app.selected_view.as_ref().map(|view| view.name.as_str()),
+            Some("fresh-detail")
+        );
     }
 
     #[test]

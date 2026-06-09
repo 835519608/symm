@@ -315,9 +315,16 @@ fn appearance_page(
                                 pick: PathPickMode::FolderOnly,
                                 #[cfg(not(target_os = "macos"))]
                                 pick_file: t.browse_pick_file(),
+                                #[cfg(not(target_os = "macos"))]
+                                pick_file_title: t.browse_pick_file_title(),
                                 pick_folder: t.browse_pick_folder(),
+                                pick_folder_title: t.browse_pick_folder_title(),
                                 #[cfg(target_os = "macos")]
                                 pick_unified: t.browse_pick_folder(),
+                                #[cfg(target_os = "macos")]
+                                pick_unified_title: t.browse_pick_folder_title(),
+                                #[cfg(target_os = "macos")]
+                                pick_unified_prompt: t.browse_pick_unified_prompt(),
                             },
                             Some(t.settings_data_dir_hint()),
                             t.settings_data_dir(),
