@@ -12,8 +12,8 @@ pub fn pick_one_option(options: &[String]) -> Result<String, SymmError> {
         })
 }
 
-pub fn pick_many_options(options: &[String]) -> Result<Vec<String>, SymmError> {
-    MultiSelect::new("选择要删除的记录", options.to_vec())
+pub fn pick_many_options(action: &str, options: &[String]) -> Result<Vec<String>, SymmError> {
+    MultiSelect::new(&format!("选择要{action}的记录"), options.to_vec())
         .with_help_message("空格切换选中 Enter 确认")
         .prompt()
         .map_err(|e| SymmError::InvalidArgument {
@@ -39,8 +39,12 @@ pub fn prompt_one_selector(total: usize, option_limit: usize) -> Result<String, 
     Ok(selector.to_string())
 }
 
-pub fn prompt_many_selectors(total: usize, option_limit: usize) -> Result<Vec<String>, SymmError> {
-    let raw = Text::new("记录较多，请输入要删除的名称或序号")
+pub fn prompt_many_selectors(
+    action: &str,
+    total: usize,
+    option_limit: usize,
+) -> Result<Vec<String>, SymmError> {
+    let raw = Text::new(&format!("记录较多，请输入要{action}的名称或序号"))
         .with_help_message(&format!(
             "当前 {total} 条，菜单最多显示 {option_limit} 条；多个选择器用逗号分隔"
         ))

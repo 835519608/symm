@@ -133,6 +133,29 @@ fn ls_invalid_limits_are_rejected_as_json_parse_errors() {
 }
 
 #[test]
+fn ls_invalid_offsets_are_rejected_as_json_parse_errors() {
+    for raw in ["-1", "abc", "4294967296"] {
+        let output = cmd()
+            .args(["ls", "--offset", raw])
+            .assert()
+            .failure()
+            .get_output()
+            .stderr
+            .clone();
+        let text = String::from_utf8(output).expect("stderr utf8");
+        let json: Value = serde_json::from_str(&text).expect("parse error should be json");
+        assert_eq!(json["code"], "invalid_argument");
+        assert!(
+            json["message"]
+                .as_str()
+                .expect("message")
+                .contains("offset 无效"),
+            "unexpected message for {raw}: {json:?}"
+        );
+    }
+}
+
+#[test]
 fn add_normalizes_lexically_equivalent_link_paths() {
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
@@ -239,6 +262,44 @@ fn rm_multiple_list_indices_deletes_requested_rows() {
         .stdout(contains("\"name\":\"b\""))
         .stdout(predicates::str::contains("\"name\":\"a\"").not())
         .stdout(predicates::str::contains("\"name\":\"c\"").not());
+}
+
+#[test]
+fn rm_unnamed_record_output_uses_link_path_not_database_id() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    for name in ["named", ""] {
+        let suffix = if name.is_empty() { "unnamed" } else { name };
+        let target = data_root.join(format!("target_{suffix}.txt"));
+        let link = data_root.join(format!("link_{suffix}.txt"));
+        fs::write(&target, "x").expect("write target");
+        cmd()
+            .env("SYMM_HOME", &symm_home)
+            .env("SYMM_LINK_OP_NAME", name)
+            .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+            .assert()
+            .success();
+    }
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["rm", "2"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).expect("stdout utf8");
+
+    assert!(text.contains("未命名记录："));
+    assert!(text.contains("link_unnamed.txt"));
+    assert!(
+        !text.contains("：#2"),
+        "empty-name fallback must not expose database id as a fake CLI selector: {text}"
+    );
 }
 
 #[test]
@@ -366,6 +427,30 @@ fn rm_missing_selector_fails_before_prompting_for_mode() {
         .assert()
         .failure()
         .stderr(contains("\"code\": \"not_found\""));
+}
+
+#[test]
+fn show_missing_name_reports_original_selector() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["show", "missing-name"])
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    let text = String::from_utf8(output).expect("stderr utf8");
+    let json: Value = serde_json::from_str(&text).expect("stderr json");
+    assert_eq!(json["code"], "not_found");
+    let message = json["message"].as_str().expect("message string");
+    assert!(message.contains("missing-name"));
+    assert!(
+        !message.contains("name ="),
+        "show should report the original selector, not query internals: {message}"
+    );
 }
 
 #[cfg(windows)]
@@ -2023,7 +2108,7 @@ fn ls_shows_stale_status_when_link_no_longer_symlink() {
         .assert()
         .success()
         .stdout(contains("stale-item"))
-        .stdout(contains("链接类型不符"))
+        .stdout(contains("链接已陈旧"))
         .stdout(predicates::str::contains("正常").not());
 }
 

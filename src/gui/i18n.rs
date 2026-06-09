@@ -768,7 +768,7 @@ impl GuiTexts {
             (Locale::ZhCn, LinkStatus::Ok) => "正常",
             (Locale::ZhCn, LinkStatus::Broken) => "目标没了",
             (Locale::ZhCn, LinkStatus::Missing) => "链接没了",
-            (Locale::ZhCn, LinkStatus::Stale) => "链接类型不符",
+            (Locale::ZhCn, LinkStatus::Stale) => "链接已陈旧",
             (Locale::ZhCn, LinkStatus::Drift) => "指向不对",
             (Locale::ZhCn, LinkStatus::Unknown) => "未知",
             (Locale::En, LinkStatus::Ok) => "OK",

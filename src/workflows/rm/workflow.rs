@@ -21,6 +21,13 @@ pub enum RemoveMode {
 }
 
 impl RemoveMode {
+    fn action_label(self) -> &'static str {
+        match self {
+            RemoveMode::DeleteLinkOnly => "删除",
+            RemoveMode::RestoreTargetToLink => "恢复",
+        }
+    }
+
     fn success_hint(self) -> &'static str {
         match self {
             RemoveMode::DeleteLinkOnly => "已删除链接关系",
@@ -148,7 +155,7 @@ fn run_remove<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let records = match selection {
-        RmSelection::Selectors(selectors) => resolve_records(conn, selectors)?,
+        RmSelection::Selectors(selectors) => resolve_records(conn, selectors, mode)?,
         RmSelection::RecordIds(ids) => records_from_ids(conn, ids)?,
     };
     run_resolved_records(conn, records, mode, writer, started, progress_mode)
@@ -257,15 +264,16 @@ fn format_failures(failures: &[(String, SymmError)]) -> String {
 fn resolve_records(
     conn: &rusqlite::Connection,
     selectors: &[String],
+    mode: RemoveMode,
 ) -> Result<Vec<LinkRecord>, SymmError> {
     if selectors.is_empty() {
-        return select::pick_many_records(conn);
+        return select::pick_many_records(conn, mode.action_label());
     }
 
     let records = selector::records_from_tokens(conn, selectors)?;
     if records.is_empty() {
         return Err(SymmError::InvalidArgument {
-            message: "未指定要删除的记录".to_string(),
+            message: format!("未指定要{}的记录", mode.action_label()),
         });
     }
     Ok(records)
@@ -391,7 +399,7 @@ fn record_label(record: &LinkRecord) -> String {
     if !record.name.is_empty() {
         return record.name.clone();
     }
-    format!("#{}", record.id)
+    format!("未命名记录：{}", record.link_path)
 }
 
 fn restore_target_to_link<W: Write>(

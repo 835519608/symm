@@ -47,7 +47,7 @@ pub enum Commands {
         status: Option<LinkStatus>,
         #[arg(long, value_parser = parse_positive_limit_arg, allow_hyphen_values = true)]
         limit: Option<u32>,
-        #[arg(long, default_value_t = 0)]
+        #[arg(long, default_value_t = 0, value_parser = parse_offset_arg, allow_hyphen_values = true)]
         offset: u32,
     },
     Show {
@@ -100,4 +100,9 @@ fn parse_positive_limit_arg(raw: &str) -> Result<u32, String> {
         return Err("limit 无效：0（必须是正整数）".to_string());
     }
     Ok(limit)
+}
+
+fn parse_offset_arg(raw: &str) -> Result<u32, String> {
+    raw.parse::<u32>()
+        .map_err(|_| format!("offset 无效：{raw}（必须是非负整数）"))
 }

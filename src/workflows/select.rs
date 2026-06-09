@@ -25,7 +25,10 @@ pub fn pick_one_selector(conn: &rusqlite::Connection) -> Result<String, SymmErro
     Ok(index.to_string())
 }
 
-pub fn pick_many_records(conn: &rusqlite::Connection) -> Result<Vec<LinkRecord>, SymmError> {
+pub fn pick_many_records(
+    conn: &rusqlite::Connection,
+    action: &str,
+) -> Result<Vec<LinkRecord>, SymmError> {
     let entries = pick_list::list_entries(conn)?;
     if entries.is_empty() {
         return Err(SymmError::NotFound {
@@ -34,11 +37,11 @@ pub fn pick_many_records(conn: &rusqlite::Connection) -> Result<Vec<LinkRecord>,
     }
     if entries.is_truncated() {
         let selectors =
-            pick_record::prompt_many_selectors(entries.total(), entries.option_limit())?;
+            pick_record::prompt_many_selectors(action, entries.total(), entries.option_limit())?;
         return records_from_selectors(conn, &selectors);
     }
     let options = entries.labels();
-    let selected = pick_record::pick_many_options(&options)?;
+    let selected = pick_record::pick_many_options(action, &options)?;
     if selected.is_empty() {
         return Err(SymmError::InvalidArgument {
             message: "未选择任何记录".to_string(),

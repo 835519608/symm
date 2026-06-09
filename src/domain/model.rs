@@ -97,7 +97,7 @@ impl LinkStatus {
             LinkStatus::Ok => "正常",
             LinkStatus::Broken => "目标没了",
             LinkStatus::Missing => "链接没了",
-            LinkStatus::Stale => "链接类型不符",
+            LinkStatus::Stale => "链接已陈旧",
             LinkStatus::Drift => "指向不对",
             LinkStatus::Unknown => "未知",
         }

@@ -500,10 +500,12 @@ fn mutate_link_path_after_lock<W: Write>(
     link_norm: &str,
     mutation: LinkPathMutation<'_>,
 ) -> Result<LinkKind, SymmError> {
+    ensure_mutation_target_still_exists(&mutation)?;
     ensure_link_not_locked(reporter, decisions, link_path)?;
     match mutation {
         LinkPathMutation::Create { target_norm } => {
             ensure_link_missing(link_path)?;
+            ensure_target_still_exists(target_norm)?;
             create_managed_link(reporter, link_path, link_norm, target_norm)
         }
         LinkPathMutation::Replace {
@@ -512,9 +514,17 @@ fn mutate_link_path_after_lock<W: Write>(
             existing_target,
         } => {
             ensure_existing_link_unchanged(link_path, existing_kind, existing_target)?;
+            ensure_target_still_exists(target_norm)?;
             emit_creating_link(reporter, link_norm, target_norm)?;
             replace_link_via_temp(link_path, link_norm, target_norm)
         }
+    }
+}
+
+fn ensure_mutation_target_still_exists(mutation: &LinkPathMutation<'_>) -> Result<(), SymmError> {
+    match mutation {
+        LinkPathMutation::Create { target_norm }
+        | LinkPathMutation::Replace { target_norm, .. } => ensure_target_still_exists(target_norm),
     }
 }
 
@@ -557,6 +567,16 @@ fn path_exists(path: &Path) -> Result<bool, SymmError> {
             message: format!("无法读取路径 {}：{err}", path.display()),
         }),
     }
+}
+
+fn ensure_target_still_exists(target_norm: &str) -> Result<(), SymmError> {
+    let target = Path::new(target_norm);
+    if crate::adapters::paths::presence::target_exists(target)? {
+        return Ok(());
+    }
+    Err(SymmError::TargetNotFound {
+        path: target_norm.to_string(),
+    })
 }
 
 struct PersistRecord<'a> {
@@ -804,6 +824,24 @@ mod tests {
             symlink::unlink(&self.link).expect("remove existing link");
             symlink::create_link(&self.target, &self.link).expect("create competing link");
             Ok("raced-point".to_string())
+        }
+
+        fn lock_choice(
+            &mut self,
+            _procs: &[crate::adapters::lock::ProcInfo],
+        ) -> Result<LinkOpLockChoice, SymmError> {
+            Ok(LinkOpLockChoice::Cancel)
+        }
+    }
+
+    struct RemoveTargetDuringNameDecisions {
+        target: PathBuf,
+    }
+
+    impl LinkOpDecisionProvider for RemoveTargetDuringNameDecisions {
+        fn name(&mut self, _default_name: &str) -> Result<String, SymmError> {
+            std::fs::remove_file(&self.target).expect("remove target during prompt");
+            Ok("target-raced".to_string())
         }
 
         fn lock_choice(
@@ -1123,6 +1161,87 @@ mod tests {
                 .expect("query link")
                 .is_none(),
             "changed point source link should not be persisted"
+        );
+    }
+
+    #[test]
+    fn add_target_removed_during_prompt_aborts_before_creating_broken_link() {
+        let temp = tempdir().expect("temp dir");
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        let link = temp.path().join("link.txt");
+        let target = temp.path().join("target.txt");
+        std::fs::write(&target, "payload").expect("write target");
+
+        let mut decisions = RemoveTargetDuringNameDecisions {
+            target: target.clone(),
+        };
+        let mut out = Vec::new();
+        let err = run_operation(
+            &conn,
+            LinkOperation::Add,
+            &link,
+            &target,
+            &mut decisions,
+            &mut out,
+        )
+        .expect_err("removed target should abort before link creation");
+
+        assert!(
+            matches!(err, SymmError::TargetNotFound { .. }),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            std::fs::symlink_metadata(&link).is_err(),
+            "must not create a broken link when target vanished"
+        );
+        assert!(
+            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
+                .expect("query link")
+                .is_none(),
+            "removed target should not be persisted"
+        );
+    }
+
+    #[test]
+    fn point_target_removed_during_prompt_aborts_before_repointing() {
+        let temp = tempdir().expect("temp dir");
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        let link = temp.path().join("link.txt");
+        let old_target = temp.path().join("old.txt");
+        let new_target = temp.path().join("new.txt");
+        std::fs::write(&old_target, "old").expect("write old target");
+        std::fs::write(&new_target, "new").expect("write new target");
+        symlink::create_link(&old_target, &link).expect("create existing link");
+
+        let mut decisions = RemoveTargetDuringNameDecisions {
+            target: new_target.clone(),
+        };
+        let mut out = Vec::new();
+        let err = run_operation(
+            &conn,
+            LinkOperation::Point,
+            &link,
+            &new_target,
+            &mut decisions,
+            &mut out,
+        )
+        .expect_err("removed target should abort before repointing");
+
+        assert!(
+            matches!(err, SymmError::TargetNotFound { .. }),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link).expect("read existing link"),
+            "old"
+        );
+        assert!(
+            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
+                .expect("query link")
+                .is_none(),
+            "removed target should not be persisted"
         );
     }
 

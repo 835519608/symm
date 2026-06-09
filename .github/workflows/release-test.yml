@@ -182,17 +182,7 @@ jobs:
 
       - name: 校验当前 commit 的 CI 已通过
         uses: ./.github/actions/verify-ci-passed
-      - id: workflow_lint_scope
-        name: 判断是否需要 workflow lint
-        shell: bash
-        run: |
-          if git diff-tree -m --no-commit-id --name-only -r "$GITHUB_SHA" | sort -u | grep -E '^\.github/(workflows|actions)/' >/dev/null; then
-            echo "required=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "required=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: 校验当前 commit 的 Workflow Lint 已通过
-        if: steps.workflow_lint_scope.outputs.required == 'true'
         uses: ./.github/actions/verify-ci-passed
         with:
           workflow_file: workflow-lint.yml

@@ -19,7 +19,12 @@ pub fn record_from_token(
     if let Some(index) = parse_list_index(token)? {
         return record_at_index(conn, index);
     }
-    link_store::find_by_name(conn, token)
+    link_store::find_by_name(conn, token).map_err(|err| match err {
+        SymmError::NotFound { .. } => SymmError::NotFound {
+            selector: token.to_string(),
+        },
+        err => err,
+    })
 }
 
 pub fn records_from_tokens(

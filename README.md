@@ -16,7 +16,7 @@ symm 是一个跨平台软链接管理工具，包含桌面 GUI（`symm`）和�
 | 添加记录 / 创建链接 | 支持 | `symm-cli add <link> <target>` |
 | 接管实体后建链 | 支持 | `symm-cli adopt <link> <target>` |
 | 修改已有链接指向 | 支持 | `symm-cli point <link> <target>` |
-| 列表 / 搜索 / 状态 | 支持 | `symm-cli ls` |
+| 列表 / 搜索 / 状态 | 支持 | 列表 / 状态：`symm-cli ls` |
 | 详情 | 支持 | `symm-cli show <序号或名称>` |
 | 删除链接关系 | 支持 | `symm-cli rm <序号或名称>...` |
 | 恢复目标到链接位置 | 支持 | `symm-cli restore <序号或名称>...` |
@@ -81,7 +81,7 @@ symm-cli restore [序号或名称]...
 - 非纯数字选择器按 `name` 查找。
 - `show` 省略选择器时进入交互选择。
 - `rm` / `restore` 可一次传多个选择器；省略时进入交互多选。
-- `ls` 表格默认每页 100 条；`--json` 默认返回全量数组，只有显式 `--limit` / `--offset` 时分页；`--limit` 必须是正整数。
+- `ls` 表格默认每页 100 条；`--json` 默认返回全量数组，只有显式 `--limit` / `--offset` 时分页；`--limit` 必须是正整数，`--offset` 必须是非负整数。
 
 示例：
 
@@ -102,7 +102,7 @@ symm-cli restore app-config
 | `ok` | 正常 | 链接存在，目标存在，指向与数据库一致 |
 | `broken` | 目标没了 | 链接仍指向数据库中的 target，但 target 路径不存在 |
 | `missing` | 链接没了 | 链接路径不存在 |
-| `stale` | 链接类型不符 | 链接路径存在，但不是数据库记录中的链接类型 |
+| `stale` | 链接已陈旧 | link 路径存在，但不是记录期望的链接实体，或链接类型与记录不一致 |
 | `drift` | 指向不对 | 链接仍存在，但已经指向数据库记录以外的位置 |
 | `unknown` | 未知 | 权限、I/O 或读取 link 指向失败，无法可靠判断状态 |
 
