@@ -92,6 +92,7 @@ pub enum StatusArg {
     Missing,
     Stale,
     Drift,
+    Unknown,
 }
 
 impl StatusArg {
@@ -102,6 +103,7 @@ impl StatusArg {
             StatusArg::Missing => LinkStatus::Missing,
             StatusArg::Stale => LinkStatus::Stale,
             StatusArg::Drift => LinkStatus::Drift,
+            StatusArg::Unknown => LinkStatus::Unknown,
         }
     }
 }

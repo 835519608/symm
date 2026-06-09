@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::path::Path;
@@ -29,8 +30,8 @@ impl LinkKind {
 
     pub fn from_db_str(s: &str) -> Option<Self> {
         match s {
-            "symlink" | "软链接" => Some(LinkKind::Symlink),
-            "junction" | "目录联接" => Some(LinkKind::Junction),
+            "symlink" => Some(LinkKind::Symlink),
+            "junction" => Some(LinkKind::Junction),
             _ => None,
         }
     }
@@ -66,6 +67,9 @@ pub enum LinkStatus {
     /// 仍是软链，但指向与库中 target 不一致
     #[serde(rename = "drift")]
     Drift,
+    /// 状态探测失败；不是 missing，具体错误由展示层附带。
+    #[serde(rename = "unknown")]
+    Unknown,
 }
 
 impl Display for LinkStatus {
@@ -75,6 +79,18 @@ impl Display for LinkStatus {
 }
 
 impl LinkStatus {
+    /// 数据库、JSON、CLI 参数和机器日志使用的稳定英文枚举值；不要使用 [`Display`]。
+    pub fn as_code(self) -> &'static str {
+        match self {
+            LinkStatus::Ok => "ok",
+            LinkStatus::Broken => "broken",
+            LinkStatus::Missing => "missing",
+            LinkStatus::Stale => "stale",
+            LinkStatus::Drift => "drift",
+            LinkStatus::Unknown => "unknown",
+        }
+    }
+
     /// 终端表格/详情用；JSON / `--status` 仍为英文枚举。
     pub fn label_zh(self) -> &'static str {
         match self {
@@ -83,6 +99,7 @@ impl LinkStatus {
             LinkStatus::Missing => "链接没了",
             LinkStatus::Stale => "链接类型不符",
             LinkStatus::Drift => "指向不对",
+            LinkStatus::Unknown => "未知",
         }
     }
 }
@@ -97,6 +114,7 @@ impl FromStr for LinkStatus {
             "missing" => Ok(LinkStatus::Missing),
             "stale" => Ok(LinkStatus::Stale),
             "drift" => Ok(LinkStatus::Drift),
+            "unknown" => Ok(LinkStatus::Unknown),
             _ => Err(()),
         }
     }
@@ -144,15 +162,16 @@ pub struct LinkRecord {
 }
 
 impl LinkRecord {
-    pub fn display_name(&self) -> String {
+    pub fn display_name(&self) -> Cow<'_, str> {
         if !self.name.is_empty() {
-            return self.name.clone();
+            return Cow::Borrowed(self.name.as_str());
         }
         Path::new(&self.link_path)
             .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
+            .and_then(|s| s.to_str())
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.link_path.clone())
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| Cow::Borrowed(self.link_path.as_str()))
     }
 }
 
@@ -164,6 +183,8 @@ pub struct LinkView {
     pub record: LinkRecord,
     pub index: u32,
     pub status: LinkStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_error: Option<String>,
 }
 
 impl Deref for LinkView {
@@ -221,10 +242,11 @@ mod name_tests {
             },
             index: 2,
             status: super::LinkStatus::Ok,
+            status_error: None,
         };
         assert_eq!(view.id, 7);
         assert_eq!(view.name, "demo");
-        assert_eq!(view.display_name(), "demo");
+        assert_eq!(view.display_name().as_ref(), "demo");
         assert_eq!(view.index, 2);
     }
 }

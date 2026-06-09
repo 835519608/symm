@@ -1,56 +1,46 @@
 use crate::adapters::symlink;
-use crate::domain::model::{LinkKind, LinkRecord, LinkStatus, LinkView};
-use std::fs;
-use std::fs::Metadata;
+use crate::domain::error::SymmError;
+use crate::domain::model::{LinkRecord, LinkStatus, LinkView};
 use std::path::Path;
 
 pub fn for_record(record: &LinkRecord) -> LinkStatus {
-    let link = Path::new(&record.link_path);
-    let meta = match fs::symlink_metadata(link) {
-        Err(_) => return LinkStatus::Missing,
-        Ok(meta) => meta,
-    };
-    if !is_expected_link_kind(link, &meta, record.link_kind) {
-        return LinkStatus::Stale;
-    }
-    let expected = Path::new(&record.target_path);
-    if !expected.exists() {
-        return LinkStatus::Broken;
-    }
-    if !symlink_target_matches(link, expected) {
-        return LinkStatus::Drift;
-    }
-    LinkStatus::Ok
+    view_status_for_record(record).0
 }
 
-fn is_expected_link_kind(link: &Path, meta: &Metadata, kind: LinkKind) -> bool {
-    symlink::kind_from_path_and_metadata(link, meta) == Some(kind)
+pub fn try_for_record(record: &LinkRecord) -> Result<LinkStatus, SymmError> {
+    let link = Path::new(&record.link_path);
+    let state = symlink::inspect_link_path(link)?;
+    Ok(match state {
+        symlink::LinkPathState::Missing => LinkStatus::Missing,
+        symlink::LinkPathState::Entity => LinkStatus::Stale,
+        symlink::LinkPathState::Link { kind } if kind != record.link_kind => LinkStatus::Stale,
+        symlink::LinkPathState::Link { .. } => {
+            let expected = Path::new(&record.target_path);
+            if !symlink::link_points_to(link, expected)? {
+                return Ok(LinkStatus::Drift);
+            }
+            if !crate::adapters::paths::presence::target_exists(expected)? {
+                return Ok(LinkStatus::Broken);
+            }
+            LinkStatus::Ok
+        }
+    })
 }
 
 pub fn to_view(record: LinkRecord) -> LinkView {
-    let status = for_record(&record);
+    let (status, status_error) = view_status_for_record(&record);
     LinkView {
         record,
         index: 0,
         status,
+        status_error,
     }
 }
 
-fn symlink_target_matches(link: &Path, expected: &Path) -> bool {
-    let Ok(actual) = fs::read_link(link) else {
-        return false;
-    };
-    if actual == expected {
-        return true;
-    }
-    let actual = if actual.is_absolute() {
-        actual
-    } else {
-        link.parent().unwrap_or_else(|| Path::new("")).join(actual)
-    };
-    match (dunce::canonicalize(actual), dunce::canonicalize(expected)) {
-        (Ok(a), Ok(e)) => a == e,
-        _ => false,
+fn view_status_for_record(record: &LinkRecord) -> (LinkStatus, Option<String>) {
+    match try_for_record(record) {
+        Ok(status) => (status, None),
+        Err(err) => (LinkStatus::Unknown, Some(err.to_string())),
     }
 }
 
@@ -88,6 +78,14 @@ mod tests {
         assert!(status.success(), "mklink /J should succeed");
     }
 
+    fn symlink_file(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).expect("symlink");
+    }
+
     #[test]
     fn stale_when_path_exists_but_not_symlink() {
         let dir = tempdir().expect("tempdir");
@@ -105,12 +103,34 @@ mod tests {
         let target = dir.path().join("target.txt");
         let link = dir.path().join("link.txt");
         fs::write(&target, "x").expect("target");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, &link).expect("symlink");
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_file(&target, &link).expect("symlink");
+        symlink_file(&target, &link);
         let status = for_record(&record(&link.to_string_lossy(), &target.to_string_lossy()));
         assert_eq!(status, LinkStatus::Ok);
+    }
+
+    #[test]
+    fn drift_when_symlink_points_elsewhere() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("target.txt");
+        let other = dir.path().join("other.txt");
+        let link = dir.path().join("link.txt");
+        fs::write(&target, "x").expect("target");
+        fs::write(&other, "y").expect("other");
+        symlink_file(&other, &link);
+        let status = for_record(&record(&link.to_string_lossy(), &target.to_string_lossy()));
+        assert_eq!(status, LinkStatus::Drift);
+    }
+
+    #[test]
+    fn drift_takes_priority_when_recorded_target_is_missing() {
+        let dir = tempdir().expect("tempdir");
+        let target = dir.path().join("missing-target.txt");
+        let other = dir.path().join("other.txt");
+        let link = dir.path().join("link.txt");
+        fs::write(&other, "y").expect("other");
+        symlink_file(&other, &link);
+        let status = for_record(&record(&link.to_string_lossy(), &target.to_string_lossy()));
+        assert_eq!(status, LinkStatus::Drift);
     }
 
     #[cfg(windows)]

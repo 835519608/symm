@@ -10,10 +10,19 @@ pub fn perf_enabled() -> bool {
     }
 }
 
-pub fn log_perf(event: &str, elapsed: Duration, fields: &[(&str, String)]) {
+pub fn log_perf_lazy(
+    event: &str,
+    elapsed: Duration,
+    fields: impl FnOnce() -> Vec<(&'static str, String)>,
+) {
     if !perf_enabled() {
         return;
     }
+    let fields = fields();
+    emit_perf(event, elapsed, &fields);
+}
+
+fn emit_perf(event: &str, elapsed: Duration, fields: &[(&str, String)]) {
     let mut parts = vec![
         format!("event={event}"),
         format!("elapsed_ms={}", elapsed.as_millis()),

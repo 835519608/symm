@@ -1,6 +1,70 @@
+use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
+use std::fs;
 use std::fs::Metadata;
 use std::path::Path;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkPathState {
+    Missing,
+    Link { kind: LinkKind },
+    Entity,
+}
+
+pub fn inspect_link_path(path: &Path) -> Result<LinkPathState, SymmError> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LinkPathState::Missing);
+        }
+        Err(err) => {
+            return Err(SymmError::IoError {
+                message: format!("无法读取 link 路径：{err}"),
+            });
+        }
+    };
+    Ok(match kind_from_path_and_metadata(path, &meta) {
+        Some(kind) => LinkPathState::Link { kind },
+        None => LinkPathState::Entity,
+    })
+}
+
+pub fn link_points_to(link: &Path, expected: &Path) -> Result<bool, SymmError> {
+    let actual = fs::read_link(link).map_err(|e| SymmError::IoError {
+        message: format!("无法读取 link 指向：{e}"),
+    })?;
+    Ok(paths_match(resolve_link_target(link, actual)?, expected))
+}
+
+fn resolve_link_target(link: &Path, target: PathBuf) -> Result<PathBuf, SymmError> {
+    if target.is_absolute() {
+        return Ok(target);
+    }
+    let parent = link.parent().ok_or_else(|| SymmError::InvalidArgument {
+        message: "无法解析 link 父目录".to_string(),
+    })?;
+    Ok(parent.join(target))
+}
+
+fn paths_match(actual: PathBuf, expected: &Path) -> bool {
+    let expected = if expected.is_absolute() {
+        expected.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(expected))
+            .unwrap_or_else(|_| expected.to_path_buf())
+    };
+    if crate::adapters::paths::lexical::clean(&actual)
+        == crate::adapters::paths::lexical::clean(&expected)
+    {
+        return true;
+    }
+    match (dunce::canonicalize(actual), dunce::canonicalize(expected)) {
+        (Ok(a), Ok(e)) => a == e,
+        _ => false,
+    }
+}
 
 pub fn kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkKind> {
     #[cfg(windows)]

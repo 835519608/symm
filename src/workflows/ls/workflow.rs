@@ -6,6 +6,8 @@ use crate::workflows::perf;
 use std::io::Write;
 use std::time::Instant;
 
+const DEFAULT_TABLE_LIMIT: u32 = 100;
+
 pub fn run<W: Write>(
     conn: &rusqlite::Connection,
     json: bool,
@@ -23,15 +25,13 @@ pub fn run<W: Write>(
         (stats.scanned, stats.emitted)
     };
 
-    perf::log_perf(
-        "ls",
-        started.elapsed(),
-        &[
+    perf::log_perf_lazy("ls", started.elapsed(), || {
+        vec![
             ("json", json.to_string()),
             (
                 "status_filter",
                 wanted
-                    .map(|status| status.to_string())
+                    .map(|status| status.as_code().to_string())
                     .unwrap_or_else(|| "none".to_string()),
             ),
             (
@@ -43,8 +43,8 @@ pub fn run<W: Write>(
             ("offset", offset.to_string()),
             ("scanned", scanned.to_string()),
             ("emitted", emitted.to_string()),
-        ],
-    );
+        ]
+    });
     Ok(())
 }
 
@@ -56,9 +56,21 @@ fn stream_table<W: Write>(
     writer: &mut W,
 ) -> Result<list_views::ViewStreamStats, SymmError> {
     output::write_list_table_header(writer)?;
-    list_views::for_each_view(conn, wanted, limit, offset, |view| {
+    let limit = limit.unwrap_or(DEFAULT_TABLE_LIMIT).max(1);
+    let stats = list_views::for_each_view_page(conn, wanted, limit, offset, |view| {
         output::write_list_table_item(writer, &view)
-    })
+    })?;
+    output::write_list_table_footer(
+        writer,
+        output::ListPageInfo {
+            emitted: stats.emitted,
+            limit,
+            offset,
+            has_more: stats.has_more,
+            status: wanted.map(LinkStatus::as_code),
+        },
+    )?;
+    Ok(stats)
 }
 
 fn stream_json<W: Write>(

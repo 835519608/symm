@@ -6,7 +6,7 @@ mod unlink;
 #[cfg(windows)]
 mod windows;
 
-pub use inspect::kind_from_path_and_metadata;
+pub use inspect::{LinkPathState, inspect_link_path, kind_from_path_and_metadata, link_points_to};
 pub(crate) use link::{capture_recreate_spec, write_symlink_from_spec, write_symlink_like};
 pub use link::{create_link, write_symlink};
 pub use unlink::unlink;

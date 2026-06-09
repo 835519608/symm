@@ -1,10 +1,8 @@
 use crate::domain::error::SymmError;
-use std::path::Component;
 use std::path::Path;
-use std::path::PathBuf;
 
 pub fn normalize_target(path: &Path) -> Result<String, SymmError> {
-    if !path.exists() {
+    if !crate::adapters::paths::presence::target_exists(path)? {
         return Err(SymmError::TargetNotFound {
             path: path.to_string_lossy().to_string(),
         });
@@ -25,27 +23,17 @@ pub fn normalize_link(path: &Path) -> String {
             .map(|cwd| cwd.join(path))
             .unwrap_or_else(|_| path.to_path_buf())
     };
-    clean_lexical(&absolute).to_string_lossy().to_string()
+    crate::adapters::paths::lexical::clean(&absolute)
+        .to_string_lossy()
+        .to_string()
 }
 
 fn canonicalish(path: &Path) -> String {
     dunce::canonicalize(path)
         .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| clean_lexical(path).to_string_lossy().to_string())
-}
-
-fn clean_lexical(path: &Path) -> PathBuf {
-    let mut clean = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                clean.pop();
-            }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                clean.push(component.as_os_str());
-            }
-        }
-    }
-    clean
+        .unwrap_or_else(|_| {
+            crate::adapters::paths::lexical::clean(path)
+                .to_string_lossy()
+                .to_string()
+        })
 }

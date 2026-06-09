@@ -27,11 +27,9 @@ pub fn run<W: Write>(
                 message: e.to_string(),
             })?;
     }
-    perf::log_perf(
-        "show",
-        started.elapsed(),
-        &[("selector", selector), ("json", json.to_string())],
-    );
+    perf::log_perf_lazy("show", started.elapsed(), || {
+        vec![("selector", selector), ("json", json.to_string())]
+    });
     Ok(())
 }
 

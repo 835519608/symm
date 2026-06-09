@@ -1,13 +1,19 @@
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkView;
 use serde::Serialize;
-use std::borrow::Cow;
 use std::io::Write;
-use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 
 const LINK_TABLE_HEADERS: [&str; 6] = ["序号", "名称", "类型", "链接路径", "目标路径", "状态"];
 const LINK_TABLE_WIDTHS: [usize; 6] = [6, 24, 8, 56, 56, 12];
+
+pub struct ListPageInfo<'a> {
+    pub emitted: usize,
+    pub limit: u32,
+    pub offset: u32,
+    pub has_more: bool,
+    pub status: Option<&'a str>,
+}
 
 #[derive(Serialize)]
 struct ErrorPayload<'a> {
@@ -29,7 +35,7 @@ pub fn write_list_table_header<W: Write>(writer: &mut W) -> Result<(), SymmError
 
 pub fn write_list_table_item<W: Write>(writer: &mut W, item: &LinkView) -> Result<(), SymmError> {
     let index = item.index.to_string();
-    let name = view_display_name(item);
+    let name = item.display_name();
     let cells = [
         index.as_str(),
         name.as_ref(),
@@ -41,16 +47,33 @@ pub fn write_list_table_item<W: Write>(writer: &mut W, item: &LinkView) -> Resul
     write_row(writer, &cells, &LINK_TABLE_WIDTHS, false)
 }
 
-fn view_display_name(item: &LinkView) -> Cow<'_, str> {
-    if !item.name.is_empty() {
-        return Cow::Borrowed(item.name.as_str());
+pub fn write_list_table_footer<W: Write>(
+    writer: &mut W,
+    page: ListPageInfo<'_>,
+) -> Result<(), SymmError> {
+    let start = if page.emitted == 0 {
+        0
+    } else {
+        page.offset + 1
+    };
+    let end = page.offset + page.emitted as u32;
+    writeln!(
+        writer,
+        "\n显示结果 {start}-{end}；表格序号是全库 ls 序号，可用于 show/rm/restore。"
+    )
+    .map_err(io_err)?;
+    if page.has_more {
+        let next_offset = page.offset + page.limit;
+        let mut command = format!(
+            "symm-cli ls --limit {} --offset {}",
+            page.limit, next_offset
+        );
+        if let Some(status) = page.status {
+            command.push_str(&format!(" --status {status}"));
+        }
+        writeln!(writer, "下一页：{command}").map_err(io_err)?;
     }
-    Path::new(&item.link_path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .map(Cow::Borrowed)
-        .unwrap_or_else(|| Cow::Borrowed(item.link_path.as_str()))
+    Ok(())
 }
 
 pub fn write_json_array_start<W: Write>(writer: &mut W) -> Result<(), SymmError> {
@@ -76,13 +99,17 @@ pub fn write_json_item<W: Write>(
 
 pub fn render_show_detail(item: &LinkView) -> String {
     format!(
-        "序号: {}\n名称: {}\n类型: {}\n链接路径: {}\n目标路径: {}\n状态: {}\n",
+        "序号: {}\n名称: {}\n类型: {}\n链接路径: {}\n目标路径: {}\n状态: {}\n{}",
         item.index,
         item.display_name(),
         item.link_kind.label_zh(),
         item.link_path,
         item.target_path,
         item.status.label_zh(),
+        item.status_error
+            .as_ref()
+            .map(|err| format!("状态错误: {err}\n"))
+            .unwrap_or_default(),
     )
 }
 
@@ -113,52 +140,8 @@ fn write_row<W: Write>(
     writer.write_all(line.as_bytes()).map_err(io_err)
 }
 
-#[cfg(test)]
-fn format_table(headers: &[&str], rows: &[Vec<String>]) -> String {
-    let ncol = headers.len();
-    let mut widths = headers.iter().map(|h| cell_width(h)).collect::<Vec<_>>();
-    for row in rows {
-        for (i, cell) in row.iter().enumerate() {
-            if i < ncol {
-                widths[i] = widths[i].max(cell_width(cell));
-            }
-        }
-    }
-
-    let mut out = String::new();
-    append_row(&mut out, headers, &widths, true);
-    for row in rows {
-        let cells: Vec<&str> = row.iter().map(String::as_str).collect();
-        append_row(&mut out, &cells, &widths, false);
-    }
-    out
-}
-
 fn cell_width(s: &str) -> usize {
     s.width()
-}
-
-#[cfg(test)]
-fn append_row(out: &mut String, cells: &[&str], widths: &[usize], is_header: bool) {
-    for (i, cell) in cells.iter().enumerate() {
-        if i > 0 {
-            out.push(' ');
-        }
-        let width = widths.get(i).copied().unwrap_or(0);
-        pad_cell_left(out, cell, width);
-    }
-    out.push('\n');
-    if is_header {
-        for (i, &width) in widths.iter().enumerate() {
-            if i > 0 {
-                out.push(' ');
-            }
-            for _ in 0..width {
-                out.push('-');
-            }
-        }
-        out.push('\n');
-    }
 }
 
 fn append_row_min_width(out: &mut String, cells: &[&str], widths: &[usize], is_header: bool) {
@@ -201,23 +184,28 @@ mod tests {
     use super::*;
     use crate::domain::model::{LinkKind, LinkRecord, LinkStatus};
 
-    #[test]
-    fn table_aligns_columns() {
-        let table = format_table(
-            &["ID", "名称"],
-            &[
-                vec!["1".into(), "ab".into()],
-                vec!["12".into(), "xyz".into()],
-            ],
-        );
-        let lines: Vec<_> = table.lines().collect();
-        assert_eq!(cell_width(lines[0]), cell_width(lines[2]));
-        assert_eq!(cell_width(lines[0]), cell_width(lines[3]));
+    fn sample_view(name: &str) -> LinkView {
+        LinkView {
+            record: LinkRecord {
+                id: 1,
+                name: name.to_string(),
+                link_path: "/tmp/link".to_string(),
+                target_path: "/tmp/target".to_string(),
+                link_kind: LinkKind::Symlink,
+                created_at: 0,
+                updated_at: 0,
+            },
+            index: 1,
+            status: LinkStatus::Ok,
+            status_error: None,
+        }
     }
 
     #[test]
-    fn table_aligns_cjk_headers_with_ascii_cells() {
-        let table = format_table(&["序号", "名称"], &[vec!["1".into(), "demo".into()]]);
+    fn list_table_aligns_production_header_with_ascii_cells() {
+        let mut out = Vec::new();
+        write_list_table(&mut out, &[sample_view("demo")]).expect("write table");
+        let table = String::from_utf8(out).expect("utf8");
         let lines: Vec<_> = table.lines().collect();
         assert_eq!(cell_width(lines[0]), cell_width(lines[2]));
     }
@@ -225,19 +213,9 @@ mod tests {
     #[test]
     fn list_table_item_does_not_truncate_long_paths() {
         let long_path = format!("/tmp/{}", "a".repeat(120));
-        let view = LinkView {
-            record: LinkRecord {
-                id: 1,
-                name: "long".to_string(),
-                link_path: long_path.clone(),
-                target_path: long_path.clone(),
-                link_kind: LinkKind::Symlink,
-                created_at: 0,
-                updated_at: 0,
-            },
-            index: 1,
-            status: LinkStatus::Ok,
-        };
+        let mut view = sample_view("long");
+        view.record.link_path = long_path.clone();
+        view.record.target_path = long_path.clone();
         let mut out = Vec::new();
         write_list_table(&mut out, &[view]).expect("write table");
         let text = String::from_utf8(out).expect("utf8");
