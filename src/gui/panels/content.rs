@@ -3,8 +3,6 @@ use crate::gui::state::AppState;
 use crate::gui::theme;
 use crate::gui::widgets::{card, detail_field, detail_path_field, vertical_when_overflow};
 use egui::Ui;
-use std::borrow::Cow;
-use std::path::Path;
 
 pub fn show_content(ui: &mut Ui, state: &AppState, view: Option<&LinkView>) {
     vertical_when_overflow(ui, "main_content", |ui| {
@@ -28,7 +26,7 @@ fn show_detail(ui: &mut Ui, state: &AppState, view: &LinkView) {
 
     card(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
-            let title = detail_display_name(view);
+            let title = view.display_name();
             let title_resp =
                 ui.add(egui::Label::new(theme::rich_detail_title(title.as_ref(), p.text)).wrap());
             if title.chars().count() > 24 {
@@ -46,6 +44,9 @@ fn show_detail(ui: &mut Ui, state: &AppState, view: &LinkView) {
         detail_field(ui, &p, t.field_name(), &view.name);
         detail_field(ui, &p, t.field_kind(), t.link_kind(view.link_kind));
         detail_field(ui, &p, t.field_status(), t.link_status(view.status));
+        if let Some(err) = &view.status_error {
+            detail_field(ui, &p, t.field_status_error(), err);
+        }
         detail_path_field(
             ui,
             &p,
@@ -63,16 +64,4 @@ fn show_detail(ui: &mut Ui, state: &AppState, view: &LinkView) {
         detail_field(ui, &p, t.field_index(), &view.index.to_string());
         detail_field(ui, &p, t.field_id(), &view.id.to_string());
     });
-}
-
-fn detail_display_name(view: &LinkView) -> Cow<'_, str> {
-    if !view.name.is_empty() {
-        return Cow::Borrowed(view.name.as_str());
-    }
-    Path::new(&view.link_path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .map(Cow::Borrowed)
-        .unwrap_or_else(|| Cow::Borrowed(view.link_path.as_str()))
 }

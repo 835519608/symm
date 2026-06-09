@@ -20,6 +20,8 @@ pub enum Icon {
     Gear,
     Info,
     Copy,
+    Previous,
+    Next,
 }
 
 impl Icon {
@@ -41,6 +43,8 @@ impl Icon {
             Icon::Gear => regular::GEAR,
             Icon::Info => regular::INFO,
             Icon::Copy => regular::COPY,
+            Icon::Previous => regular::CARET_LEFT,
+            Icon::Next => regular::CARET_RIGHT,
         }
     }
 }

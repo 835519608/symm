@@ -4,7 +4,8 @@ use crate::domain::gui_settings::{GuiSettings, data_dir_from_settings};
 use crate::gui::env::sync_symm_home;
 use crate::gui::state::AppState;
 use std::path::PathBuf;
-pub fn load_into(state: &mut AppState) -> GuiSettings {
+
+pub fn load_into(state: &mut AppState) {
     let settings = settings_store::load();
     apply(state, &settings);
     if let Ok(home) = std::env::var("SYMM_HOME")
@@ -14,27 +15,6 @@ pub fn load_into(state: &mut AppState) -> GuiSettings {
         state.data_dir_runtime_override = true;
     }
     sync_symm_home(&state.data_dir);
-    settings
-}
-
-pub fn from_state(state: &AppState) -> GuiSettings {
-    let data_dir = if state.data_dir_runtime_override {
-        state.persisted_data_dir.as_str()
-    } else {
-        state.data_dir.as_str()
-    };
-    GuiSettings {
-        theme: state.theme,
-        color_scheme: state.color_scheme,
-        locale: state.locale,
-        sidebar_width: state.sidebar_width,
-        font_size_pt: state.font_size_pt,
-        data_dir: if data_dir.trim().is_empty() {
-            None
-        } else {
-            Some(data_dir.to_string())
-        },
-    }
 }
 
 pub fn apply(state: &mut AppState, settings: &GuiSettings) {
@@ -53,6 +33,10 @@ pub fn save(settings: &GuiSettings) -> Result<(), SymmError> {
     settings_store::save(settings)
 }
 
+pub fn restore_data_dir(data_dir: &str) {
+    sync_symm_home(data_dir);
+}
+
 pub fn apply_data_dir(data_dir: &str) -> Result<PathBuf, String> {
     let trimmed = data_dir.trim();
     if trimmed.is_empty() {
@@ -65,30 +49,4 @@ pub fn apply_data_dir(data_dir: &str) -> Result<PathBuf, String> {
     crate::gui::env::ensure_data_dir(&path).map_err(|e| e.to_string())?;
     sync_symm_home(trimmed);
     Ok(path)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_data_dir_override_is_not_persisted_by_from_state() {
-        let mut state = AppState {
-            data_dir: "/tmp/symm-env".to_string(),
-            persisted_data_dir: "/tmp/symm-saved".to_string(),
-            data_dir_runtime_override: true,
-            ..AppState::default()
-        };
-
-        assert_eq!(
-            from_state(&state).data_dir.as_deref(),
-            Some("/tmp/symm-saved")
-        );
-
-        state.data_dir_runtime_override = false;
-        assert_eq!(
-            from_state(&state).data_dir.as_deref(),
-            Some("/tmp/symm-env")
-        );
-    }
 }

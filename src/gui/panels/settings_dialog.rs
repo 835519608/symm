@@ -1,4 +1,6 @@
-use crate::domain::gui_settings::{ColorScheme, FONT_SIZE_PT_MAX, FONT_SIZE_PT_MIN};
+use crate::domain::gui_settings::{
+    ColorScheme, FONT_SIZE_PT_MAX, FONT_SIZE_PT_MIN, Locale, ThemeMode,
+};
 use crate::gui::state::{AppState, SettingsDraft, SettingsSection};
 use crate::gui::theme::SIDEBAR_WIDTH_MIN;
 use crate::gui::theme::{self, rich_body, rich_body_muted, rich_section};
@@ -35,6 +37,7 @@ pub fn show_settings_dialog(ctx: &egui::Context, state: &mut AppState) -> Settin
     let t = state.texts();
     let p = theme::resolve(state.theme, state.color_scheme);
     let enabled = !state.busy;
+    let data_dir_runtime_override = state.data_dir_runtime_override;
     let sidebar_max = theme::sidebar_max_width(ctx);
     draft.sidebar_width = draft.sidebar_width.clamp(SIDEBAR_WIDTH_MIN, sidebar_max);
     let mut open = true;
@@ -51,7 +54,14 @@ pub fn show_settings_dialog(ctx: &egui::Context, state: &mut AppState) -> Settin
         |section| match section {
             ModalSection::Main(ui) => {
                 ui.add_enabled_ui(enabled, |ui| {
-                    settings_main_body(ui, &p, &t, &mut draft, sidebar_max);
+                    settings_main_body(
+                        ui,
+                        &p,
+                        &t,
+                        &mut draft,
+                        sidebar_max,
+                        data_dir_runtime_override,
+                    );
                 });
             }
             ModalSection::FooterCustom(ui) => {
@@ -60,16 +70,16 @@ pub fn show_settings_dialog(ctx: &egui::Context, state: &mut AppState) -> Settin
                     |ui| {
                         if button(ui)
                             .label(t.settings_restore_defaults())
-                            .tip(t.settings_restore_defaults_tip())
+                            .tip(if data_dir_runtime_override {
+                                t.settings_restore_defaults_tip_data_dir_overridden()
+                            } else {
+                                t.settings_restore_defaults_tip()
+                            })
                             .enabled(enabled)
                             .show()
                             .clicked()
                         {
-                            let d = SettingsDraft::appearance_defaults();
-                            draft.color_scheme = d.color_scheme;
-                            draft.font_size_pt = d.font_size_pt;
-                            draft.sidebar_width = d.sidebar_width;
-                            draft.data_dir.clear();
+                            draft.restore_defaults(data_dir_runtime_override);
                         }
                     },
                     |ui| {
@@ -115,6 +125,7 @@ fn settings_main_body(
     t: &crate::gui::i18n::GuiTexts,
     draft: &mut SettingsDraft,
     sidebar_max: f32,
+    data_dir_runtime_override: bool,
 ) {
     fill_ui_width(ui);
     let pane_h = ui.available_height().max(120.0);
@@ -146,7 +157,7 @@ fn settings_main_body(
                 modal_scroll_vertical(ui, "settings_dialog_body", |ui| {
                     form_page(ui, |ui| match draft.section {
                         SettingsSection::Appearance => {
-                            appearance_page(ui, p, t, draft, sidebar_max)
+                            appearance_page(ui, p, t, draft, sidebar_max, data_dir_runtime_override)
                         }
                         SettingsSection::About => about_page(ui, p, t),
                     });
@@ -213,13 +224,41 @@ fn appearance_page(
     t: &crate::gui::i18n::GuiTexts,
     draft: &mut SettingsDraft,
     sidebar_max: f32,
+    data_dir_runtime_override: bool,
 ) {
     let font_size_hint = t.settings_font_size_hint(FONT_SIZE_PT_MIN, FONT_SIZE_PT_MAX);
+    let data_dir_note = if data_dir_runtime_override {
+        t.settings_data_dir_env_override_note()
+    } else {
+        t.settings_data_dir_note()
+    };
     Grid::new("settings_appearance_grid")
         .num_columns(2)
         .spacing(egui::vec2(SETTINGS_FIELD_GAP, 12.0))
         .striped(false)
         .show(ui, |ui| {
+            settings_grid_row(ui, p, t.settings_theme(), None, |ui, control_w| {
+                egui::ComboBox::from_id_salt("settings_theme")
+                    .selected_text(t.theme_mode_label(draft.theme))
+                    .width(control_w)
+                    .show_ui(ui, |ui| {
+                        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+                            ui.selectable_value(&mut draft.theme, mode, t.theme_mode_label(mode));
+                        }
+                    });
+            });
+
+            settings_grid_row(ui, p, t.settings_locale(), None, |ui, control_w| {
+                egui::ComboBox::from_id_salt("settings_locale")
+                    .selected_text(draft.locale.toggle_label())
+                    .width(control_w)
+                    .show_ui(ui, |ui| {
+                        for locale in [Locale::ZhCn, Locale::En] {
+                            ui.selectable_value(&mut draft.locale, locale, locale.toggle_label());
+                        }
+                    });
+            });
+
             settings_grid_row(ui, p, t.settings_color_scheme(), None, |ui, control_w| {
                 egui::ComboBox::from_id_salt("settings_color_scheme")
                     .selected_text(t.color_scheme_label(draft.color_scheme))
@@ -263,24 +302,28 @@ fn appearance_page(
                 ui,
                 p,
                 t.settings_data_dir(),
-                Some(t.settings_data_dir_note()),
+                Some(data_dir_note),
                 |ui, _control_w| {
-                    if let Some(path) = path_control_row(
-                        ui,
-                        &mut draft.data_dir,
-                        PathBrowse {
-                            label: t.browse(),
-                            tip: t.settings_data_dir_browse_tip(),
-                            pick: PathPickMode::FolderOnly,
-                            #[cfg(not(target_os = "macos"))]
-                            pick_file: t.browse_pick_file(),
-                            pick_folder: t.browse_pick_folder(),
-                            #[cfg(target_os = "macos")]
-                            pick_unified: t.browse_pick_folder(),
-                        },
-                        Some(t.settings_data_dir_hint()),
-                        t.settings_data_dir(),
-                    ) {
+                    let mut picked = None;
+                    ui.add_enabled_ui(!data_dir_runtime_override, |ui| {
+                        picked = path_control_row(
+                            ui,
+                            &mut draft.data_dir,
+                            PathBrowse {
+                                label: t.browse(),
+                                tip: t.settings_data_dir_browse_tip(),
+                                pick: PathPickMode::FolderOnly,
+                                #[cfg(not(target_os = "macos"))]
+                                pick_file: t.browse_pick_file(),
+                                pick_folder: t.browse_pick_folder(),
+                                #[cfg(target_os = "macos")]
+                                pick_unified: t.browse_pick_folder(),
+                            },
+                            Some(t.settings_data_dir_hint()),
+                            t.settings_data_dir(),
+                        );
+                    });
+                    if let Some(path) = picked {
                         draft.data_dir = path.display().to_string();
                     }
                 },

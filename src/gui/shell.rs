@@ -1,21 +1,23 @@
+use crate::domain::model::LinkView;
 use crate::gui::panels::{
-    SidebarAction, TopBarAction, open_add_dialog, open_settings, show_add_dialog, show_content,
-    show_footer, show_rm_dialog, show_settings_dialog, show_sidebar, show_top_bar,
+    SidebarAction, TopBarAction, open_link_op_dialog, open_settings, show_content, show_footer,
+    show_link_op_dialog, show_rm_dialog, show_settings_dialog, show_sidebar, show_top_bar,
 };
 use crate::gui::state::{AppState, LinkSnapshot};
 use crate::gui::theme;
 
-pub use crate::gui::panels::{AddDialogAction, RmDialogAction, SettingsDialogAction};
+pub use crate::gui::panels::{LinkOpDialogAction, RmDialogAction, SettingsDialogAction};
 
 #[derive(Debug, Default)]
 pub struct FrameActions {
     pub refresh_requested: bool,
     pub delete_checked_requested: bool,
+    pub page_changed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct DialogActions {
-    pub add: AddDialogAction,
+    pub link_op: LinkOpDialogAction,
     pub rm: RmDialogAction,
     pub settings: SettingsDialogAction,
 }
@@ -24,6 +26,7 @@ pub fn show_frame(
     ctx: &egui::Context,
     state: &mut AppState,
     snapshot: &LinkSnapshot,
+    selected_view: Option<&LinkView>,
 ) -> FrameActions {
     let p = theme::resolve(state.theme, state.color_scheme);
     let mut actions = FrameActions::default();
@@ -31,13 +34,7 @@ pub fn show_frame(
     egui::TopBottomPanel::top(theme::TOP_BAR_PANEL_ID)
         .frame(theme::top_bar_frame(&p))
         .show(ctx, |ui| match show_top_bar(ui, state) {
-            TopBarAction::AddLink => open_add_dialog(state),
-            TopBarAction::CycleTheme => {
-                state.theme = state.theme.next();
-            }
-            TopBarAction::CycleLocale => {
-                state.locale = state.locale.next();
-            }
+            TopBarAction::OpenLinkOps => open_link_op_dialog(state),
             TopBarAction::OpenSettings => open_settings(state),
             TopBarAction::None => {}
         });
@@ -47,7 +44,7 @@ pub fn show_frame(
         .show(ctx, |ui| show_footer(ui, state));
 
     show_sidebar_panel(ctx, state, snapshot, &mut actions, &p);
-    show_central_panel(ctx, state, snapshot, &p);
+    show_central_panel(ctx, state, selected_view, &p);
     theme::paint_footer_separator(ctx, footer_resp.response.rect, &p);
 
     actions
@@ -55,7 +52,7 @@ pub fn show_frame(
 
 pub fn show_dialogs(ctx: &egui::Context, state: &mut AppState) -> DialogActions {
     DialogActions {
-        add: show_add_dialog(ctx, state),
+        link_op: show_link_op_dialog(ctx, state),
         rm: show_rm_dialog(ctx, state),
         settings: show_settings_dialog(ctx, state),
     }
@@ -85,6 +82,9 @@ fn show_sidebar_panel(
             SidebarAction::DeleteChecked => {
                 actions.delete_checked_requested = true;
             }
+            SidebarAction::PageChanged => {
+                actions.page_changed = true;
+            }
             SidebarAction::None => {}
         });
     if sidebar_resp.response.dragged() {
@@ -95,7 +95,7 @@ fn show_sidebar_panel(
 fn show_central_panel(
     ctx: &egui::Context,
     state: &AppState,
-    snapshot: &LinkSnapshot,
+    selected_view: Option<&LinkView>,
     p: &theme::UiPalette,
 ) {
     egui::CentralPanel::default()
@@ -123,9 +123,7 @@ fn show_central_panel(
                     ui.label(msg);
                     ui.add_space(theme::gap(ui));
                 }
-                let selected_id = state.selected_id;
-                let view = snapshot.selected_view(selected_id);
-                show_content(ui, state, view);
+                show_content(ui, state, selected_view);
             });
         });
 }

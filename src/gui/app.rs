@@ -1,16 +1,16 @@
-use crate::domain::gui_settings::ColorScheme;
+use crate::domain::gui_settings::{ColorScheme, GuiSettings, data_dir_from_settings};
 use crate::domain::model::{LinkKind, LinkRecord, LinkStatus, LinkView};
+use crate::gui::data::ReloadedLinks;
 use crate::gui::icon;
-use crate::gui::panels::{open_rm_dialog_batch, validate_add_form};
-use crate::gui::settings_store::{self, from_state};
-use crate::gui::shell::{self, AddDialogAction, RmDialogAction, SettingsDialogAction};
-use crate::gui::state::{AppState, LinkSnapshot, RmDialog, SettingsSection};
-use crate::gui::tasks::{GuiTask, GuiTaskResult, TaskPoll};
+use crate::gui::panels::{open_rm_dialog_batch_ids, validate_link_op_form};
+use crate::gui::settings_store;
+use crate::gui::shell::{self, LinkOpDialogAction, RmDialogAction, SettingsDialogAction};
+use crate::gui::state::{AppState, LinkSnapshot, RmDialog, SettingsDraft, SettingsSection};
+use crate::gui::tasks::{GuiTask, GuiTaskResult, SettingsApplyOutcome, TaskPoll};
 use crate::gui::theme;
 use crate::gui::theme::ThemePreference;
 use crate::workflows::rm::workflow::RemoveMode;
 use eframe::CreationContext;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 pub fn run() -> eframe::Result<()> {
@@ -33,17 +33,15 @@ pub fn run() -> eframe::Result<()> {
 pub struct SymmApp {
     state: AppState,
     snapshot: LinkSnapshot,
+    selected_view: Option<LinkView>,
     needs_reload: bool,
     task: Option<GuiTask>,
     toast_until: Option<Instant>,
-    saved_settings: crate::domain::gui_settings::GuiSettings,
-    pending_settings: Option<crate::domain::gui_settings::GuiSettings>,
-    settings_save_due: Option<Instant>,
     manual_refresh_pending: bool,
     applied_theme: Option<ThemeKey>,
     debug_open_settings: bool,
     debug_settings_section: Option<SettingsSection>,
-    debug_open_add: bool,
+    debug_open_link_op: bool,
     debug_open_rm: bool,
     debug_sample_data: bool,
     debug_screenshot_to: Option<PathBuf>,
@@ -79,6 +77,7 @@ fn debug_sample_snapshot() -> LinkSnapshot {
             },
             index: 1,
             status: LinkStatus::Ok,
+            status_error: None,
         },
         LinkView {
             record: LinkRecord {
@@ -92,6 +91,7 @@ fn debug_sample_snapshot() -> LinkSnapshot {
             },
             index: 2,
             status: LinkStatus::Broken,
+            status_error: None,
         },
     ])
 }
@@ -99,7 +99,7 @@ fn debug_sample_snapshot() -> LinkSnapshot {
 impl SymmApp {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         let mut state = AppState::default();
-        let saved_settings = settings_store::load_into(&mut state);
+        settings_store::load_into(&mut state);
         if let Some(ppp) = cc.egui_ctx.native_pixels_per_point().filter(|&p| p > 0.0) {
             cc.egui_ctx.set_pixels_per_point(ppp);
         }
@@ -107,17 +107,15 @@ impl SymmApp {
         let mut app = Self {
             state,
             snapshot: LinkSnapshot::default(),
+            selected_view: None,
             needs_reload: true,
             task: None,
             toast_until: None,
-            saved_settings,
-            pending_settings: None,
-            settings_save_due: None,
             manual_refresh_pending: false,
             applied_theme: None,
             debug_open_settings: std::env::var_os("SYMM_DEBUG_OPEN_SETTINGS").is_some(),
             debug_settings_section: debug_settings_section(),
-            debug_open_add: std::env::var_os("SYMM_DEBUG_OPEN_ADD").is_some(),
+            debug_open_link_op: std::env::var_os("SYMM_DEBUG_OPEN_LINK_OP").is_some(),
             debug_open_rm: std::env::var_os("SYMM_DEBUG_OPEN_RM").is_some(),
             debug_sample_data: std::env::var_os("SYMM_DEBUG_SAMPLE_DATA").is_some(),
             debug_screenshot_to: std::env::var_os("SYMM_DEBUG_SCREENSHOT_TO").map(PathBuf::from),
@@ -125,54 +123,13 @@ impl SymmApp {
         };
         app.apply_theme(&cc.egui_ctx);
         if app.debug_sample_data {
-            app.snapshot = debug_sample_snapshot();
+            let snapshot = debug_sample_snapshot();
+            app.selected_view = snapshot.view_by_id(1).cloned();
+            app.snapshot = snapshot;
             app.state.selected_id = Some(1);
             app.needs_reload = false;
         }
         app
-    }
-
-    fn persist_settings_if_changed(&mut self, ctx: &egui::Context) {
-        let current = from_state(&self.state);
-        if current == self.saved_settings {
-            self.pending_settings = None;
-            self.settings_save_due = None;
-            return;
-        }
-
-        let now = Instant::now();
-        if self.pending_settings.as_ref() != Some(&current) {
-            self.pending_settings = Some(current);
-            self.settings_save_due = Some(now + Duration::from_millis(500));
-            ctx.request_repaint_after(Duration::from_millis(500));
-            return;
-        }
-
-        let Some(due) = self.settings_save_due else {
-            return;
-        };
-        if now < due {
-            ctx.request_repaint_after(due.saturating_duration_since(now));
-            return;
-        }
-
-        if let Some(pending) = self.pending_settings.take() {
-            match settings_store::save(&pending) {
-                Ok(()) => {
-                    self.saved_settings = pending;
-                    self.settings_save_due = None;
-                }
-                Err(err) => {
-                    self.pending_settings = Some(pending);
-                    self.settings_save_due = Some(now + Duration::from_secs(5));
-                    self.toast(
-                        self.state.texts().settings_save_failed(&err.to_string()),
-                        4200,
-                    );
-                    ctx.request_repaint_after(Duration::from_secs(5));
-                }
-            }
-        }
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -208,32 +165,43 @@ impl SymmApp {
 
     fn start_reload(&mut self, ctx: &egui::Context) {
         self.needs_reload = false;
-        self.spawn_task(ctx, || {
-            GuiTaskResult::Reload(crate::gui::data::reload().map_err(|err| err.to_string()))
+        let search = self.state.search.clone();
+        let page_index = self.state.page_index;
+        let page_size = self.state.page_size;
+        let selected_id = self.state.selected_id;
+        let checked_ids = self.state.checked_ids.iter().copied().collect::<Vec<_>>();
+        self.spawn_task(ctx, move || {
+            GuiTaskResult::Reload(
+                crate::gui::data::reload(&search, page_index, page_size, selected_id, &checked_ids)
+                    .map_err(|err| err.to_string()),
+            )
         });
     }
 
-    fn apply_reload_result(&mut self, result: Result<LinkSnapshot, String>) {
+    fn apply_reload_result(&mut self, result: Result<ReloadedLinks, String>) {
         match result {
-            Ok(snapshot) => {
-                self.snapshot = snapshot;
-                self.state.sidebar_filter.clear();
+            Ok(reloaded) => {
+                self.snapshot = reloaded.snapshot;
+                self.selected_view = reloaded.selected_view;
+                self.state.page_index = reloaded.page_index;
                 self.state.db_error = None;
                 if self.manual_refresh_pending {
                     self.state.refresh_notice_until =
                         Some(Instant::now() + Duration::from_millis(1800));
                 }
-                let valid: HashSet<i64> = self.snapshot.views.iter().map(|v| v.id).collect();
-                self.state.checked_ids.retain(|id| valid.contains(id));
+                self.state
+                    .checked_ids
+                    .retain(|id| reloaded.all_ids.contains(id));
                 if let Some(selected_id) = self.state.selected_id
-                    && !valid.contains(&selected_id)
+                    && !reloaded.all_ids.contains(&selected_id)
                 {
                     self.state.selected_id = None;
+                    self.selected_view = None;
                 }
             }
             Err(err) => {
                 self.snapshot = LinkSnapshot::default();
-                self.state.sidebar_filter.clear();
+                self.selected_view = None;
                 self.state.selected_id = None;
                 self.state.checked_ids.clear();
                 self.state.rm_dialog = None;
@@ -251,44 +219,92 @@ impl SymmApp {
             return;
         };
 
-        if let Err(msg) = settings_store::apply_data_dir(&draft.data_dir) {
-            self.state.settings_draft = Some(draft);
-            self.toast(msg, 4200);
-            return;
-        }
-
-        let data_dir_changed = self.state.data_dir != draft.data_dir.trim();
         let sidebar_max = theme::sidebar_max_width(ctx);
-        self.state.color_scheme = draft.color_scheme;
-        self.state.font_size_pt =
-            crate::domain::gui_settings::sanitize_font_size_pt(draft.font_size_pt);
-        self.state.sidebar_width = draft
-            .sidebar_width
-            .clamp(theme::SIDEBAR_WIDTH_MIN, sidebar_max);
-        self.state.data_dir = draft.data_dir.trim().to_string();
-        self.state.persisted_data_dir = self.state.data_dir.clone();
-        self.state.data_dir_runtime_override = false;
+        let settings = self.settings_from_draft(&draft, sidebar_max);
+        let new_data_dir = data_dir_from_settings(&settings);
+        let previous_data_dir = self.state.data_dir.clone();
+        let page_size = self.state.page_size;
+        let data_dir_changed =
+            !self.state.data_dir_runtime_override && previous_data_dir != new_data_dir;
+
+        self.spawn_task(ctx, move || GuiTaskResult::SettingsApply {
+            draft,
+            result: crate::gui::data::apply_settings(
+                settings,
+                previous_data_dir,
+                data_dir_changed,
+                page_size,
+            ),
+        });
+    }
+
+    fn settings_from_draft(&self, draft: &SettingsDraft, sidebar_max: f32) -> GuiSettings {
+        let data_dir = if self.state.data_dir_runtime_override {
+            self.state.persisted_data_dir.trim()
+        } else {
+            draft.data_dir.trim()
+        };
+        GuiSettings {
+            theme: draft.theme,
+            locale: draft.locale,
+            color_scheme: draft.color_scheme,
+            sidebar_width: draft
+                .sidebar_width
+                .clamp(theme::SIDEBAR_WIDTH_MIN, sidebar_max),
+            font_size_pt: crate::domain::gui_settings::sanitize_font_size_pt(draft.font_size_pt),
+            data_dir: if data_dir.is_empty() {
+                None
+            } else {
+                Some(data_dir.to_string())
+            },
+        }
+    }
+
+    fn finish_settings_apply(
+        &mut self,
+        draft: SettingsDraft,
+        result: Result<SettingsApplyOutcome, String>,
+        ctx: &egui::Context,
+    ) {
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                self.state.settings_draft = Some(draft);
+                self.toast(err, 4200);
+                return;
+            }
+        };
+
+        self.state.theme = outcome.settings.theme;
+        self.state.locale = outcome.settings.locale;
+        self.state.color_scheme = outcome.settings.color_scheme;
+        self.state.font_size_pt = outcome.settings.font_size_pt;
+        self.state.sidebar_width = outcome.settings.sidebar_width;
+        let persisted_data_dir = data_dir_from_settings(&outcome.settings);
+        if !self.state.data_dir_runtime_override {
+            self.state.data_dir = persisted_data_dir.clone();
+            self.state.data_dir_runtime_override = false;
+        }
+        if outcome.save_error.is_none() {
+            self.state.persisted_data_dir = persisted_data_dir;
+        }
         theme::pin_side_panel_width(ctx, theme::SIDEBAR_PANEL_ID, self.state.sidebar_width);
 
-        let current = from_state(&self.state);
-        match settings_store::save(&current) {
-            Ok(()) => {
-                self.saved_settings = current;
-                self.pending_settings = None;
-                self.settings_save_due = None;
-            }
-            Err(err) => {
-                self.toast(
-                    self.state.texts().settings_save_failed(&err.to_string()),
-                    4200,
-                );
-            }
+        if let Some(snapshot) = outcome.snapshot {
+            self.snapshot = snapshot;
+            self.selected_view = None;
+            self.state.db_error = None;
+            self.manual_refresh_pending = false;
         }
-        self.needs_reload = true;
-        if data_dir_changed {
+        if outcome.data_dir_changed {
+            self.state.page_index = 0;
             self.state.selected_id = None;
+            self.selected_view = None;
             self.state.checked_ids.clear();
             self.state.rm_dialog = None;
+        }
+        if let Some(err) = outcome.save_error {
+            self.toast(self.state.texts().settings_save_failed(&err), 4200);
         }
     }
 
@@ -298,7 +314,7 @@ impl SymmApp {
         };
 
         let result = match task.poll() {
-            TaskPoll::Ready(result) => result,
+            TaskPoll::Ready(result) => *result,
             TaskPoll::Pending => {
                 ctx.request_repaint_after(Duration::from_millis(50));
                 return;
@@ -314,15 +330,18 @@ impl SymmApp {
 
         self.task = None;
         self.state.busy = false;
-        self.handle_task_result(result);
+        self.handle_task_result(result, ctx);
         ctx.request_repaint();
     }
 
-    fn handle_task_result(&mut self, result: GuiTaskResult) {
+    fn handle_task_result(&mut self, result: GuiTaskResult, ctx: &egui::Context) {
         match result {
             GuiTaskResult::Reload(result) => self.apply_reload_result(result),
-            GuiTaskResult::Add(result) => self.finish_add(result),
+            GuiTaskResult::LinkOp(result) => self.finish_link_op(result),
             GuiTaskResult::Remove(result) => self.finish_remove(result),
+            GuiTaskResult::SettingsApply { draft, result } => {
+                self.finish_settings_apply(draft, result, ctx)
+            }
         }
     }
 
@@ -398,17 +417,18 @@ impl SymmApp {
     }
 
     fn begin_rm_checked(&mut self) {
-        let views: Vec<_> = self
-            .state
-            .checked_ids
-            .iter()
-            .filter_map(|id| self.snapshot.view_by_id(*id))
-            .collect();
-        if views.is_empty() {
+        if self.state.checked_ids.is_empty() {
             self.toast(self.state.texts().select_before_delete(), 2400);
             return;
         }
-        open_rm_dialog_batch(&mut self.state, &views);
+        let mut ids = self.state.checked_ids.iter().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        let first_name = ids
+            .iter()
+            .find_map(|id| self.snapshot.view_by_id(*id))
+            .map(|view| view.display_name().into_owned());
+        let count = ids.len();
+        open_rm_dialog_batch_ids(&mut self.state, ids, first_name, count);
     }
 
     fn confirm_rm(&mut self, ctx: &egui::Context) {
@@ -452,16 +472,16 @@ impl SymmApp {
         }
     }
 
-    fn submit_add(&mut self, ctx: &egui::Context) {
+    fn submit_link_op(&mut self, ctx: &egui::Context) {
         if self.task.is_some() {
             return;
         }
         let locale = self.state.locale;
         let t = self.state.texts();
-        let form = &mut self.state.add_form;
+        let form = &mut self.state.link_op_form;
         form.error = None;
         form.status_message = None;
-        let Ok((link, target)) = validate_add_form(form, locale) else {
+        let Ok((link, target)) = validate_link_op_form(form, locale) else {
             form.error = Some(t.paths_required().to_owned());
             return;
         };
@@ -469,30 +489,30 @@ impl SymmApp {
         let operation = form.operation;
         let lock = form.lock_policy;
         self.spawn_task(ctx, move || {
-            GuiTaskResult::Add(
-                crate::gui::data::add_link(operation, &link, &target, &name, lock)
+            GuiTaskResult::LinkOp(
+                crate::gui::data::apply_link_op(operation, &link, &target, &name, lock)
                     .map_err(|err| err.to_string()),
             )
         });
     }
 
-    fn finish_add(&mut self, result: Result<String, String>) {
+    fn finish_link_op(&mut self, result: Result<String, String>) {
         let t = self.state.texts();
-        let form = &mut self.state.add_form;
+        let form = &mut self.state.link_op_form;
         match result {
             Ok(log) => {
-                form.status_message = Some(
-                    log.lines()
-                        .last()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| t.added().to_string()),
-                );
+                let message = log
+                    .lines()
+                    .last()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| t.added().to_string());
+                form.status_message = Some(message.clone());
                 form.link_path.clear();
                 form.target_path.clear();
                 form.name.clear();
                 self.needs_reload = true;
-                self.state.show_add_dialog = false;
-                self.toast(t.link_created(), 3000);
+                self.state.show_link_op_dialog = false;
+                self.toast(message, 3000);
             }
             Err(err) => form.error = Some(err),
         }
@@ -521,8 +541,8 @@ impl eframe::App for SymmApp {
                 draft.section = section;
             }
         }
-        if self.debug_open_add && !self.state.show_add_dialog {
-            crate::gui::panels::open_add_dialog(&mut self.state);
+        if self.debug_open_link_op && !self.state.show_link_op_dialog {
+            crate::gui::panels::open_link_op_dialog(&mut self.state);
         }
         if self.debug_open_rm && self.state.rm_dialog.is_none() {
             self.state.rm_dialog = Some(RmDialog {
@@ -532,7 +552,6 @@ impl eframe::App for SymmApp {
             });
         }
         self.expire_notices();
-        self.persist_settings_if_changed(ctx);
 
         let before_theme = ThemeKey {
             theme: self.state.theme,
@@ -540,19 +559,40 @@ impl eframe::App for SymmApp {
             font_size_pt: self.state.font_size_pt,
         };
         let before_locale = self.state.locale;
-        let frame_actions = shell::show_frame(ctx, &mut self.state, &self.snapshot);
+        let before_search = self.state.search.clone();
+        let before_selected_id = self.state.selected_id;
+        let frame_actions = shell::show_frame(
+            ctx,
+            &mut self.state,
+            &self.snapshot,
+            self.selected_view.as_ref(),
+        );
+        if self.state.search != before_search {
+            self.state.page_index = 0;
+            self.needs_reload = true;
+        }
+        if self.state.selected_id != before_selected_id {
+            self.selected_view = self
+                .state
+                .selected_id
+                .and_then(|id| self.snapshot.view_by_id(id).cloned());
+            ctx.request_repaint();
+        }
         if frame_actions.refresh_requested {
             self.needs_reload = true;
             self.state.refresh_notice_until = None;
             self.manual_refresh_pending = true;
+        }
+        if frame_actions.page_changed {
+            self.needs_reload = true;
         }
         if frame_actions.delete_checked_requested {
             self.begin_rm_checked();
         }
 
         let dialog_actions = shell::show_dialogs(ctx, &mut self.state);
-        if dialog_actions.add == AddDialogAction::Submit {
-            self.submit_add(ctx);
+        if dialog_actions.link_op == LinkOpDialogAction::Submit {
+            self.submit_link_op(ctx);
         }
 
         match dialog_actions.rm {

@@ -1,7 +1,7 @@
 use crate::domain::model::LinkView;
 use crate::gui::icons::Icon;
 use crate::gui::panels::rm_dialog::open_rm_dialog;
-use crate::gui::state::{AppState, LinkSnapshot};
+use crate::gui::state::{AppState, LinkSnapshot, PAGE_SIZE_OPTIONS};
 use crate::gui::theme::{self, UiPalette, rich_section, rich_small};
 use crate::gui::widgets::{button, right_aligned, search_field, split_row};
 use egui::{Ui, WidgetInfo, WidgetType};
@@ -10,6 +10,7 @@ use egui::{Ui, WidgetInfo, WidgetType};
 pub enum SidebarAction {
     Refresh,
     DeleteChecked,
+    PageChanged,
     None,
 }
 
@@ -20,10 +21,14 @@ pub fn show_sidebar(ui: &mut Ui, state: &mut AppState, snapshot: &LinkSnapshot) 
 
     ui.vertical(|ui| {
         sidebar_header(ui, state, snapshot, &p, &t, &mut action);
-        let list_h = ui.available_height();
+        let typo = theme::typography_from_ui(ui);
+        let pagination_h = typo.btn_h + 2.0 * theme::gap(ui);
+        let list_h = (ui.available_height() - pagination_h).max(0.0);
         if list_h > 1.0 {
-            sidebar_list(ui, state, snapshot, &p, &t);
+            sidebar_list(ui, state, snapshot, &p, &t, list_h);
         }
+        ui.add_space(theme::gap(ui));
+        sidebar_pagination(ui, state, snapshot, &p, &t, &mut action);
     });
 
     action
@@ -108,8 +113,9 @@ fn sidebar_list(
     snapshot: &LinkSnapshot,
     p: &UiPalette,
     t: &crate::gui::i18n::GuiTexts,
+    max_height: f32,
 ) {
-    let item_count = state.sidebar_filter.refresh(snapshot, &state.search);
+    let item_count = snapshot.views.len();
     if item_count == 0 {
         ui.label(rich_small(
             if state.search.trim().is_empty() {
@@ -125,20 +131,84 @@ fn sidebar_list(
     let row_h = (typo.field_row_h + 4.0 * typo.scale).max(30.0);
     egui::ScrollArea::vertical()
         .id_salt("sidebar_list")
-        .max_height(ui.available_height())
+        .max_height(max_height)
         .auto_shrink([false, true])
         .show_rows(ui, row_h, item_count, |ui, range| {
             for row in range {
-                let Some(index) = state.sidebar_filter.index_at(row) else {
+                let Some(view) = snapshot.view_at(row) else {
                     continue;
                 };
-                let Some(view) = snapshot.view_at(index) else {
-                    continue;
-                };
-                let name = snapshot.display_name_at(index).unwrap_or("");
+                let name = snapshot.display_name_at(row).unwrap_or("");
                 link_row(ui, state, view, name, p);
             }
         });
+}
+
+fn sidebar_pagination(
+    ui: &mut Ui,
+    state: &mut AppState,
+    snapshot: &LinkSnapshot,
+    p: &UiPalette,
+    t: &crate::gui::i18n::GuiTexts,
+    action: &mut SidebarAction,
+) {
+    let page_count = snapshot.page_count(state.page_size);
+    state.page_index = state.page_index.min(page_count.saturating_sub(1));
+    let current_page = state.page_index + 1;
+    let mut page_size = state.page_size;
+    split_row(
+        ui,
+        |ui| {
+            if button(ui)
+                .icon(Icon::Previous)
+                .tip(t.previous_page())
+                .enabled(!state.busy && state.page_index > 0)
+                .show()
+                .clicked()
+            {
+                state.page_index = state.page_index.saturating_sub(1);
+                *action = SidebarAction::PageChanged;
+            }
+            ui.label(rich_small(
+                &t.page_status(current_page, page_count),
+                p.text_muted,
+            ));
+            if button(ui)
+                .icon(Icon::Next)
+                .tip(t.next_page())
+                .enabled(!state.busy && current_page < page_count)
+                .show()
+                .clicked()
+            {
+                state.page_index += 1;
+                *action = SidebarAction::PageChanged;
+            }
+        },
+        |ui| {
+            egui::ComboBox::from_id_salt("sidebar_page_size")
+                .selected_text(format!("{} {}", t.page_size_label(), page_size))
+                .show_ui(ui, |ui| {
+                    for option in PAGE_SIZE_OPTIONS {
+                        ui.selectable_value(
+                            &mut page_size,
+                            option,
+                            format!("{} {option}", t.page_size_label()),
+                        );
+                    }
+                });
+        },
+    );
+    if page_size != state.page_size {
+        state.page_size = page_size;
+        state.page_index = 0;
+        *action = SidebarAction::PageChanged;
+    }
+    if !state.search.trim().is_empty() {
+        ui.label(rich_small(
+            &t.sidebar_match_stats(snapshot.matched_total()),
+            p.text_muted,
+        ));
+    }
 }
 
 fn link_row(ui: &mut Ui, state: &mut AppState, view: &LinkView, name: &str, p: &UiPalette) {

@@ -17,21 +17,7 @@ pub fn load() -> GuiSettings {
     let Ok(path) = settings_path() else {
         return GuiSettings::default();
     };
-    match legacy_settings_path() {
-        Ok(legacy) => load_with_legacy(&path, &legacy),
-        Err(_) => load_from(&path),
-    }
-}
-
-fn load_with_legacy(path: &Path, legacy: &Path) -> GuiSettings {
-    if path.exists() {
-        return load_from(path);
-    }
-
-    match legacy != path {
-        true => load_from(legacy),
-        _ => GuiSettings::default(),
-    }
+    load_from(&path)
 }
 
 pub fn save(settings: &GuiSettings) -> Result<(), SymmError> {
@@ -45,10 +31,6 @@ fn load_from(path: &Path) -> GuiSettings {
         Err(_) => return GuiSettings::default(),
     };
     serde_json::from_str(&raw).unwrap_or_default()
-}
-
-fn legacy_settings_path() -> Result<PathBuf, SymmError> {
-    Ok(runtime_paths::data_home()?.join(SETTINGS_FILE_NAME))
 }
 
 fn save_to(path: &Path, settings: &GuiSettings) -> Result<(), SymmError> {
@@ -119,23 +101,5 @@ mod tests {
             fs::write(&path, "{not json").expect("write");
             assert_eq!(load(), GuiSettings::default());
         });
-    }
-
-    #[test]
-    fn load_falls_back_to_legacy_symm_home_settings() {
-        let dir = tempdir().expect("tempdir");
-        let primary = dir.path().join("default").join(SETTINGS_FILE_NAME);
-        let legacy = dir.path().join("custom").join(SETTINGS_FILE_NAME);
-        let settings = GuiSettings {
-            theme: ThemeMode::Dark,
-            locale: crate::domain::gui_settings::Locale::En,
-            color_scheme: crate::domain::gui_settings::ColorScheme::Ocean,
-            sidebar_width: 310.0,
-            font_size_pt: 15.0,
-            data_dir: Some(dir.path().join("custom").display().to_string()),
-        };
-        save_to(&legacy, &settings).expect("legacy save");
-
-        assert_eq!(load_with_legacy(&primary, &legacy), settings);
     }
 }

@@ -136,11 +136,13 @@ fn status_color_for_darkness(status: crate::domain::model::LinkStatus, dark: boo
         (false, LinkStatus::Missing) => Color32::from_rgb(0xDC, 0x26, 0x26),
         (false, LinkStatus::Stale) => Color32::from_rgb(0x47, 0x55, 0x69),
         (false, LinkStatus::Drift) => Color32::from_rgb(0xA1, 0x62, 0x07),
+        (false, LinkStatus::Unknown) => Color32::from_rgb(0x6B, 0x72, 0x80),
         (true, LinkStatus::Ok) => Color32::from_rgb(0x4A, 0xDE, 0x80),
         (true, LinkStatus::Broken) => Color32::from_rgb(0xFB, 0x92, 0x24),
         (true, LinkStatus::Missing) => Color32::from_rgb(0xF8, 0x71, 0x71),
         (true, LinkStatus::Stale) => Color32::from_rgb(0xCB, 0xD5, 0xE1),
         (true, LinkStatus::Drift) => Color32::from_rgb(0xFD, 0xBA, 0x74),
+        (true, LinkStatus::Unknown) => Color32::from_rgb(0xD1, 0xD5, 0xDB),
     }
 }
 

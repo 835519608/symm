@@ -1,28 +1,29 @@
 use crate::domain::gui_settings::{ColorScheme, FONT_SIZE_PT_DEFAULT, GuiSettings, Locale};
 use crate::domain::model::{LinkKind, LinkView};
 use crate::gui::i18n::GuiTexts;
-use crate::workflows::add::workflow::LinkOperation;
+use crate::workflows::link_ops::workflow::LinkOperation;
 use crate::workflows::rm::workflow::RemoveMode;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::time::Instant;
 
 pub use crate::gui::theme::ThemePreference;
+pub const PAGE_SIZE_OPTIONS: [u32; 3] = [50, 100, 200];
+pub const DEFAULT_PAGE_SIZE: u32 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AddLockPolicy {
+pub enum LinkOpLockPolicy {
     #[default]
     Unlock,
     Cancel,
 }
 
 #[derive(Debug, Default)]
-pub struct AddForm {
+pub struct LinkOpForm {
     pub operation: LinkOperation,
     pub link_path: String,
     pub target_path: String,
     pub name: String,
-    pub lock_policy: AddLockPolicy,
+    pub lock_policy: LinkOpLockPolicy,
     pub status_message: Option<String>,
     pub error: Option<String>,
 }
@@ -37,6 +38,8 @@ pub enum SettingsSection {
 #[derive(Debug, Clone)]
 pub struct SettingsDraft {
     pub section: SettingsSection,
+    pub theme: ThemePreference,
+    pub locale: Locale,
     pub color_scheme: ColorScheme,
     pub font_size_pt: f32,
     pub sidebar_width: f32,
@@ -45,17 +48,14 @@ pub struct SettingsDraft {
 
 impl SettingsDraft {
     pub fn from_state(state: &AppState) -> Self {
-        let data_dir = if state.data_dir_runtime_override {
-            &state.persisted_data_dir
-        } else {
-            &state.data_dir
-        };
         Self {
             section: SettingsSection::Appearance,
+            theme: state.theme,
+            locale: state.locale,
             color_scheme: state.color_scheme,
             font_size_pt: state.font_size_pt,
             sidebar_width: state.sidebar_width,
-            data_dir: data_dir.clone(),
+            data_dir: state.data_dir.clone(),
         }
     }
 
@@ -63,10 +63,22 @@ impl SettingsDraft {
         let d = GuiSettings::default();
         Self {
             section: SettingsSection::Appearance,
+            theme: d.theme,
+            locale: d.locale,
             color_scheme: d.color_scheme,
             font_size_pt: d.font_size_pt,
             sidebar_width: d.sidebar_width,
             data_dir: String::new(),
+        }
+    }
+
+    pub fn restore_defaults(&mut self, preserve_data_dir: bool) {
+        let section = self.section;
+        let data_dir = self.data_dir.clone();
+        *self = Self::appearance_defaults();
+        self.section = section;
+        if preserve_data_dir {
+            self.data_dir = data_dir;
         }
     }
 }
@@ -83,8 +95,10 @@ pub struct AppState {
     pub search: String,
     pub selected_id: Option<i64>,
     pub checked_ids: HashSet<i64>,
+    pub page_index: u32,
+    pub page_size: u32,
     pub sidebar_width: f32,
-    pub show_add_dialog: bool,
+    pub show_link_op_dialog: bool,
     /// 侧栏「已刷新」提示截止时间（与统计行同排右侧）。
     pub refresh_notice_until: Option<Instant>,
     pub toast: Option<String>,
@@ -99,108 +113,79 @@ pub struct AppState {
     pub persisted_data_dir: String,
     pub data_dir_runtime_override: bool,
     pub settings_draft: Option<SettingsDraft>,
-    pub add_form: AddForm,
+    pub link_op_form: LinkOpForm,
     pub rm_dialog: Option<RmDialog>,
-    pub sidebar_filter: SidebarFilterCache,
     pub busy: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct SidebarFilterCache {
-    search: String,
-    indices: Vec<usize>,
-    valid: bool,
-}
-
-impl SidebarFilterCache {
-    pub fn clear(&mut self) {
-        self.search.clear();
-        self.indices.clear();
-        self.valid = false;
-    }
-
-    pub fn refresh(&mut self, snapshot: &LinkSnapshot, search: &str) -> usize {
-        if self.valid && self.search == search {
-            return self.indices.len();
-        }
-        self.search.clear();
-        self.search.push_str(search);
-        snapshot.fill_filtered_indices(search, &mut self.indices);
-        self.valid = true;
-        self.indices.len()
-    }
-
-    pub fn index_at(&self, row: usize) -> Option<usize> {
-        self.indices.get(row).copied()
-    }
 }
 
 #[derive(Debug, Default)]
 pub struct LinkSnapshot {
     pub views: Vec<LinkView>,
     display_names: Vec<String>,
-    display_names_lower: Vec<String>,
-    name_lower: Vec<String>,
-    sorted_indices: Vec<usize>,
     id_to_index: HashMap<i64, usize>,
+    total_count: usize,
+    matched_count: usize,
     kind_counts: (usize, usize),
 }
 
 impl LinkSnapshot {
     pub fn new(views: Vec<LinkView>) -> Self {
-        let mut display_names = Vec::with_capacity(views.len());
-        let mut display_names_lower = Vec::with_capacity(views.len());
-        let mut name_lower = Vec::with_capacity(views.len());
-        let mut id_to_index = HashMap::with_capacity(views.len());
         let mut kind_counts = (0usize, 0usize);
-
-        for (i, view) in views.iter().enumerate() {
-            let display_name = display_name_for(view);
-            display_names_lower.push(display_name.to_lowercase());
-            name_lower.push(view.name.to_lowercase());
-            display_names.push(display_name);
-            id_to_index.insert(view.id, i);
+        for view in &views {
             match view.link_kind {
                 LinkKind::Symlink => kind_counts.0 += 1,
                 LinkKind::Junction => kind_counts.1 += 1,
             }
         }
+        Self::with_counts(
+            views,
+            kind_counts.0 + kind_counts.1,
+            kind_counts.0 + kind_counts.1,
+            kind_counts,
+        )
+    }
 
-        let mut sorted_indices: Vec<usize> = (0..views.len()).collect();
-        sorted_indices.sort_by(|&a, &b| display_names[a].cmp(&display_names[b]));
+    pub fn with_counts(
+        views: Vec<LinkView>,
+        total_count: usize,
+        matched_count: usize,
+        kind_counts: (usize, usize),
+    ) -> Self {
+        let mut display_names = Vec::with_capacity(views.len());
+        let mut id_to_index = HashMap::with_capacity(views.len());
+
+        for (i, view) in views.iter().enumerate() {
+            let display_name = display_name_for(view);
+            display_names.push(display_name);
+            id_to_index.insert(view.id, i);
+        }
 
         Self {
             views,
             display_names,
-            display_names_lower,
-            name_lower,
-            sorted_indices,
             id_to_index,
+            total_count,
+            matched_count,
             kind_counts,
         }
     }
 
     pub fn total(&self) -> usize {
-        self.views.len()
+        self.total_count
+    }
+
+    pub fn matched_total(&self) -> usize {
+        self.matched_count
+    }
+
+    pub fn page_count(&self, page_size: u32) -> u32 {
+        let page_size = page_size.max(1) as usize;
+        self.matched_count.div_ceil(page_size).max(1) as u32
     }
 
     /// (软链条数, 联接条数)
     pub fn kind_counts(&self) -> (usize, usize) {
         self.kind_counts
-    }
-
-    pub fn fill_filtered_indices(&self, search: &str, out: &mut Vec<usize>) {
-        out.clear();
-        let q = search.trim();
-        if q.is_empty() {
-            out.extend_from_slice(&self.sorted_indices);
-            return;
-        }
-        let q = q.to_lowercase();
-        out.extend(self.sorted_indices.iter().copied().filter(|&i| {
-            self.display_names_lower[i].contains(&q)
-                || (!self.name_lower[i].is_empty() && self.name_lower[i].contains(&q))
-        }));
     }
 
     pub fn view_at(&self, index: usize) -> Option<&LinkView> {
@@ -211,11 +196,6 @@ impl LinkSnapshot {
         self.display_names.get(index).map(String::as_str)
     }
 
-    pub fn selected_view(&self, id: Option<i64>) -> Option<&LinkView> {
-        let id = id?;
-        self.view_by_id(id)
-    }
-
     pub fn view_by_id(&self, id: i64) -> Option<&LinkView> {
         self.id_to_index
             .get(&id)
@@ -224,14 +204,7 @@ impl LinkSnapshot {
 }
 
 fn display_name_for(view: &LinkView) -> String {
-    if !view.name.is_empty() {
-        return view.name.clone();
-    }
-    Path::new(&view.link_path)
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| view.link_path.clone())
+    view.display_name().into_owned()
 }
 
 impl AppState {
@@ -251,8 +224,10 @@ impl Default for AppState {
             search: String::new(),
             selected_id: None,
             checked_ids: HashSet::new(),
+            page_index: 0,
+            page_size: DEFAULT_PAGE_SIZE,
             sidebar_width: crate::gui::theme::SIDEBAR_DEFAULT_WIDTH,
-            show_add_dialog: false,
+            show_link_op_dialog: false,
             refresh_notice_until: None,
             toast: None,
             db_error: None,
@@ -264,9 +239,8 @@ impl Default for AppState {
             persisted_data_dir: String::new(),
             data_dir_runtime_override: false,
             settings_draft: None,
-            add_form: AddForm::default(),
+            link_op_form: LinkOpForm::default(),
             rm_dialog: None,
-            sidebar_filter: SidebarFilterCache::default(),
             busy: false,
         }
     }
@@ -277,7 +251,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_draft_uses_persisted_data_dir_when_runtime_override_is_active() {
+    fn settings_draft_shows_active_data_dir_when_runtime_override_is_active() {
         let state = AppState {
             data_dir: "/tmp/symm-env".to_string(),
             persisted_data_dir: "/tmp/symm-saved".to_string(),
@@ -287,7 +261,7 @@ mod tests {
 
         let draft = SettingsDraft::from_state(&state);
 
-        assert_eq!(draft.data_dir, "/tmp/symm-saved");
+        assert_eq!(draft.data_dir, "/tmp/symm-env");
     }
 
     #[test]
@@ -302,5 +276,46 @@ mod tests {
         let draft = SettingsDraft::from_state(&state);
 
         assert_eq!(draft.data_dir, "/tmp/symm-active");
+    }
+
+    #[test]
+    fn settings_draft_restore_defaults_resets_all_editable_appearance_fields() {
+        let mut draft = SettingsDraft {
+            section: SettingsSection::About,
+            theme: ThemePreference::Dark,
+            locale: Locale::En,
+            color_scheme: ColorScheme::Ember,
+            font_size_pt: 22.0,
+            sidebar_width: 260.0,
+            data_dir: "/tmp/symm-custom".to_string(),
+        };
+
+        draft.restore_defaults(false);
+        let defaults = SettingsDraft::appearance_defaults();
+
+        assert_eq!(draft.section, SettingsSection::About);
+        assert_eq!(draft.theme, defaults.theme);
+        assert_eq!(draft.locale, defaults.locale);
+        assert_eq!(draft.color_scheme, defaults.color_scheme);
+        assert_eq!(draft.font_size_pt, defaults.font_size_pt);
+        assert_eq!(draft.sidebar_width, defaults.sidebar_width);
+        assert_eq!(draft.data_dir, "");
+    }
+
+    #[test]
+    fn settings_draft_restore_defaults_can_preserve_runtime_data_dir() {
+        let mut draft = SettingsDraft {
+            section: SettingsSection::Appearance,
+            theme: ThemePreference::Dark,
+            locale: Locale::En,
+            color_scheme: ColorScheme::Ember,
+            font_size_pt: 22.0,
+            sidebar_width: 260.0,
+            data_dir: "/tmp/symm-env".to_string(),
+        };
+
+        draft.restore_defaults(true);
+
+        assert_eq!(draft.data_dir, "/tmp/symm-env");
     }
 }

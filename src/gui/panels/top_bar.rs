@@ -5,29 +5,26 @@ use egui::Ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TopBarAction {
-    AddLink,
-    CycleTheme,
-    CycleLocale,
+    OpenLinkOps,
     OpenSettings,
     None,
 }
 
 pub fn show_top_bar(ui: &mut Ui, state: &AppState) -> TopBarAction {
     let t = state.texts();
-    let theme_tip = t.theme_tip(t.theme_mode_label(state.theme));
 
     let (left_action, right_action) = split_row(
         ui,
         |ui| {
             if button(ui)
                 .icon(Icon::Add)
-                .label(t.add_link())
-                .tip(t.add_link_tip())
+                .label(t.apply_link_op())
+                .tip(t.apply_link_op_tip())
                 .enabled(!state.busy)
                 .show()
                 .clicked()
             {
-                TopBarAction::AddLink
+                TopBarAction::OpenLinkOps
             } else {
                 TopBarAction::None
             }
@@ -41,24 +38,6 @@ pub fn show_top_bar(ui: &mut Ui, state: &AppState) -> TopBarAction {
                 .clicked()
             {
                 return TopBarAction::OpenSettings;
-            }
-            if button(ui)
-                .icon(Icon::Globe)
-                .tip(t.locale_tip())
-                .enabled(!state.busy)
-                .show()
-                .clicked()
-            {
-                return TopBarAction::CycleLocale;
-            }
-            if button(ui)
-                .icon(state.theme.icon())
-                .tip(&theme_tip)
-                .enabled(!state.busy)
-                .show()
-                .clicked()
-            {
-                return TopBarAction::CycleTheme;
             }
             TopBarAction::None
         },

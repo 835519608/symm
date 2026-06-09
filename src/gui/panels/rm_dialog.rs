@@ -15,7 +15,7 @@ pub enum RmDialogAction {
 }
 
 pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogAction {
-    let Some(dialog) = state.rm_dialog.clone() else {
+    let Some(dialog) = state.rm_dialog.as_ref() else {
         return RmDialogAction::None;
     };
 
@@ -25,6 +25,7 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
     let mut open = true;
     let mut action = RmDialogAction::None;
     let mut mode = dialog.mode;
+    let summary = dialog.summary.as_str();
     let modal_id = egui::Id::new("rm_dialog");
 
     let Some(modal) = show_modal(
@@ -39,11 +40,8 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
             ModalSection::Main(ui) => {
                 ui.add_enabled_ui(enabled, |ui| {
                     ui.add(
-                        egui::Label::new(rich_section(
-                            &t.rm_confirm_prompt(&dialog.summary),
-                            p.text,
-                        ))
-                        .wrap(),
+                        egui::Label::new(rich_section(&t.rm_confirm_prompt(summary), p.text))
+                            .wrap(),
                     );
                     ui.add_space(theme::gap_lg(ui));
                     ui.radio_value(
@@ -104,25 +102,45 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
 pub fn open_rm_dialog(state: &mut AppState, view: &LinkView) {
     state.rm_dialog = Some(RmDialog {
         ids: vec![view.id],
-        summary: view.display_name(),
+        summary: view.display_name().into_owned(),
         mode: RemoveMode::DeleteLinkOnly,
     });
 }
 
-pub fn open_rm_dialog_batch(state: &mut AppState, views: &[&LinkView]) {
-    if views.is_empty() {
+pub fn open_rm_dialog_batch_ids(
+    state: &mut AppState,
+    ids: Vec<i64>,
+    first_name: Option<String>,
+    count: usize,
+) {
+    if ids.is_empty() {
         return;
     }
     let t = GuiTexts::new(state.locale);
-    let ids: Vec<i64> = views.iter().map(|v| v.id).collect();
-    let summary = if views.len() == 1 {
-        views[0].display_name()
-    } else {
-        t.rm_batch_summary(&views[0].display_name(), views.len())
+    let summary = match first_name {
+        Some(first_name) if count == 1 => first_name,
+        Some(first_name) => t.rm_batch_summary(&first_name, count),
+        None => t.rm_selected_summary(count),
     };
     state.rm_dialog = Some(RmDialog {
         ids,
         summary,
         mode: RemoveMode::DeleteLinkOnly,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_dialog_keeps_ids_without_current_page_name() {
+        let mut state = AppState::default();
+
+        open_rm_dialog_batch_ids(&mut state, vec![2, 5], None, 2);
+
+        let dialog = state.rm_dialog.expect("dialog");
+        assert_eq!(dialog.ids, vec![2, 5]);
+        assert_eq!(dialog.summary, "已选 2 条链接");
+    }
 }

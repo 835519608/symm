@@ -13,31 +13,17 @@ impl GuiTexts {
     }
 
     // --- 顶栏 ---
-    pub fn add_link(&self) -> &'static str {
+    pub fn apply_link_op(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "添加链接",
-            Locale::En => "Add link",
+            Locale::ZhCn => "链接操作",
+            Locale::En => "Link operation",
         }
     }
 
-    pub fn add_link_tip(&self) -> &'static str {
+    pub fn apply_link_op_tip(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "创建新软链",
-            Locale::En => "Create a new symlink",
-        }
-    }
-
-    pub fn theme_tip(&self, theme_label: &str) -> String {
-        match self.locale {
-            Locale::ZhCn => format!("主题：{theme_label}（点击切换）"),
-            Locale::En => format!("Theme: {theme_label} (click to cycle)"),
-        }
-    }
-
-    pub fn locale_tip(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "界面语言（点击切换中/英）",
-            Locale::En => "UI language (click to toggle)",
+            Locale::ZhCn => "创建、接管或改指向链接",
+            Locale::En => "Add, adopt, or point a link",
         }
     }
 
@@ -73,6 +59,20 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "配色",
             Locale::En => "Color scheme",
+        }
+    }
+
+    pub fn settings_theme(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "主题",
+            Locale::En => "Theme",
+        }
+    }
+
+    pub fn settings_locale(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "界面语言",
+            Locale::En => "Language",
         }
     }
 
@@ -127,6 +127,15 @@ impl GuiTexts {
         }
     }
 
+    pub fn settings_data_dir_env_override_note(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "当前由 SYMM_HOME 覆盖；移除环境变量后才使用 GUI 保存的数据目录",
+            Locale::En => {
+                "Currently overridden by SYMM_HOME; saved GUI data directory applies after removing it"
+            }
+        }
+    }
+
     pub fn settings_save_failed(&self, err: &str) -> String {
         match self.locale {
             Locale::ZhCn => format!("设置保存失败：{err}"),
@@ -145,6 +154,13 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "重置外观页：配色、字号、侧栏宽度、数据目录",
             Locale::En => "Reset appearance: color, font size, sidebar width, data directory",
+        }
+    }
+
+    pub fn settings_restore_defaults_tip_data_dir_overridden(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "重置可编辑项：配色、字号、侧栏宽度",
+            Locale::En => "Reset editable items: color, font size, sidebar width",
         }
     }
 
@@ -231,6 +247,41 @@ impl GuiTexts {
         }
     }
 
+    pub fn sidebar_match_stats(&self, matched: usize) -> String {
+        match self.locale {
+            Locale::ZhCn => format!("匹配 {matched}"),
+            Locale::En => format!("{matched} matched"),
+        }
+    }
+
+    pub fn page_status(&self, page: u32, page_count: u32) -> String {
+        match self.locale {
+            Locale::ZhCn => format!("{page} / {page_count}"),
+            Locale::En => format!("{page} / {page_count}"),
+        }
+    }
+
+    pub fn previous_page(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "上一页",
+            Locale::En => "Previous page",
+        }
+    }
+
+    pub fn next_page(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "下一页",
+            Locale::En => "Next page",
+        }
+    }
+
+    pub fn page_size_label(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "每页",
+            Locale::En => "Rows",
+        }
+    }
+
     pub fn delete_selected(&self, n: usize) -> String {
         match self.locale {
             Locale::ZhCn => format!("删除 ({n})"),
@@ -301,11 +352,11 @@ impl GuiTexts {
         }
     }
 
-    // --- 添加页 ---
-    pub fn add_heading(&self) -> &'static str {
+    // --- 链接操作 ---
+    pub fn link_op_heading(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "添加链接",
-            Locale::En => "Add link",
+            Locale::ZhCn => "链接操作",
+            Locale::En => "Link operation",
         }
     }
 
@@ -408,17 +459,45 @@ impl GuiTexts {
         }
     }
 
-    pub fn create_link(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "创建链接",
-            Locale::En => "Create link",
+    pub fn link_op_submit(
+        &self,
+        operation: crate::workflows::link_ops::workflow::LinkOperation,
+    ) -> &'static str {
+        match (self.locale, operation) {
+            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Add) => "创建链接",
+            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => {
+                "接管实体"
+            }
+            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Point) => "改指向",
+            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Add) => "Add",
+            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => "Adopt",
+            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Point) => "Point",
         }
     }
 
-    pub fn create_link_tip(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "写入数据库并创建软链",
-            Locale::En => "Save to database and create symlink",
+    pub fn link_op_submit_tip(
+        &self,
+        operation: crate::workflows::link_ops::workflow::LinkOperation,
+    ) -> &'static str {
+        match (self.locale, operation) {
+            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Add) => {
+                "写入数据库并创建链接"
+            }
+            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => {
+                "迁移 link 路径实体并创建链接"
+            }
+            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Point) => {
+                "把现有链接改为指向新的 target"
+            }
+            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Add) => {
+                "Save to database and create link"
+            }
+            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => {
+                "Move the link-path entity and create link"
+            }
+            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Point) => {
+                "Point the existing link at the new target"
+            }
         }
     }
 
@@ -462,6 +541,13 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "状态",
             Locale::En => "Status",
+        }
+    }
+
+    pub fn field_status_error(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "状态错误",
+            Locale::En => "Status error",
         }
     }
 
@@ -515,7 +601,14 @@ impl GuiTexts {
     pub fn rm_batch_summary(&self, first: &str, n: usize) -> String {
         match self.locale {
             Locale::ZhCn => format!("{first} 等 {n} 条链接"),
-            Locale::En => format!("{first} and {n} more links"),
+            Locale::En => format!("{first} and {n} total links"),
+        }
+    }
+
+    pub fn rm_selected_summary(&self, n: usize) -> String {
+        match self.locale {
+            Locale::ZhCn => format!("已选 {n} 条链接"),
+            Locale::En => format!("{n} selected links"),
         }
     }
 
@@ -596,13 +689,6 @@ impl GuiTexts {
         }
     }
 
-    pub fn link_created(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "链接已创建",
-            Locale::En => "Link created",
-        }
-    }
-
     pub fn refreshed(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "已刷新",
@@ -627,11 +713,13 @@ impl GuiTexts {
             (Locale::ZhCn, LinkStatus::Missing) => "链接没了",
             (Locale::ZhCn, LinkStatus::Stale) => "链接类型不符",
             (Locale::ZhCn, LinkStatus::Drift) => "指向不对",
+            (Locale::ZhCn, LinkStatus::Unknown) => "未知",
             (Locale::En, LinkStatus::Ok) => "OK",
             (Locale::En, LinkStatus::Broken) => "Broken",
             (Locale::En, LinkStatus::Missing) => "Missing",
             (Locale::En, LinkStatus::Stale) => "Stale",
             (Locale::En, LinkStatus::Drift) => "Drift",
+            (Locale::En, LinkStatus::Unknown) => "Unknown",
         }
     }
 }
