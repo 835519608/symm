@@ -153,7 +153,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: .github/scripts/download-release-artifacts.sh 'release-test-assets-*' dist
+        run: bash .github/scripts/download-release-artifacts.sh 'release-test-assets-*' dist
 
       - name: 校验待发布产物
         uses: ./.github/actions/validate-release-assets
