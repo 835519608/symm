@@ -64,7 +64,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: release-test-${{ github.ref_name || github.run_id }}
+  group: test-release-maintenance
   cancel-in-progress: false
 
 jobs:

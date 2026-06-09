@@ -38,5 +38,5 @@ pub fn resolve_data_dir(data_dir: &str) -> Result<PathBuf, String> {
     }
     let path = PathBuf::from(trimmed);
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-    Ok(path)
+    std::fs::canonicalize(&path).map_err(|e| e.to_string())
 }

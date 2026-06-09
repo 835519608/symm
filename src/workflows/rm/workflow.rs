@@ -448,7 +448,8 @@ fn restore_target_to_link<W: Write>(
     symlink::unlink(link).map_err(RestoreFailure::LinkUnchanged)?;
     let mut reporter = MigrationProgressReporter::new_with_mode(writer, progress_mode);
     migrate::migrate_path(target, link, &mut |event| {
-        reporter.handle_migration_event(event)
+        let _ = reporter.handle_migration_event(event);
+        Ok(())
     })
     .or_else(|err| finish_restore_migration_error(writer, record, err))
 }
@@ -683,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_reports_record_kept_when_progress_output_fails_after_unlink() {
+    fn restore_progress_output_failure_does_not_stop_migration_after_unlink() {
         let temp = tempdir().expect("temp dir");
         let target = temp.path().join("target.txt");
         let link = temp.path().join("link.txt");
@@ -692,28 +693,19 @@ mod tests {
         let record = record("restore-kept", &link, &target);
         let mut writer = FailWriter;
 
-        let err = restore_target_to_link(
+        restore_target_to_link(
             &mut writer,
             &record,
             LinkStatus::Ok,
             ProgressSinkMode::Terminal,
         )
-        .expect_err("progress write should fail after unlink");
+        .expect("progress output failure should not stop restore migration");
 
-        let RestoreFailure::LinkRemoved(SymmError::FilesystemAppliedButRecordKept {
-            operation,
-            link_path,
-            target_path,
-            ..
-        }) = err
-        else {
-            panic!("unexpected error: {err:?}");
-        };
-        assert_eq!(operation, "restore_target_to_link");
-        assert_eq!(link_path, path_text(&link));
-        assert_eq!(target_path, path_text(&target));
-        assert!(fs::symlink_metadata(&link).is_err());
-        assert!(target.exists());
+        assert_eq!(
+            fs::read_to_string(&link).expect("read restored entity"),
+            "payload"
+        );
+        assert!(!target.exists());
     }
 
     #[test]

@@ -594,6 +594,7 @@ fn link_op_error_needs_reload(err: &crate::domain::error::SymmError) -> bool {
         err,
         crate::domain::error::SymmError::FilesystemAppliedButDbFailed { .. }
             | crate::domain::error::SymmError::EntityMigratedButLinkCreateFailed { .. }
+            | crate::domain::error::SymmError::EntityMovedButPostMoveFailed { .. }
             | crate::domain::error::SymmError::EntityCopiedButSourceCleanupFailed { .. }
     )
 }

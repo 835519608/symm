@@ -77,7 +77,7 @@ pub fn apply_settings(
 }
 
 fn apply_settings_with_saver(
-    settings: GuiSettings,
+    mut settings: GuiSettings,
     data_dir_changed: bool,
     page_size: u32,
     save_settings: impl FnOnce(&GuiSettings) -> Result<(), SymmError>,
@@ -86,6 +86,11 @@ fn apply_settings_with_saver(
     if data_dir_changed {
         let new_data_dir = data_dir_from_settings(&settings);
         let resolved_data_dir = settings_store::resolve_data_dir(&new_data_dir)?;
+        if new_data_dir.trim().is_empty() {
+            settings.data_dir = None;
+        } else {
+            settings.data_dir = Some(resolved_data_dir.to_string_lossy().to_string());
+        }
         match reload(&resolved_data_dir, "", 0, page_size.max(1), None, &[]) {
             Ok(reloaded) => snapshot = Some(reloaded.snapshot),
             Err(err) => return Err(err.to_string()),
@@ -308,6 +313,33 @@ mod tests {
         };
 
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn apply_settings_saves_relative_data_dir_as_absolute_path() {
+        let relative = format!("target/symm-gui-data-dir-test-{}", std::process::id());
+        let _ = std::fs::remove_dir_all(&relative);
+        let settings = GuiSettings {
+            data_dir: Some(relative.clone()),
+            ..GuiSettings::default()
+        };
+        let mut saved_settings = None;
+
+        let outcome = apply_settings_with_saver(settings, true, 100, |settings| {
+            saved_settings = Some(settings.clone());
+            Ok(())
+        })
+        .expect("apply settings");
+
+        let saved = saved_settings.expect("settings should be saved");
+        let outcome_dir = outcome.settings.data_dir.expect("outcome data dir");
+        assert!(std::path::Path::new(&outcome_dir).is_absolute());
+        assert_eq!(saved.data_dir.as_deref(), Some(outcome_dir.as_str()));
+        assert!(
+            outcome.snapshot.expect("snapshot").views.is_empty(),
+            "new data dir should load an empty snapshot"
+        );
+        let _ = std::fs::remove_dir_all(relative);
     }
 
     #[test]

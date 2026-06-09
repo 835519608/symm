@@ -31,6 +31,11 @@ fn create_file_symlink(target: &Path, link: &Path) {
     std::os::windows::fs::symlink_file(target, link).expect("symlink");
 }
 
+#[cfg(windows)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::windows::fs::symlink_dir(target, link).expect("dir symlink");
+}
+
 fn assert_same_missing_target_path(actual: &Path, expected: &Path) {
     if actual == expected {
         return;
@@ -951,6 +956,89 @@ fn point_existing_symlink_pointing_elsewhere_can_repoint() {
         .success();
 
     assert_eq!(fs::read_to_string(&link).expect("read repointed link"), "b");
+}
+
+#[cfg(windows)]
+#[test]
+fn point_file_symlink_to_directory_uses_directory_symlink() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let old_file = data_root.join("old-file.txt");
+    let new_dir = data_root.join("new-dir");
+    let link = data_root.join("point-file-to-dir-link");
+    fs::write(&old_file, "old").expect("write old target");
+    fs::create_dir(&new_dir).expect("create new dir");
+    fs::write(new_dir.join("payload.txt"), "new-dir").expect("write dir payload");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_LINK_OP_NAME", "point-file-dir")
+        .args(["add", &link.to_string_lossy(), &old_file.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_LINK_OP_NAME", "point-file-dir")
+        .args(["point", &link.to_string_lossy(), &new_dir.to_string_lossy()])
+        .assert()
+        .success();
+
+    assert!(
+        fs::metadata(&link).expect("link metadata").is_dir(),
+        "repointed link should be a directory symlink"
+    );
+    assert_eq!(
+        fs::read_to_string(link.join("payload.txt")).expect("read through dir link"),
+        "new-dir"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn point_directory_symlink_to_file_uses_file_symlink() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let old_dir = data_root.join("old-dir");
+    let new_file = data_root.join("new-file.txt");
+    let link = data_root.join("point-dir-to-file-link");
+    fs::create_dir(&old_dir).expect("create old dir");
+    fs::write(old_dir.join("old.txt"), "old").expect("write old dir payload");
+    fs::write(&new_file, "new-file").expect("write new file");
+    create_dir_symlink(&old_dir, &link);
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_LINK_OP_NAME", "point-dir-file")
+        .args(["add", &link.to_string_lossy(), &old_dir.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_LINK_OP_NAME", "point-dir-file")
+        .args([
+            "point",
+            &link.to_string_lossy(),
+            &new_file.to_string_lossy(),
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        fs::metadata(&link).expect("link metadata").is_file(),
+        "repointed link should be a file symlink"
+    );
+    assert_eq!(
+        fs::read_to_string(&link).expect("read through file link"),
+        "new-file"
+    );
 }
 
 #[test]

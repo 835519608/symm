@@ -57,6 +57,24 @@ pub(crate) fn capture_recreate_spec(src_link: &Path) -> Result<LinkRecreateSpec,
     }
 }
 
+pub(crate) fn capture_repoint_spec(
+    src_link: &Path,
+    target: &Path,
+) -> Result<LinkRecreateSpec, SymmError> {
+    #[cfg(windows)]
+    {
+        Ok(LinkRecreateSpec {
+            kind: crate::adapters::platform::host::infer_repoint_write_kind(src_link, target)?,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = src_link;
+        let _ = target;
+        Ok(LinkRecreateSpec {})
+    }
+}
+
 pub(crate) fn write_symlink_from_spec(
     spec: LinkRecreateSpec,
     link: &Path,

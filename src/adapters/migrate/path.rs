@@ -45,7 +45,15 @@ where
         })?;
         if try_move_path_with_retry(src, dst, "迁移项")? {
             if !path_is_link(dst)? {
-                rebase::rebase_symlinks_in_tree(dst, src)?;
+                rebase::rebase_symlinks_in_tree(dst, src).map_err(|err| {
+                    SymmError::EntityMovedButPostMoveFailed {
+                        source_path: src.display().to_string(),
+                        target_path: dst.display().to_string(),
+                        message: format!(
+                            "同盘移动已完成，但迁移后重写内部链接失败：{err}；源路径已不存在，请检查 target 后手动处理"
+                        ),
+                    }
+                })?;
             }
             return Ok(());
         }
@@ -255,6 +263,38 @@ mod tests {
         assert_eq!(
             fs::read_link(dst.join("lnk")).expect("read"),
             dst.join("data").join("x.txt")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fast_move_rebase_failure_reports_half_moved_entity() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src-dir");
+        let dst = temp.path().join("dst-dir");
+        let protected = src.join("protected");
+        fs::create_dir_all(src.join("data")).expect("data dir");
+        fs::create_dir_all(&protected).expect("protected dir");
+        fs::write(src.join("data").join("x.txt"), "ok").expect("write data");
+        symlink(src.join("data").join("x.txt"), protected.join("link")).expect("symlink");
+        fs::set_permissions(&protected, fs::Permissions::from_mode(0o555))
+            .expect("make protected dir readonly");
+
+        let err = migrate_path(&src, &dst, &mut |_event| Ok(()))
+            .expect_err("rebase failure after fast move should be reported");
+
+        let moved_protected = dst.join("protected");
+        if moved_protected.exists() {
+            fs::set_permissions(&moved_protected, fs::Permissions::from_mode(0o755))
+                .expect("restore moved protected permissions");
+        }
+        assert!(
+            matches!(err, SymmError::EntityMovedButPostMoveFailed { .. }),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            !src.exists() && dst.exists(),
+            "fast move already moved the entity when rebase failed"
         );
     }
 

@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: test-release-maintenance
+  cancel-in-progress: false
+
 jobs:
   cleanup:
     name: 仅保留最新测试包

@@ -184,6 +184,28 @@ pub(crate) fn infer_link_write_kind(src_link: &Path) -> Result<LinkWriteKind, Sy
     }
 }
 
+pub(crate) fn infer_repoint_write_kind(
+    src_link: &Path,
+    target: &Path,
+) -> Result<LinkWriteKind, SymmError> {
+    let original = infer_link_write_kind(src_link)?;
+    if original == LinkWriteKind::Junction {
+        return Ok(LinkWriteKind::Junction);
+    }
+    Ok(link_write_kind_for_symlink_target(target))
+}
+
+fn link_write_kind_for_symlink_target(target: &Path) -> LinkWriteKind {
+    if fs::metadata(target)
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false)
+    {
+        LinkWriteKind::DirSymlink
+    } else {
+        LinkWriteKind::FileSymlink
+    }
+}
+
 pub(crate) fn write_link_kind_direct(
     kind: LinkWriteKind,
     target: &Path,

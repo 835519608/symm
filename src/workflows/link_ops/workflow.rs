@@ -132,19 +132,9 @@ fn execute_operation<W: Write>(
     let mut reporter = MigrationProgressReporter::new_with_mode(writer, progress_mode);
     let (target_norm, link_kind) =
         apply_filesystem_change(&mut reporter, decisions, &link_norm, link_path, change)?;
-    if let Err(err) = reporter.handle_workflow_event(WorkflowProgressEvent::PersistingDb {
+    let _ = reporter.handle_workflow_event(WorkflowProgressEvent::PersistingDb {
         link: link_norm.to_string(),
-    }) {
-        if applies_filesystem_change {
-            return Err(filesystem_applied_but_db_failed(
-                operation,
-                &link_norm,
-                &target_norm,
-                err,
-            ));
-        }
-        return Err(err);
-    }
+    });
     let persist_result = persist_record(
         conn,
         &mut reporter,
@@ -369,17 +359,20 @@ fn apply_filesystem_change<W: Write>(
             ensure_target_parent_dir(&target)?;
             ensure_target_missing_for_adopt(&target)?;
             migrate::migrate_path(link_path, &target, &mut |event| {
-                reporter.handle_migration_event(event)
+                let _ = reporter.handle_migration_event(event);
+                Ok(())
             })
             .map_err(|err| match err {
-                SymmError::EntityCopiedButSourceCleanupFailed { .. } => err,
+                SymmError::EntityCopiedButSourceCleanupFailed { .. }
+                | SymmError::EntityMovedButPostMoveFailed { .. } => err,
                 other => SymmError::IoError {
                     message: format!("接管失败：无法把 link 实体迁到 target：{other}"),
                 },
             })?;
             let target_norm = runtime_paths::normalize_target_known_exists(&target)?;
-            let link_kind = create_managed_link(reporter, link_path, link_norm, &target_norm)
-                .map_err(|err| SymmError::EntityMigratedButLinkCreateFailed {
+            let link_kind =
+                create_managed_link_after_migration(reporter, link_path, link_norm, &target_norm)
+                    .map_err(|err| SymmError::EntityMigratedButLinkCreateFailed {
                     link_path: link_norm.to_string(),
                     target_path: target_norm.clone(),
                     message: err.to_string(),
@@ -544,6 +537,19 @@ fn create_managed_link<W: Write>(
     symlink::create_link(Path::new(target_norm), link_path)
 }
 
+fn create_managed_link_after_migration<W: Write>(
+    reporter: &mut MigrationProgressReporter<'_, W>,
+    link_path: &Path,
+    link_norm: &str,
+    target_norm: &str,
+) -> Result<LinkKind, SymmError> {
+    let _ = reporter.handle_workflow_event(WorkflowProgressEvent::CreatingLink {
+        link: link_norm.to_string(),
+        target: target_norm.to_string(),
+    });
+    symlink::create_link(Path::new(target_norm), link_path)
+}
+
 fn ensure_link_not_locked<W: Write>(
     reporter: &mut MigrationProgressReporter<'_, W>,
     decisions: &mut impl LinkOpDecisionProvider,
@@ -665,20 +671,21 @@ fn replace_link_via_temp(
     let old_target = fs::read_link(link).map_err(|e| SymmError::IoError {
         message: format!("改指向失败：无法读取旧 link 指向：{e}"),
     })?;
-    let spec = symlink::capture_recreate_spec(link)?;
+    let old_spec = symlink::capture_recreate_spec(link)?;
+    let new_spec = symlink::capture_repoint_spec(link, target)?;
     let temp = unique_temp_link_path(link);
-    symlink::write_symlink_from_spec(spec, &temp, target)?;
+    symlink::write_symlink_from_spec(new_spec, &temp, target)?;
     if let Err(err) = remove_expected_link_for_point(link, expected_kind, &old_target) {
         let _ = symlink::unlink(&temp);
         return Err(err);
     }
-    if let Err(err) = symlink::write_symlink_from_spec(spec, link, target) {
+    if let Err(err) = symlink::write_symlink_from_spec(new_spec, link, target) {
         return finish_point_write_failure(
             link,
             link_norm,
             target_norm,
             &temp,
-            spec,
+            old_spec,
             &old_target,
             err,
         );
@@ -1051,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn output_failure_before_db_write_reports_half_applied_filesystem_change() {
+    fn persisting_message_failure_does_not_block_db_write_after_filesystem_change() {
         let temp = tempdir().expect("temp dir");
         let conn = Connection::open_in_memory().expect("open memory db");
         schema::migrate(&conn).expect("migrate");
@@ -1061,7 +1068,7 @@ mod tests {
 
         let mut decisions = TestDecisions;
         let mut writer = FailOnPersistingDbWriter;
-        let err = run_operation(
+        run_operation(
             &conn,
             LinkOperation::Add,
             &link,
@@ -1069,23 +1076,15 @@ mod tests {
             &mut decisions,
             &mut writer,
         )
-        .expect_err("writer failure before db should report half-applied filesystem");
-
-        assert!(matches!(
-            err,
-            SymmError::FilesystemAppliedButDbFailed { ref message, .. }
-                if message.contains("writer failed before db")
-        ));
+        .expect("persisting progress failure should not block db write");
         assert_eq!(
             std::fs::read_to_string(&link).expect("read through created link"),
             "payload"
         );
-        assert!(
-            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-                .expect("query link")
-                .is_none(),
-            "db record should not exist when persisting output failed before upsert"
-        );
+        let stored = link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
+            .expect("query link")
+            .expect("db record should exist");
+        assert_eq!(stored.name, "db-fail");
     }
 
     #[test]

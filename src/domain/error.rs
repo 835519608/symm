@@ -54,6 +54,14 @@ pub enum SymmError {
         message: String,
     },
     #[error(
+        "实体已移动到 target 但迁移后整理失败：source={source_path}, target={target_path}；链接记录尚未写入；{message}"
+    )]
+    EntityMovedButPostMoveFailed {
+        source_path: String,
+        target_path: String,
+        message: String,
+    },
+    #[error(
         "实体已复制到 target 但源路径清理失败：source={source_path}, target={target_path}；{message}"
     )]
     EntityCopiedButSourceCleanupFailed {
@@ -88,6 +96,7 @@ impl SymmError {
             SymmError::EntityMigratedButLinkCreateFailed { .. } => {
                 "entity_migrated_but_link_create_failed"
             }
+            SymmError::EntityMovedButPostMoveFailed { .. } => "entity_moved_but_post_move_failed",
             SymmError::EntityCopiedButSourceCleanupFailed { .. } => {
                 "entity_copied_but_source_cleanup_failed"
             }

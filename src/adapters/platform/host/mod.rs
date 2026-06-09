@@ -45,5 +45,5 @@ pub fn elevated_create_link_entry(
 #[cfg(windows)]
 pub(crate) use windows::{
     LinkWriteKind, create_link_direct, infer_link_kind_after_elevated, infer_link_write_kind,
-    needs_link_elevation, write_link_kind_direct, write_symlink_direct,
+    infer_repoint_write_kind, needs_link_elevation, write_link_kind_direct, write_symlink_direct,
 };
