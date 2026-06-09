@@ -266,7 +266,7 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     fn fast_move_rebase_failure_reports_half_moved_entity() {
         let temp = tempdir().expect("temp dir");
