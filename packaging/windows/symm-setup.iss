@@ -1,18 +1,18 @@
 ; symm Windows 便携安装包：可选目录、解压式释放文件，不写入注册表。
 ; 目录布局：根目录 symm.exe（GUI）；CLI 在 cli\symm-cli.exe；data\ 为库目录。
-; CI：ISCC /DAppVersion=<semver> packaging\windows\symm-setup.iss
+; CI：ISCC /DAppVersion=<semver> /DBuildDir=<release-dir> /DMyOutputBase=<output-base> packaging\windows\symm-setup.iss
 
 #ifndef AppVersion
-#define AppVersion "0.1.0"
+#error AppVersion must be passed by CI/release packaging
 #endif
 
 #ifndef BuildDir
-#define BuildDir "..\..\target\release"
+#error BuildDir must be passed by CI/release packaging
 #endif
 #define MyAppName "symm"
 #define MyAppPublisher "symm"
 #ifndef MyOutputBase
-#define MyOutputBase "symm-setup-windows-x64"
+#error MyOutputBase must be passed by CI/release packaging
 #endif
 
 [Setup]
