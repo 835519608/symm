@@ -1802,14 +1802,32 @@ fn restore_on_broken_fails_and_keeps_record() {
 
 #[cfg(unix)]
 #[test]
-fn restore_failure_after_unlink_keeps_record_and_reports_retry_boundary() {
+fn restore_cleanup_failure_removes_record_and_warns_about_old_target() {
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("temp dir");
     let symm_home = temp.path().join("symm_home");
-    let data_root = temp.path().join("data");
-    let target_dir = data_root.join("target-dir");
-    let link_dir = data_root.join("link-dir");
+    let _link_temp;
+    let link_root = {
+        #[cfg(target_os = "linux")]
+        {
+            let shm = Path::new("/dev/shm");
+            if !shm.is_dir() {
+                eprintln!("skip: /dev/shm is required to exercise cross-volume cleanup failure");
+                return;
+            }
+            _link_temp = Some(tempfile::tempdir_in(shm).expect("temp dir in shm"));
+            _link_temp.as_ref().expect("link temp").path().join("data")
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            _link_temp = None::<tempfile::TempDir>;
+            temp.path().join("link-data")
+        }
+    };
+    let target_root = temp.path().join("target-data");
+    let target_dir = target_root.join("target-dir");
+    let link_dir = link_root.join("link-dir");
     fs::create_dir_all(&target_dir).expect("create target dir");
     fs::create_dir_all(&link_dir).expect("create link dir");
 
@@ -1835,40 +1853,23 @@ fn restore_failure_after_unlink_keeps_record_and_reports_retry_boundary() {
         .env("SYMM_HOME", &symm_home)
         .args(["restore", "retry-restore"])
         .assert()
-        .failure()
-        .stderr(contains("\"code\": \"filesystem_applied_but_record_kept\""))
-        .stderr(contains("link 已移除"))
-        .stderr(contains("可修复原因后重试 restore"));
+        .success()
+        .stdout(contains(
+            "提示：restore 已把实体恢复到 link 路径，但旧 target 清理失败",
+        ))
+        .stdout(contains("已恢复实体位置：retry-restore"));
 
     fs::set_permissions(&target_dir, fs::Permissions::from_mode(original_mode))
         .expect("restore target dir permissions");
-
-    assert!(
-        fs::symlink_metadata(&link).is_err(),
-        "link should stay removed after post-unlink restore failure"
-    );
-    assert!(target.exists(), "target should remain for retry");
-
-    cmd()
-        .env("SYMM_HOME", &symm_home)
-        .args(["ls"])
-        .assert()
-        .success()
-        .stdout(contains("retry-restore"))
-        .stdout(contains("链接没了"));
-
-    cmd()
-        .env("SYMM_HOME", &symm_home)
-        .args(["restore", "retry-restore"])
-        .assert()
-        .success()
-        .stdout(contains("已恢复实体位置：retry-restore"));
 
     assert_eq!(
         fs::read_to_string(&link).expect("read restored link path entity"),
         "payload"
     );
-    assert!(!target.exists(), "target should be moved back to link path");
+    assert!(
+        target.exists(),
+        "target cleanup failure should leave old target for manual cleanup"
+    );
 
     cmd()
         .env("SYMM_HOME", &symm_home)
