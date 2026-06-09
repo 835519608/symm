@@ -532,15 +532,13 @@ fn ensure_restore_link_still_matches_record(
     link: &Path,
     target: &Path,
 ) -> Result<(), SymmError> {
-    match symlink::inspect_link_path(link)? {
-        symlink::LinkPathState::Link { kind } if kind == record.link_kind => {
-            if symlink::link_points_to(link, target)? {
-                return Ok(());
-            }
-        }
-        _ => {}
+    let symlink::LinkPathState::Link { kind } = symlink::inspect_link_path(link)? else {
+        return Err(restore_link_state_changed(record));
+    };
+    if kind != record.link_kind || !symlink::link_points_to(link, target)? {
+        return Err(restore_link_state_changed(record));
     }
-    Err(restore_link_state_changed(record))
+    Ok(())
 }
 
 fn ensure_restore_link_still_missing(record: &LinkRecord, link: &Path) -> Result<(), SymmError> {
