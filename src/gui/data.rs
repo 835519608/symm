@@ -120,19 +120,26 @@ pub fn apply_link_op(
     target: &Path,
     name: &str,
     lock: LinkOpLockPolicy,
-    unlock_confirmed: bool,
+    confirmed_lock_procs: Option<Vec<ProcInfo>>,
 ) -> Result<String, GuiLinkOpError> {
     let conn = link_store::open_at(data_dir).map_err(GuiLinkOpError::Workflow)?;
-    if lock == LinkOpLockPolicy::Unlock && !unlock_confirmed {
+    if lock == LinkOpLockPolicy::Unlock {
         let procs = locking_processes_for_confirmation(link)?;
-        if !procs.is_empty() {
-            return Err(GuiLinkOpError::LockConfirmationRequired { procs });
+        match confirmed_lock_procs.as_deref() {
+            _ if procs.is_empty() => {}
+            Some(confirmed)
+                if crate::gui::state::process_fingerprints(confirmed)
+                    == crate::gui::state::process_fingerprints(&procs) => {}
+            _ => {
+                return Err(GuiLinkOpError::LockConfirmationRequired { procs });
+            }
         }
     }
     let mut writer = VecWriter(Vec::new());
     let mut decisions = GuiLinkOpDecisions {
         name,
-        lock: confirmed_lock_policy(lock, unlock_confirmed),
+        lock: confirmed_lock_policy(lock, confirmed_lock_procs.is_some()),
+        confirmed_lock_procs: confirmed_lock_procs.as_deref(),
     };
     crate::workflows::link_ops::workflow::run_operation_buffered(
         &conn,
@@ -205,6 +212,7 @@ pub fn remove_links(
 struct GuiLinkOpDecisions<'a> {
     name: &'a str,
     lock: LinkOpLockPolicy,
+    confirmed_lock_procs: Option<&'a [ProcInfo]>,
 }
 
 impl LinkOpDecisionProvider for GuiLinkOpDecisions<'_> {
@@ -219,8 +227,18 @@ impl LinkOpDecisionProvider for GuiLinkOpDecisions<'_> {
 
     fn lock_choice(
         &mut self,
-        _procs: &[crate::adapters::lock::ProcInfo],
+        procs: &[crate::adapters::lock::ProcInfo],
     ) -> Result<LinkOpLockChoice, SymmError> {
+        if self.lock == LinkOpLockPolicy::Unlock
+            && self.confirmed_lock_procs.is_some_and(|confirmed| {
+                crate::gui::state::process_fingerprints(confirmed)
+                    != crate::gui::state::process_fingerprints(procs)
+            })
+        {
+            return Err(SymmError::InvalidArgument {
+                message: "占用进程列表已变化，请重新确认后再结束进程".to_string(),
+            });
+        }
         Ok(match self.lock {
             LinkOpLockPolicy::Unlock => LinkOpLockChoice::Unlock,
             LinkOpLockPolicy::Cancel => LinkOpLockChoice::Cancel,
@@ -347,6 +365,7 @@ mod tests {
         let mut decisions = GuiLinkOpDecisions {
             name: "",
             lock: LinkOpLockPolicy::Cancel,
+            confirmed_lock_procs: None,
         };
         let procs = [crate::adapters::lock::ProcInfo {
             pid: 42,
@@ -356,6 +375,32 @@ mod tests {
         let choice = decisions.lock_choice(&procs).expect("lock choice");
 
         assert_eq!(choice, LinkOpLockChoice::Cancel);
+    }
+
+    #[test]
+    fn gui_lock_decisions_reject_changed_process_list_after_confirmation() {
+        let confirmed = [crate::adapters::lock::ProcInfo {
+            pid: 42,
+            display: "old.exe".to_string(),
+        }];
+        let current = [crate::adapters::lock::ProcInfo {
+            pid: 43,
+            display: "new.exe".to_string(),
+        }];
+        let mut decisions = GuiLinkOpDecisions {
+            name: "",
+            lock: LinkOpLockPolicy::Unlock,
+            confirmed_lock_procs: Some(&confirmed),
+        };
+
+        let err = decisions
+            .lock_choice(&current)
+            .expect_err("changed process list should require a fresh confirmation");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("占用进程列表已变化")),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

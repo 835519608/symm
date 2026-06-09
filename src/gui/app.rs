@@ -534,9 +534,13 @@ impl SymmApp {
         let name = form.name.trim().to_string();
         let operation = form.operation;
         let lock = form.lock_policy;
-        let unlock_confirmed = form.lock_confirmation.as_ref().is_some_and(|confirmation| {
-            confirmation.matches(operation, &form.link_path, &form.target_path, &name)
-        });
+        let confirmed_lock_procs = form
+            .lock_confirmation
+            .as_ref()
+            .filter(|confirmation| {
+                confirmation.matches(operation, &form.link_path, &form.target_path, &name)
+            })
+            .map(|confirmation| confirmation.procs().to_vec());
         let data_dir = PathBuf::from(self.state.data_dir.trim());
         self.spawn_task(ctx, move || {
             GuiTaskResult::LinkOp(crate::gui::data::apply_link_op(
@@ -546,7 +550,7 @@ impl SymmApp {
                 &target,
                 &name,
                 lock,
-                unlock_confirmed,
+                confirmed_lock_procs,
             ))
         });
     }
@@ -575,6 +579,7 @@ impl SymmApp {
                     form.link_path.clone(),
                     form.target_path.clone(),
                     form.name.trim().to_string(),
+                    procs.clone(),
                 ));
                 form.error = Some(t.lock_unlock_confirmation_required(&procs));
             }
@@ -842,6 +847,16 @@ mod tests {
         }));
 
         assert!(app.state.link_op_form.lock_confirmation.is_some());
+        assert_eq!(
+            app.state
+                .link_op_form
+                .lock_confirmation
+                .as_ref()
+                .expect("confirmation")
+                .procs()[0]
+                .pid,
+            42
+        );
         let err = app
             .state
             .link_op_form
@@ -868,6 +883,10 @@ mod tests {
             "/tmp/link".to_string(),
             "/tmp/target".to_string(),
             "demo".to_string(),
+            vec![crate::adapters::lock::ProcInfo {
+                pid: 42,
+                display: "demo.exe".to_string(),
+            }],
         ));
 
         app.finish_link_op(Ok("正在保存记录：/tmp/link\n已接管：/tmp/link".to_string()));

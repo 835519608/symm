@@ -14,4 +14,6 @@ runs:
       run: |
         set -euo pipefail
         perl -i -pe 's/^version = .*/version = "${{ inputs.semver }}"/' Cargo.toml
+        SEMVER="${{ inputs.semver }}" perl -0pi -e 's/(^name = "symm"\nversion = ")[^"]+(")/${1}$ENV{SEMVER}$2/m' Cargo.lock
         grep '^version' Cargo.toml
+        awk 'prev == "name = \"symm\"" && /^version = / {print; exit} {prev = $0}' Cargo.lock

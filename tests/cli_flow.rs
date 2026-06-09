@@ -1888,6 +1888,80 @@ fn restore_on_broken_fails_and_keeps_record() {
         .stdout(contains("broken-restore"));
 }
 
+#[test]
+fn restore_when_link_and_target_are_missing_fails_before_half_applied_report() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_missing_restore.txt");
+    let link = data_root.join("link_missing_restore.txt");
+    fs::write(&target, "payload").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_LINK_OP_NAME", "missing-restore")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+    fs::remove_file(&link).expect("remove managed link");
+    fs::remove_file(&target).expect("remove target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["restore", "missing-restore"])
+        .assert()
+        .failure()
+        .stderr(contains("\"code\": \"target_not_found\""))
+        .stderr(predicates::str::contains("filesystem_applied_but_record_kept").not());
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls"])
+        .assert()
+        .success()
+        .stdout(contains("missing-restore"));
+}
+
+#[test]
+fn restore_rejects_link_inside_target_without_unlinking() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    let target = data_root.join("target_nested_restore");
+    let link = target.join("nested-link");
+    fs::create_dir_all(&target).expect("create target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_LINK_OP_NAME", "nested-restore")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["restore", "nested-restore"])
+        .assert()
+        .failure()
+        .stderr(contains("\"code\": \"invalid_argument\""))
+        .stderr(contains("link 路径位于 target 目录内部"));
+
+    assert!(
+        fs::symlink_metadata(&link).is_ok(),
+        "restore should reject nested link before unlinking it"
+    );
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls"])
+        .assert()
+        .success()
+        .stdout(contains("nested-restore"));
+}
+
 #[cfg(unix)]
 #[test]
 fn restore_cleanup_failure_removes_record_and_warns_about_old_target() {
@@ -1942,9 +2016,9 @@ fn restore_cleanup_failure_removes_record_and_warns_about_old_target() {
         .args(["restore", "retry-restore"])
         .assert()
         .success()
-        .stdout(contains(
-            "提示：restore 已把实体恢复到 link 路径，但旧 target 清理失败",
-        ))
+        .stdout(contains("提示：restore 已把实体恢复到 link 路径"))
+        .stdout(contains("请手动检查并清理"))
+        .stdout(contains(target.to_string_lossy().as_ref()))
         .stdout(contains("已恢复实体位置：retry-restore"));
 
     fs::set_permissions(&target_dir, fs::Permissions::from_mode(original_mode))

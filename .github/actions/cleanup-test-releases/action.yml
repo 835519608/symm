@@ -21,6 +21,7 @@ runs:
         KEEP_TAG: ${{ inputs.keep-tag }}
       run: |
         set -euo pipefail
+        managed_test_tag_regex='(^v[0-9]+\.[0-9]+\.[0-9]+-test($|-(windows|win|linux|macos|mac)(-|$)))|(^test-run-[0-9]+$)'
 
         if [ -n "${KEEP_TAG}" ]; then
           if ! keep_json="$(gh release view "${KEEP_TAG}" --json tagName,isPrerelease)"; then
@@ -29,7 +30,7 @@ runs:
           fi
           keep_tag_name="$(jq -r '.tagName' <<< "${keep_json}")"
           keep_is_prerelease="$(jq -r '.isPrerelease' <<< "${keep_json}")"
-          if [ "${keep_is_prerelease}" != "true" ] || ! [[ "${keep_tag_name}" =~ -test|^test-run- ]]; then
+          if [ "${keep_is_prerelease}" != "true" ] || ! [[ "${keep_tag_name}" =~ $managed_test_tag_regex ]]; then
             echo "::error::指定保留的测试 Release 不存在或不是 Pre-release：${KEEP_TAG}"
             exit 1
           fi
@@ -37,7 +38,7 @@ runs:
           echo "保留本次测试包：${keep_tag}"
         else
           keep_tag="$(gh api "repos/${GH_REPO}/releases" --paginate \
-            --jq '.[] | select(.prerelease) | select(.tag_name | test("-test|^test-run-")) | [.published_at, .tag_name] | @tsv' \
+            | jq -r --arg re "${managed_test_tag_regex}" '.[] | select(.prerelease) | select(.tag_name | test($re)) | [.published_at, .tag_name] | @tsv' \
             | sort -r \
             | awk -F '\t' 'NR == 1 {print $2}')"
           if [ -z "${keep_tag}" ]; then
@@ -49,7 +50,7 @@ runs:
 
         mapfile -t to_delete < <(
           gh api "repos/${GH_REPO}/releases" --paginate \
-            --jq '.[] | select(.prerelease) | select(.tag_name | test("-test|^test-run-")) | [.published_at, .tag_name] | @tsv' \
+            | jq -r --arg re "${managed_test_tag_regex}" '.[] | select(.prerelease) | select(.tag_name | test($re)) | [.published_at, .tag_name] | @tsv' \
             | sort -r \
             | awk -F '\t' -v keep="${keep_tag}" '$2 != keep {print $2}'
         )
@@ -65,7 +66,7 @@ runs:
 
         mapfile -t stale_tags < <(
           gh api "repos/${GH_REPO}/git/matching-refs/tags" --paginate \
-            --jq '.[]?.ref | sub("^refs/tags/"; "") | select(test("-test|^test-run-"))' \
+            | jq -r --arg re "${managed_test_tag_regex}" '.[]?.ref | sub("^refs/tags/"; "") | select(test($re))' \
             | sort -u
         )
 

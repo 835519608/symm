@@ -45,7 +45,7 @@ runs:
         if ($target) {
           rustup target add $target
         }
-        $args = @("build", "--release", "--features", "gui", "--bin", "symm", "--bin", "symm-cli")
+        $args = @("build", "--locked", "--release", "--features", "gui", "--bin", "symm", "--bin", "symm-cli")
         if ($target) {
           $args += @("--target", $target)
         }

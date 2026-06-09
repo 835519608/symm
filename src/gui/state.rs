@@ -1,3 +1,4 @@
+use crate::adapters::lock::ProcInfo;
 use crate::domain::gui_settings::{ColorScheme, FONT_SIZE_PT_DEFAULT, GuiSettings, Locale};
 use crate::domain::model::{LinkKind, LinkView};
 use crate::gui::i18n::GuiTexts;
@@ -36,6 +37,7 @@ pub struct LinkOpLockConfirmation {
     link_path: String,
     target_path: String,
     name: String,
+    procs: Vec<ProcInfo>,
 }
 
 impl LinkOpLockConfirmation {
@@ -44,12 +46,14 @@ impl LinkOpLockConfirmation {
         link_path: String,
         target_path: String,
         name: String,
+        procs: Vec<ProcInfo>,
     ) -> Self {
         Self {
             operation,
             link_path,
             target_path,
             name,
+            procs,
         }
     }
 
@@ -65,6 +69,19 @@ impl LinkOpLockConfirmation {
             && self.target_path == target_path
             && self.name == name
     }
+
+    pub fn procs(&self) -> &[ProcInfo] {
+        &self.procs
+    }
+}
+
+pub fn process_fingerprints(procs: &[ProcInfo]) -> Vec<(u32, &str)> {
+    let mut values = procs
+        .iter()
+        .map(|proc| (proc.pid, proc.display.as_str()))
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

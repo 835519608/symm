@@ -37,6 +37,7 @@ where
         target: dst.display().to_string(),
     })?;
     ensure_destination_missing(dst)?;
+    ensure_destination_not_inside_source(src, dst)?;
 
     if can_use_fast_move(src, dst)? {
         reporter(MigrationEvent::FastMove {
@@ -91,6 +92,22 @@ fn ensure_destination_missing(dst: &Path) -> Result<(), SymmError> {
     }
     Err(SymmError::InvalidArgument {
         message: format!("迁移失败：目标路径已存在：{}", dst.display()),
+    })
+}
+
+fn ensure_destination_not_inside_source(src: &Path, dst: &Path) -> Result<(), SymmError> {
+    let meta = fs::symlink_metadata(src).map_err(|e| SymmError::IoError {
+        message: format!("无法读取迁移源路径元数据：{}：{e}", src.display()),
+    })?;
+    if !meta.is_dir() || dst == src || !dst.starts_with(src) {
+        return Ok(());
+    }
+    Err(SymmError::InvalidArgument {
+        message: format!(
+            "迁移失败：目标路径不能位于源目录内部：{} -> {}",
+            src.display(),
+            dst.display()
+        ),
     })
 }
 
@@ -230,6 +247,25 @@ mod tests {
             fs::read_to_string(&dst).expect("read destination"),
             "destination"
         );
+    }
+
+    #[test]
+    fn migrate_path_rejects_directory_destination_inside_source() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src_dir");
+        let dst = src.join("nested").join("dst_dir");
+        fs::create_dir_all(&src).expect("create source");
+        fs::write(src.join("payload.txt"), "payload").expect("write source");
+
+        let err =
+            migrate_path(&src, &dst, &mut |_event| Ok(())).expect_err("dst inside src should fail");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("目标路径不能位于源目录内部")),
+            "unexpected error: {err:?}"
+        );
+        assert!(src.exists(), "source should remain in place");
+        assert!(!dst.exists(), "destination must not be created");
     }
 
     #[test]

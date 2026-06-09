@@ -84,7 +84,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
         run: |
-          args=(clippy --all-targets --all-features)
+          args=(clippy --locked --all-targets --all-features)
           if [ -n "${BUILD_TARGET}" ]; then
             args+=(--target "${BUILD_TARGET}")
           fi
@@ -96,7 +96,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
         run: |
-          args=(test --all-targets)
+          args=(test --locked --all-targets)
           if [ -n "${BUILD_TARGET}" ]; then
             args+=(--target "${BUILD_TARGET}")
           fi
@@ -107,7 +107,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
         run: |
-          args=(test --features gui --lib)
+          args=(test --locked --features gui --lib)
           if [ -n "${BUILD_TARGET}" ]; then
             args+=(--target "${BUILD_TARGET}")
           fi

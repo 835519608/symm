@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use clap::error::ErrorKind;
-use symm::ui::cli::{Cli, Commands};
+use symm::ui::cli::Cli;
 
 fn main() -> Result<()> {
     if let Err(err) = run() {
@@ -38,40 +38,11 @@ fn run() -> Result<(), symm::domain::error::SymmError> {
             message: "未提供命令，请使用 --help 查看帮助".to_string(),
         })?;
 
-    match command {
-        Commands::ElevatedListLocks {
-            out,
-            path,
-            elevated_log,
-            elevated_progress,
-        } => match symm::adapters::lock::elevated_list_locks_entry(
-            &path,
-            &out,
-            elevated_progress.as_deref(),
-        ) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                if let Some(log) = elevated_log {
-                    let _ = std::fs::write(&log, err.to_string());
-                }
-                Err(err)
-            }
-        },
-        Commands::ElevatedKill { pids } => symm::adapters::lock::elevated_kill_entry(&pids),
-        #[cfg(windows)]
-        Commands::ElevatedCreateLink {
-            link_kind,
-            target,
-            link,
-        } => symm::adapters::platform::host::elevated_create_link_entry(
-            &target,
-            &link,
-            link_kind.as_deref(),
-        ),
-        other => {
-            let stdout = std::io::stdout();
-            let mut lock = stdout.lock();
-            symm::app::dispatch::execute(other, &mut lock)
-        }
+    if symm::app::dispatch::is_elevated_command(&command) {
+        return symm::app::dispatch::execute_elevated(command);
     }
+
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    symm::app::dispatch::execute(command, &mut lock)
 }

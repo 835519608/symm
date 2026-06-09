@@ -1,9 +1,27 @@
 use crate::domain::error::SymmError;
-use crate::ui::cli::Commands;
+use crate::ui::cli::{Cli, Commands};
 use crate::workflows;
 use crate::workflows::link_ops::workflow::LinkOperation;
+use clap::Parser;
 use std::io::Write;
 use std::path::PathBuf;
+
+pub fn try_execute_elevated_from_args() -> Result<bool, SymmError> {
+    let Some(first_arg) = std::env::args_os().nth(1) else {
+        return Ok(false);
+    };
+    if !first_arg.to_string_lossy().starts_with("__elevated-") {
+        return Ok(false);
+    }
+    let cli = Cli::try_parse().map_err(|err| SymmError::InvalidArgument {
+        message: err.to_string(),
+    })?;
+    let command = cli.command.ok_or_else(|| SymmError::InvalidArgument {
+        message: "提权子进程缺少命令".to_string(),
+    })?;
+    execute_elevated(command)?;
+    Ok(true)
+}
 
 pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmError> {
     match command {
@@ -26,6 +44,59 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
         Commands::ElevatedCreateLink { .. } => Err(SymmError::InvalidArgument {
             message: "内部提权子命令应由 CLI 入口直接处理".to_string(),
         }),
+    }
+}
+
+pub fn execute_elevated(command: Commands) -> Result<(), SymmError> {
+    match command {
+        Commands::ElevatedListLocks {
+            out,
+            path,
+            elevated_log,
+            elevated_progress,
+        } => match crate::adapters::lock::elevated_list_locks_entry(
+            &path,
+            &out,
+            elevated_progress.as_deref(),
+        ) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if let Some(log) = elevated_log {
+                    let _ = std::fs::write(&log, err.to_string());
+                }
+                Err(err)
+            }
+        },
+        Commands::ElevatedKill { pids } => crate::adapters::lock::elevated_kill_entry(&pids),
+        #[cfg(windows)]
+        Commands::ElevatedCreateLink {
+            link_kind,
+            target,
+            link,
+        } => crate::adapters::platform::host::elevated_create_link_entry(
+            &target,
+            &link,
+            link_kind.as_deref(),
+        ),
+        _ => Err(SymmError::InvalidArgument {
+            message: "非提权内部命令不能由提权入口执行".to_string(),
+        }),
+    }
+}
+
+pub fn is_elevated_command(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::ElevatedListLocks { .. } | Commands::ElevatedKill { .. }
+    ) || {
+        #[cfg(windows)]
+        {
+            matches!(command, Commands::ElevatedCreateLink { .. })
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 }
 

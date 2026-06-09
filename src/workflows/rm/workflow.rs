@@ -443,6 +443,7 @@ fn restore_target_to_link<W: Write>(
 ) -> Result<(), RestoreFailure> {
     let link = Path::new(&record.link_path);
     let target = Path::new(&record.target_path);
+    ensure_restore_target_ready(record, link, target).map_err(RestoreFailure::LinkUnchanged)?;
     remove_current_link_for_restore(record, link, target, planned_status)
         .map_err(RestoreFailure::LinkUnchanged)?;
     let mut reporter = MigrationProgressReporter::new_with_mode(writer, progress_mode);
@@ -460,13 +461,14 @@ fn finish_restore_migration_error<W: Write>(
 ) -> Result<(), RestoreFailure> {
     match err {
         SymmError::EntityCopiedButSourceCleanupFailed {
+            source_path,
             target_path,
             message,
             ..
         } => {
             writeln!(
                 writer,
-                "提示：restore 已把实体恢复到 link 路径，但旧 target 清理失败：{message}；请手动检查并清理 {target_path}"
+                "提示：restore 已把实体恢复到 link 路径 {target_path}，但旧 target 清理失败：{message}；请手动检查并清理 {source_path}"
             )
             .map_err(|e| {
                 RestoreFailure::LinkRemoved(filesystem_applied_but_record_kept(
@@ -506,6 +508,27 @@ fn filesystem_applied_but_record_kept(record: &LinkRecord, err: SymmError) -> Sy
             "移回目标到链接位置失败：link 已移除，数据库记录已保留，可修复原因后重试 restore：{err}"
         ),
     }
+}
+
+fn ensure_restore_target_ready(
+    record: &LinkRecord,
+    link: &Path,
+    target: &Path,
+) -> Result<(), SymmError> {
+    if !crate::adapters::paths::presence::target_exists(target)? {
+        return Err(SymmError::TargetNotFound {
+            path: record.target_path.clone(),
+        });
+    }
+    if link != target && link.starts_with(target) {
+        return Err(SymmError::InvalidArgument {
+            message: format!(
+                "link 路径位于 target 目录内部，无法安全 restore：{} -> {}",
+                record.target_path, record.link_path
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn remove_current_link_for_restore(
@@ -757,6 +780,61 @@ mod tests {
     }
 
     #[test]
+    fn restore_refuses_missing_target_before_unlinking_current_link() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("missing-target.txt");
+        let live_target = temp.path().join("live-target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&live_target, "live").expect("write live target");
+        symlink::create_link(&live_target, &link).expect("create current link");
+        let record = record("restore-missing-target", &link, &target);
+
+        let err = restore_target_to_link(
+            &mut Vec::new(),
+            &record,
+            LinkStatus::Missing,
+            ProgressSinkMode::Terminal,
+        )
+        .expect_err("missing target should fail before migration");
+
+        assert!(matches!(
+            err,
+            RestoreFailure::LinkUnchanged(SymmError::TargetNotFound { .. })
+        ));
+        assert!(
+            fs::symlink_metadata(&link).is_ok(),
+            "restore should not unlink before target existence is confirmed"
+        );
+    }
+
+    #[test]
+    fn restore_refuses_link_inside_target_before_unlinking_current_link() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target-dir");
+        let link = target.join("managed-link");
+        fs::create_dir_all(&target).expect("create target");
+        symlink::create_link(&target, &link).expect("create nested link");
+        let record = record("restore-nested", &link, &target);
+
+        let err = restore_target_to_link(
+            &mut Vec::new(),
+            &record,
+            LinkStatus::Ok,
+            ProgressSinkMode::Terminal,
+        )
+        .expect_err("nested link should fail before unlink");
+
+        assert!(matches!(
+            err,
+            RestoreFailure::LinkUnchanged(SymmError::InvalidArgument { .. })
+        ));
+        assert!(
+            fs::symlink_metadata(&link).is_ok(),
+            "nested link should still exist after rejected restore"
+        );
+    }
+
+    #[test]
     fn restore_refuses_to_unlink_when_current_link_drifted_after_planned_ok() {
         let temp = tempdir().expect("temp dir");
         let target = temp.path().join("target.txt");
@@ -817,7 +895,12 @@ mod tests {
 
         let text = String::from_utf8(output).expect("utf8");
         assert!(text.contains("旧 target 清理失败"));
+        assert!(text.contains(&path_text(&target)));
         assert!(text.contains(&path_text(&link)));
+        assert!(
+            text.find(&format!("清理 {}", path_text(&target))).is_some(),
+            "cleanup instruction should point at old target, not restored link: {text}"
+        );
     }
 
     #[test]
