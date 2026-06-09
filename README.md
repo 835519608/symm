@@ -30,7 +30,7 @@ symm 是一个跨平台软链接管理工具，包含桌面 GUI（`symm`）和�
 
 - Rust stable（推荐本地通过 `mise` 按 `.mise.toml` 管理）
 - Git
-- Windows 本地构建安装包时需要 MSVC 工具链；CI 里安装包由 Windows runner + Inno Setup 构建
+- Windows 安装包以 GitHub Actions 的 Windows runner + Inno Setup 构建结果为准；本地不提供 installer 构建入口
 
 首次构建 GUI 前需要下载内嵌中文字体：
 
@@ -69,7 +69,7 @@ mise run ci
 symm-cli add <link> <target>
 symm-cli adopt <link> <target>
 symm-cli point <link> <target>
-symm-cli ls [--status ok|broken|missing|stale|drift] [--json] [--limit N] [--offset N]
+symm-cli ls [--status ok|broken|missing|stale|drift|unknown] [--json] [--limit N] [--offset N]
 symm-cli show [序号或名称] [--json]
 symm-cli rm [序号或名称]...
 symm-cli restore [序号或名称]...
@@ -81,6 +81,7 @@ symm-cli restore [序号或名称]...
 - 非纯数字选择器按 `name` 查找。
 - `show` 省略选择器时进入交互选择。
 - `rm` / `restore` 可一次传多个选择器；省略时进入交互多选。
+- `ls` 表格默认每页 100 条；`--json` 默认返回全量数组，只有显式 `--limit` / `--offset` 时分页。
 
 示例：
 
@@ -99,10 +100,11 @@ symm-cli restore app-config
 | JSON / `--status` | 终端显示 | 含义 |
 |-------------------|----------|------|
 | `ok` | 正常 | 链接存在，目标存在，指向与数据库一致 |
-| `broken` | 目标没了 | 链接存在，但目标路径不存在 |
+| `broken` | 目标没了 | 链接仍指向数据库中的 target，但 target 路径不存在 |
 | `missing` | 链接没了 | 链接路径不存在 |
 | `stale` | 链接类型不符 | 链接路径存在，但不是数据库记录中的链接类型 |
-| `drift` | 指向不对 | 链接仍存在，但指向与数据库中的目标不一致 |
+| `drift` | 指向不对 | 链接仍存在，但已经指向数据库记录以外的位置 |
+| `unknown` | 未知 | 权限、I/O 或读取 link 指向失败，无法可靠判断状态 |
 
 | JSON 类型 | 终端显示 |
 |-----------|----------|
@@ -141,19 +143,21 @@ CLI 默认在需要决策时弹出终端交互菜单。下列变量用于跳过�
 | 变量 | 用途 |
 |------|------|
 | `SYMM_HOME` | 指定数据目录 |
-| `SYMM_ADD_NAME` | `add` / `adopt` / `point` 写库前指定记录名称 |
-| `SYMM_ADD_LOCK_CHOICE` | 链接操作遇到 link 路径被占用时选择是否解除占用 |
+| `SYMM_LINK_OP_LINK` | `add` / `adopt` / `point` 未传 link 位置参数时指定 link 路径 |
+| `SYMM_LINK_OP_TARGET` | `add` / `adopt` / `point` 未传 target 位置参数时指定 target 路径 |
+| `SYMM_LINK_OP_NAME` | `add` / `adopt` / `point` 写库前指定记录名称 |
+| `SYMM_LINK_OP_LOCK_CHOICE` | 链接操作遇到 link 路径被占用时选择是否解除占用 |
 | `SYMM_PERF_LOG` | 在 stderr 输出 workflow 耗时 |
 
-### `SYMM_ADD_NAME`
+### `SYMM_LINK_OP_NAME`
 
 ```bash
-SYMM_ADD_NAME=my-project symm-cli add ./link ./target
+SYMM_LINK_OP_NAME=my-project symm-cli add ./link ./target
 ```
 
 空名称允许多条；非空名称必须唯一。
 
-### `SYMM_ADD_LOCK_CHOICE`
+### `SYMM_LINK_OP_LOCK_CHOICE`
 
 | 取值 | 效果 |
 |------|------|
@@ -229,15 +233,15 @@ Windows 占用检测说明：
 
 | 场景 | 行为 |
 |------|------|
-| `link` 已是链接且 `target` 存在 | 删除当前 link，按新 target 类型重建链接并写库 |
+| `link` 已是链接且 `target` 存在 | 先创建临时 link 指向新 target，再替换当前 link 并写库 |
 | `link` 不是链接 | 报错 |
 | `target` 不存在 | 报错 |
 
-三个操作都会检查 link 路径占用，按 `SYMM_ADD_LOCK_CHOICE` 解除或取消；都会以 `link_path` upsert 数据库记录。
+三个操作都会先执行便宜 preflight；能在文件系统变更前发现的 name 冲突会直接失败，不创建 link、不迁移实体、不改指向。需要改动 link 路径时会检查占用，按 `SYMM_LINK_OP_LOCK_CHOICE` 解除或取消；最终都会以 `link_path` upsert 数据库记录。
 
 | 场景 | 行为 |
 |------|------|
-| 写库失败 | 可能已创建链接但没有记录，需要人工对齐 |
+| 写库失败 | 可能已经完成文件系统变更但没有记录，需要人工对齐 |
 
 ## `rm` / `restore` 流程
 
@@ -245,18 +249,22 @@ Windows 占用检测说明：
 
 | 状态 | 行为 |
 |------|------|
-| `ok` / `broken` / `drift` | 删除 link，删除数据库记录 |
+| `ok` / `broken` | 删除 link，删除数据库记录 |
 | `missing` | 只删除数据库记录 |
 | `stale` | 不碰 link 路径上的真实实体，只删除数据库记录 |
+| `drift` | 不碰当前 link，只删除数据库记录 |
+| `unknown` | 报错并保留记录，不把探测失败当作 missing |
 
 `restore` 把 target 迁回 link 路径，然后删除记录：
 
 | 状态 | 行为 |
 |------|------|
-| `ok` / `drift` | 删除当前 link，把记录里的 target 迁回 link，删除数据库记录 |
+| `ok` | 删除当前 link，把记录里的 target 迁回 link，删除数据库记录 |
 | `missing` | target 存在时仍尝试迁回 link，删除数据库记录 |
 | `broken` | 报错并保留记录 |
 | `stale` | 报错并保留记录，不覆盖 link 路径上的真实实体 |
+| `drift` | 报错并保留记录，不覆盖当前 link |
+| `unknown` | 报错并保留记录，不移动 target、不删除 link |
 
 `restore` 复用迁移能力；目录内部链接会保持为链接，指向被迁移目录内部的链接会 rebase 到新位置。
 
@@ -285,7 +293,7 @@ src/
     error.rs                     # SymmError
     gui_settings.rs              # GUI 偏好模型
   workflows/
-    add/                         # add / adopt / point 主流程、路径输入、占用 gate
+     link_ops/                    # add / adopt / point 主流程、路径输入、占用 gate
     rm/                          # rm / restore 主流程
     ls/                          # ls 输出流程
     show/                        # show 输出流程
