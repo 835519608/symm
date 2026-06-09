@@ -1,0 +1,60 @@
+name: Cleanup test releases
+description: Keep one test pre-release and delete older test releases with their tags.
+
+inputs:
+  github-token:
+    description: Token with contents:write permission.
+    required: true
+  keep-tag:
+    description: Optional test release tag to keep. Defaults to the newest test pre-release by publishedAt.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Cleanup test releases
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        KEEP_TAG: ${{ inputs.keep-tag }}
+      run: |
+        set -euo pipefail
+
+        selector='
+          [.[] | select(.isPrerelease) | select(.tagName | test("-test|^test-run-"))]
+        '
+
+        if [ -n "${KEEP_TAG}" ]; then
+          if ! gh release view "${KEEP_TAG}" --json tagName,isPrerelease \
+            --jq 'select(.isPrerelease) | .tagName' >/dev/null; then
+            echo "::error::指定保留的测试 Release 不存在或不是 Pre-release：${KEEP_TAG}"
+            exit 1
+          fi
+          keep_tag="${KEEP_TAG}"
+          echo "保留本次测试包：${keep_tag}"
+        else
+          keep_tag="$(gh release list --limit 200 --json tagName,isPrerelease,publishedAt \
+            --jq "${selector} | sort_by(.publishedAt) | reverse | .[0].tagName // empty")"
+          if [ -z "${keep_tag}" ]; then
+            echo "无测试 Pre-release，跳过"
+            exit 0
+          fi
+          echo "保留最新测试包：${keep_tag}"
+        fi
+
+        mapfile -t to_delete < <(
+          gh release list --limit 200 --json tagName,isPrerelease,publishedAt \
+            --jq "${selector} | sort_by(.publishedAt) | reverse | .[] | select(.tagName != \"${keep_tag}\") | .tagName"
+        )
+
+        if [ "${#to_delete[@]}" -eq 0 ]; then
+          echo "没有需要删除的旧测试包"
+          exit 0
+        fi
+
+        for tag in "${to_delete[@]}"; do
+          echo "删除旧测试包：${tag}"
+          gh release delete "${tag}" --yes --cleanup-tag
+        done

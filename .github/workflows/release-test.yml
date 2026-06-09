@@ -249,3 +249,9 @@ jobs:
           make_latest: false
           generate_release_notes: false
           fail_on_unmatched_files: true
+
+      - name: 清理旧测试 Release
+        uses: ./.github/actions/cleanup-test-releases
+        with:
+          github-token: ${{ github.token }}
+          keep-tag: ${{ needs.plan.outputs.release_tag }}
