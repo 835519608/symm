@@ -6,6 +6,7 @@ use crate::adapters::paths::{presence, remove};
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use std::fs;
+use std::io::ErrorKind;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -31,7 +32,12 @@ where
                 message: "迁移失败：目标目录已存在".to_string(), // keep
             });
         }
-        fs::create_dir_all(dst).map_err(|e| SymmError::IoError {
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
+                message: format!("无法创建目标父目录：{e}"),
+            })?;
+        }
+        fs::create_dir(dst).map_err(|e| SymmError::IoError {
             message: format!("无法创建目标目录：{e}"),
         })?;
 
@@ -70,8 +76,10 @@ where
             })
         },
     ) {
-        let _ = remove::remove_any(dst);
-        return Err(err);
+        if err.dst_created {
+            let _ = remove::remove_any(dst);
+        }
+        return Err(err.err);
     }
     Ok(())
 }
@@ -105,6 +113,27 @@ where
     Ok(())
 }
 
+pub(crate) struct CopyFileFailure {
+    pub(crate) err: SymmError,
+    pub(crate) dst_created: bool,
+}
+
+impl CopyFileFailure {
+    fn before_create(err: SymmError) -> Self {
+        Self {
+            err,
+            dst_created: false,
+        }
+    }
+
+    fn after_create(err: SymmError) -> Self {
+        Self {
+            err,
+            dst_created: true,
+        }
+    }
+}
+
 pub(crate) fn copy_regular_file_with_progress<F>(
     src: &Path,
     dst: &Path,
@@ -112,23 +141,40 @@ pub(crate) fn copy_regular_file_with_progress<F>(
     current_item: Option<Arc<str>>,
     buf: &mut [u8],
     reporter: &mut F,
-) -> Result<u64, SymmError>
+) -> Result<u64, CopyFileFailure>
 where
     F: FnMut(u64, Option<Arc<str>>) -> Result<(), SymmError>,
 {
-    let mut reader = fs::File::open(src).map_err(ioe)?;
-    let mut writer = fs::File::create(dst).map_err(ioe)?;
+    let mut reader = fs::File::open(src).map_err(|err| CopyFileFailure::before_create(ioe(err)))?;
+    let mut writer = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dst)
+        .map_err(|err| {
+            if err.kind() == ErrorKind::AlreadyExists {
+                return CopyFileFailure::before_create(SymmError::InvalidArgument {
+                    message: format!("迁移失败：目标路径已存在：{}", dst.display()),
+                });
+            }
+            CopyFileFailure::before_create(ioe(err))
+        })?;
     loop {
-        let n = reader.read(buf).map_err(ioe)?;
+        let n = reader
+            .read(buf)
+            .map_err(|err| CopyFileFailure::after_create(ioe(err)))?;
         if n == 0 {
             break;
         }
-        writer.write_all(&buf[..n]).map_err(ioe)?;
+        writer
+            .write_all(&buf[..n])
+            .map_err(|err| CopyFileFailure::after_create(ioe(err)))?;
         copied_bytes = copied_bytes.saturating_add(n as u64);
-        reporter(copied_bytes, current_item.clone())?;
+        reporter(copied_bytes, current_item.clone()).map_err(CopyFileFailure::after_create)?;
     }
-    writer.flush().map_err(ioe)?;
-    copy_permissions(src, dst)?;
+    writer
+        .flush()
+        .map_err(|err| CopyFileFailure::after_create(ioe(err)))?;
+    copy_permissions(src, dst).map_err(CopyFileFailure::after_create)?;
     Ok(copied_bytes)
 }
 

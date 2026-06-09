@@ -7,6 +7,8 @@ pub struct RelocateFailure {
     pub access_denied: bool,
     /// Windows：`rename` 软链遇 ACCESS_DENIED 时由 migrate 层经 `symlink::write_symlink` 兜底。
     pub symlink_needs_recreate: bool,
+    /// 当前平台没有原子 no-clobber rename 能力；迁移层应回退到复制路径。
+    pub no_replace_unsupported: bool,
 }
 
 impl RelocateFailure {
@@ -15,6 +17,7 @@ impl RelocateFailure {
             access_denied: err.raw_os_error() == Some(5),
             inner: map_io_error(err),
             symlink_needs_recreate: false,
+            no_replace_unsupported: false,
         }
     }
 
@@ -23,6 +26,18 @@ impl RelocateFailure {
             access_denied: true,
             inner: map_io_error(err),
             symlink_needs_recreate: true,
+            no_replace_unsupported: false,
+        }
+    }
+
+    pub fn no_replace_unsupported() -> Self {
+        Self {
+            access_denied: false,
+            inner: SymmError::IoError {
+                message: "当前平台不支持原子不覆盖移动".to_string(),
+            },
+            symlink_needs_recreate: false,
+            no_replace_unsupported: true,
         }
     }
 }

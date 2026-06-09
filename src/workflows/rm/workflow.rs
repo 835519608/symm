@@ -226,13 +226,12 @@ fn remove_one<W: Write>(
     writer: &mut W,
 ) -> Result<String, SymmError> {
     let link = Path::new(&record.link_path);
-    let target = Path::new(&record.target_path);
     let link_status = status::try_for_record(record)?;
 
     match mode {
         RemoveMode::RestoreTargetToLink => {
             ensure_restorable(record, link_status)?;
-            if let Err(err) = restore_target_to_link(writer, link, target) {
+            if let Err(err) = restore_target_to_link(writer, record, link_status) {
                 match err {
                     RestoreFailure::LinkUnchanged(err) => return Err(err),
                     RestoreFailure::LinkRemoved(err) => return Err(err),
@@ -313,9 +312,13 @@ fn record_label(record: &LinkRecord) -> String {
 
 fn restore_target_to_link<W: Write>(
     writer: &mut W,
-    link: &Path,
-    target: &Path,
+    record: &LinkRecord,
+    planned_status: LinkStatus,
 ) -> Result<(), RestoreFailure> {
+    let link = Path::new(&record.link_path);
+    let target = Path::new(&record.target_path);
+    ensure_restore_link_state_unchanged(record, planned_status)
+        .map_err(RestoreFailure::LinkUnchanged)?;
     symlink::unlink(link).map_err(RestoreFailure::LinkUnchanged)?;
     let mut reporter = MigrationProgressReporter::new(writer);
     migrate::migrate_path(target, link, &mut |event| {
@@ -327,6 +330,27 @@ fn restore_target_to_link<W: Write>(
                 "移回目标到链接位置失败：link 已移除，数据库记录已保留，可修复原因后重试 restore：{e}"
             ),
         })
+    })
+}
+
+fn ensure_restore_link_state_unchanged(
+    record: &LinkRecord,
+    planned_status: LinkStatus,
+) -> Result<(), SymmError> {
+    let current_status = status::try_for_record(record)?;
+    let unchanged = match planned_status {
+        LinkStatus::Ok => current_status == LinkStatus::Ok,
+        LinkStatus::Missing => current_status == LinkStatus::Missing,
+        LinkStatus::Broken | LinkStatus::Stale | LinkStatus::Drift | LinkStatus::Unknown => false,
+    };
+    if unchanged {
+        return Ok(());
+    }
+    Err(SymmError::InvalidArgument {
+        message: format!(
+            "link 路径状态已变化，无法 restore，请重新执行：{}",
+            record.link_path
+        ),
     })
 }
 

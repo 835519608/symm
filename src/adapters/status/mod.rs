@@ -2,4 +2,4 @@
 
 mod probe;
 
-pub use probe::{for_record, to_view, try_for_record};
+pub use probe::{for_record, probe_record, to_view, try_for_record, view_from_probe};

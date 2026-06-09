@@ -223,25 +223,15 @@ impl EntityFingerprint {
     }
 
     #[cfg(windows)]
-    fn from_metadata(path: &Path, meta: &fs::Metadata) -> Result<Self, SymmError> {
-        use std::os::windows::fs::MetadataExt;
-        let volume = meta.volume_serial_number();
-        let index = meta.file_index();
-        if volume.is_none() || index.is_none() {
-            return Err(SymmError::InvalidArgument {
-                message: format!(
-                    "无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
-                    path.display()
-                ),
-            });
-        }
+    fn from_metadata(path: &Path, _meta: &fs::Metadata) -> Result<Self, SymmError> {
+        let identity = windows_file_identity(path)?;
         Ok(Self {
             inner: EntityFingerprintInner::Windows {
-                volume,
-                index,
-                creation_time: meta.creation_time(),
-                last_write_time: meta.last_write_time(),
-                len: meta.file_size(),
+                volume: Some(identity.volume),
+                index: Some(identity.index),
+                creation_time: identity.creation_time,
+                last_write_time: identity.last_write_time,
+                len: identity.len,
             },
         })
     }
@@ -255,6 +245,106 @@ impl EntityFingerprint {
             ),
         })
     }
+}
+
+#[cfg(windows)]
+struct WindowsFileIdentity {
+    volume: u32,
+    index: u64,
+    creation_time: u64,
+    last_write_time: u64,
+    len: u64,
+}
+
+#[cfg(windows)]
+fn windows_file_identity(path: &Path) -> Result<WindowsFileIdentity, SymmError> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, GetFileInformationByHandle, OPEN_EXISTING,
+    };
+    use windows::core::PCWSTR;
+
+    let wide_path = verbatim_wide_path(path).ok_or_else(|| SymmError::InvalidArgument {
+        message: format!(
+            "无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
+            path.display()
+        ),
+    })?;
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(wide_path.as_ptr()),
+            FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    }
+    .map_err(|e| SymmError::IoError {
+        message: format!("无法确认 link 路径实体身份：{e}"),
+    })?;
+
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    let result = unsafe { GetFileInformationByHandle(handle, &mut info) };
+    let _ = unsafe { CloseHandle(handle) };
+    result.map_err(|e| SymmError::IoError {
+        message: format!("无法确认 link 路径实体身份：{e}"),
+    })?;
+
+    Ok(WindowsFileIdentity {
+        volume: info.dwVolumeSerialNumber,
+        index: ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+        creation_time: filetime_to_u64(info.ftCreationTime),
+        last_write_time: filetime_to_u64(info.ftLastWriteTime),
+        len: ((info.nFileSizeHigh as u64) << 32) | info.nFileSizeLow as u64,
+    })
+}
+
+#[cfg(windows)]
+fn filetime_to_u64(filetime: windows::Win32::Foundation::FILETIME) -> u64 {
+    ((filetime.dwHighDateTime as u64) << 32) | filetime.dwLowDateTime as u64
+}
+
+#[cfg(windows)]
+fn verbatim_wide_path(path: &Path) -> Option<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+
+    fn wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().collect()
+    }
+
+    let absolute;
+    let path = if path.is_absolute() {
+        path
+    } else {
+        absolute = std::env::current_dir().ok()?.join(path);
+        absolute.as_path()
+    };
+
+    let raw: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let verbatim = wide(r"\\?\");
+    let nt_verbatim = wide(r"\??\");
+    if raw.starts_with(&verbatim) || raw.starts_with(&nt_verbatim) {
+        let mut out = raw;
+        out.push(0);
+        return Some(out);
+    }
+
+    let unc = wide(r"\\");
+    let mut out = if raw.starts_with(&unc) {
+        let mut prefixed = wide(r"\\?\UNC\");
+        prefixed.extend_from_slice(&raw[2..]);
+        prefixed
+    } else {
+        let mut prefixed = verbatim;
+        prefixed.extend_from_slice(&raw);
+        prefixed
+    };
+    out.push(0);
+    Some(out)
 }
 
 impl LinkOperation {
@@ -398,6 +488,7 @@ fn apply_filesystem_change<W: Write>(
             ensure_link_not_locked(reporter, decisions, link_path)?;
             ensure_entity_unchanged(link_path, &entity)?;
             ensure_target_parent_dir(&target)?;
+            ensure_target_missing_for_adopt(&target)?;
             migrate::migrate_path(link_path, &target, &mut |event| {
                 reporter.handle_migration_event(event)
             })
@@ -760,6 +851,18 @@ fn ensure_target_parent_dir(target: &Path) -> Result<(), SymmError> {
     }
     std::fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
         message: format!("adopt 失败：无法创建目录 {}：{e}", parent.display()),
+    })
+}
+
+fn ensure_target_missing_for_adopt(target: &Path) -> Result<(), SymmError> {
+    if !path_exists(target)? {
+        return Ok(());
+    }
+    Err(SymmError::InvalidArgument {
+        message: format!(
+            "target 路径已被外部占用，请重新执行 adopt：{}",
+            target.display()
+        ),
     })
 }
 

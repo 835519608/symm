@@ -23,6 +23,7 @@ pub struct ReloadedLinks {
 
 pub struct RemoveOutcome {
     pub log: String,
+    pub attempted_ids: HashSet<i64>,
     pub remaining_ids: HashSet<i64>,
     pub error: Option<String>,
 }
@@ -152,6 +153,7 @@ pub fn remove_links(
     if ids.is_empty() {
         return Ok(RemoveOutcome {
             log: String::new(),
+            attempted_ids: HashSet::new(),
             remaining_ids: HashSet::new(),
             error: None,
         });
@@ -170,6 +172,7 @@ pub fn remove_links(
     };
     Ok(RemoveOutcome {
         log: writer.into_log(),
+        attempted_ids: ids.iter().copied().collect(),
         remaining_ids,
         error,
     })

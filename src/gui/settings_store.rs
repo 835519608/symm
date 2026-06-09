@@ -20,6 +20,7 @@ pub fn apply(state: &mut AppState, settings: &GuiSettings) {
     state.color_scheme = settings.color_scheme;
     state.locale = settings.locale;
     state.sidebar_width = settings.sidebar_width;
+    state.transient_sidebar_width = settings.sidebar_width;
     state.font_size_pt = crate::domain::gui_settings::sanitize_font_size_pt(settings.font_size_pt);
     let data_dir = data_dir_from_settings(settings);
     state.data_dir = data_dir.clone();

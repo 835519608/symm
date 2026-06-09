@@ -99,6 +99,7 @@ pub struct AppState {
     pub page_index: u32,
     pub page_size: u32,
     pub sidebar_width: f32,
+    pub transient_sidebar_width: f32,
     pub show_link_op_dialog: bool,
     /// 侧栏「已刷新」提示截止时间（与统计行同排右侧）。
     pub refresh_notice_until: Option<Instant>,
@@ -218,6 +219,7 @@ impl Default for AppState {
             page_index: 0,
             page_size: DEFAULT_PAGE_SIZE,
             sidebar_width: crate::gui::theme::SIDEBAR_DEFAULT_WIDTH,
+            transient_sidebar_width: crate::gui::theme::SIDEBAR_DEFAULT_WIDTH,
             show_link_op_dialog: false,
             refresh_notice_until: None,
             toast: None,
@@ -267,6 +269,19 @@ mod tests {
         let draft = SettingsDraft::from_state(&state);
 
         assert_eq!(draft.data_dir, "/tmp/symm-active");
+    }
+
+    #[test]
+    fn settings_draft_uses_persisted_sidebar_width_not_transient_layout() {
+        let state = AppState {
+            sidebar_width: 300.0,
+            transient_sidebar_width: 420.0,
+            ..AppState::default()
+        };
+
+        let draft = SettingsDraft::from_state(&state);
+
+        assert_eq!(draft.sidebar_width, 300.0);
     }
 
     #[test]

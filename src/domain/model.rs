@@ -120,7 +120,7 @@ impl FromStr for LinkStatus {
     }
 }
 
-/// 纯数字 name 入库前加此前缀，避免与 `show 1` / `rm 1` 等按 id 查询混淆。
+/// 纯数字 name 入库前加此前缀，避免与 `show 1` / `rm 1` 等按 `ls` 序号查询混淆。
 pub const LINK_NAME_DIGIT_PREFIX: &str = "link-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

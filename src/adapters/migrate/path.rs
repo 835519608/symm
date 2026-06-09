@@ -36,17 +36,19 @@ where
         source: src.display().to_string(),
         target: dst.display().to_string(),
     })?;
+    ensure_destination_missing(dst)?;
 
     if can_use_fast_move(src, dst)? {
         reporter(MigrationEvent::FastMove {
             source: src.display().to_string(),
             target: dst.display().to_string(),
         })?;
-        move_path_with_retry(src, dst, "迁移项")?;
-        if !path_is_link(dst)? {
-            rebase::rebase_symlinks_in_tree(dst, src)?;
+        if try_move_path_with_retry(src, dst, "迁移项")? {
+            if !path_is_link(dst)? {
+                rebase::rebase_symlinks_in_tree(dst, src)?;
+            }
+            return Ok(());
         }
-        return Ok(());
     }
 
     if let Some(acl_file) = host_platform().snapshot_dir_acl(src)? {
@@ -72,6 +74,15 @@ where
         });
     }
     Ok(())
+}
+
+fn ensure_destination_missing(dst: &Path) -> Result<(), SymmError> {
+    if !presence::path_itself_exists(dst)? {
+        return Ok(());
+    }
+    Err(SymmError::InvalidArgument {
+        message: format!("迁移失败：目标路径已存在：{}", dst.display()),
+    })
 }
 
 fn path_is_link(path: &Path) -> Result<bool, SymmError> {
@@ -100,9 +111,10 @@ pub fn can_use_fast_move(src: &Path, dst: &Path) -> Result<bool, SymmError> {
     host_platform().same_volume(src, dst_parent)
 }
 
-pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
+fn try_move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<bool, SymmError> {
     match host_platform().relocate_path(src, dst) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(true),
+        Err(failure) if failure.no_replace_unsupported => Ok(false),
         Err(failure) if failure.symlink_needs_recreate => {
             let relocate = if path_is_link(src)? {
                 relocate_symlink_preserving_target(src, dst)
@@ -111,7 +123,8 @@ pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), Sy
             };
             relocate.map_err(|inner| SymmError::IoError {
                 message: format!("无法移动 {role}：{inner}"),
-            })
+            })?;
+            Ok(true)
         }
         Err(failure) => Err(format_relocate_failure(role, failure)),
     }
@@ -194,6 +207,23 @@ mod tests {
     }
 
     #[test]
+    fn migrate_path_rejects_existing_destination_without_overwrite() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src.txt");
+        let dst = temp.path().join("dst.txt");
+        fs::write(&src, "source").expect("write source");
+        fs::write(&dst, "destination").expect("write destination");
+
+        migrate_path(&src, &dst, &mut |_event| Ok(())).expect_err("existing dst should fail");
+
+        assert_eq!(fs::read_to_string(&src).expect("read source"), "source");
+        assert_eq!(
+            fs::read_to_string(&dst).expect("read destination"),
+            "destination"
+        );
+    }
+
+    #[test]
     fn migrate_path_moves_directory_without_losing_contents() {
         let temp = tempdir().expect("temp dir");
         let src = temp.path().join("src_dir");
@@ -249,6 +279,24 @@ mod tests {
         assert!(
             !dst.exists(),
             "partial destination should be cleaned when copy aborts"
+        );
+    }
+
+    #[test]
+    fn copy_path_with_progress_rejects_existing_file_without_overwrite() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src.txt");
+        let dst = temp.path().join("dst.txt");
+        fs::write(&src, "source").expect("write source");
+        fs::write(&dst, "destination").expect("write destination");
+
+        copy_path_with_progress(&src, &dst, &mut |_event| Ok(()))
+            .expect_err("existing file should fail");
+
+        assert_eq!(fs::read_to_string(&src).expect("read source"), "source");
+        assert_eq!(
+            fs::read_to_string(&dst).expect("read destination"),
+            "destination"
         );
     }
 

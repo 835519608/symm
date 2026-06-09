@@ -3,8 +3,14 @@ use crate::domain::error::SymmError;
 use crate::domain::model::{LinkRecord, LinkStatus, LinkView};
 use std::path::Path;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusProbe {
+    pub status: LinkStatus,
+    pub status_error: Option<String>,
+}
+
 pub fn for_record(record: &LinkRecord) -> LinkStatus {
-    view_status_for_record(record).0
+    probe_record(record).status
 }
 
 pub fn try_for_record(record: &LinkRecord) -> Result<LinkStatus, SymmError> {
@@ -28,19 +34,29 @@ pub fn try_for_record(record: &LinkRecord) -> Result<LinkStatus, SymmError> {
 }
 
 pub fn to_view(record: LinkRecord) -> LinkView {
-    let (status, status_error) = view_status_for_record(&record);
+    let probe = probe_record(&record);
+    view_from_probe(record, 0, probe)
+}
+
+pub fn view_from_probe(record: LinkRecord, index: u32, probe: StatusProbe) -> LinkView {
     LinkView {
         record,
-        index: 0,
-        status,
-        status_error,
+        index,
+        status: probe.status,
+        status_error: probe.status_error,
     }
 }
 
-fn view_status_for_record(record: &LinkRecord) -> (LinkStatus, Option<String>) {
+pub fn probe_record(record: &LinkRecord) -> StatusProbe {
     match try_for_record(record) {
-        Ok(status) => (status, None),
-        Err(err) => (LinkStatus::Unknown, Some(err.to_string())),
+        Ok(status) => StatusProbe {
+            status,
+            status_error: None,
+        },
+        Err(err) => StatusProbe {
+            status: LinkStatus::Unknown,
+            status_error: Some(err.to_string()),
+        },
     }
 }
 

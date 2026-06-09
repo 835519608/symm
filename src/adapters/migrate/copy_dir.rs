@@ -5,6 +5,7 @@ use super::{
 };
 use crate::adapters::errors::io::ioe;
 use crate::domain::error::SymmError;
+use std::cmp::Reverse;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,7 +59,7 @@ where
             let current_item = src_path
                 .file_name()
                 .map(|s| Arc::<str>::from(s.to_string_lossy()));
-            copied_bytes = copy_regular_file_with_progress(
+            copied_bytes = match copy_regular_file_with_progress(
                 src_path,
                 &dst_path,
                 copied_bytes,
@@ -71,7 +72,15 @@ where
                         current_item,
                     })
                 },
-            )?;
+            ) {
+                Ok(copied_bytes) => copied_bytes,
+                Err(err) => {
+                    if err.dst_created {
+                        let _ = crate::adapters::paths::remove::remove_any(&dst_path);
+                    }
+                    return Err(err.err);
+                }
+            };
             files_copied += 1;
             reporter(MigrationEvent::Copying {
                 copied_bytes,
@@ -99,7 +108,7 @@ where
 }
 
 fn apply_deferred_dir_permissions(mut dirs: Vec<(PathBuf, PathBuf)>) -> Result<(), SymmError> {
-    dirs.sort_by(|a, b| b.1.components().count().cmp(&a.1.components().count()));
+    dirs.sort_by_key(|(_, dst)| Reverse(dst.components().count()));
     for (src, dst) in dirs {
         copy_permissions(&src, &dst)?;
     }

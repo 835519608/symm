@@ -137,9 +137,8 @@ where
     let mut has_more = false;
     link_store::for_each(conn, |record| {
         scanned += 1;
-        let mut view = status::to_view(record);
-        view.index = scanned as u32;
-        if view.status != wanted {
+        let probe = status::probe_record(&record);
+        if probe.status != wanted {
             return Ok(true);
         }
         if matched < start {
@@ -152,6 +151,7 @@ where
         }
         matched += 1;
         emitted += 1;
+        let view = status::view_from_probe(record, scanned as u32, probe);
         f(view)?;
         Ok(detect_has_more || emitted < take)
     })?;

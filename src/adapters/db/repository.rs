@@ -443,14 +443,16 @@ pub fn list_links_matching_paginated(
     };
 
     let sql = format!(
-        "SELECT id, name, link_path, target_path, link_kind, created_at, updated_at, list_index
-         FROM (
-           SELECT id, name, link_path, target_path, link_kind, created_at, updated_at,
-                  ROW_NUMBER() OVER (ORDER BY id ASC) AS list_index
+        "WITH page AS (
+           SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
            FROM links
+           WHERE {}
+           ORDER BY id ASC LIMIT ?2 OFFSET ?3
          )
-         WHERE {}
-         ORDER BY id ASC LIMIT ?2 OFFSET ?3",
+         SELECT id, name, link_path, target_path, link_kind, created_at, updated_at,
+                (SELECT COUNT(*) FROM links AS all_links WHERE all_links.id <= page.id) AS list_index
+         FROM page
+         ORDER BY id ASC",
         search_where_sql()
     );
     let params: Vec<Box<dyn ToSql>> = vec![Box::new(pattern), Box::new(limit), Box::new(offset)];

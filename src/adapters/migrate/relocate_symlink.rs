@@ -21,7 +21,9 @@ fn relocate_symlink_with_rebase(
     rebase_target: bool,
 ) -> Result<(), SymmError> {
     if presence::path_itself_exists(dst)? {
-        remove::remove_any(dst)?;
+        return Err(SymmError::InvalidArgument {
+            message: format!("迁移失败：目标路径已存在：{}", dst.display()),
+        });
     }
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent).map_err(ioe)?;
@@ -39,15 +41,13 @@ fn relocate_symlink_with_rebase(
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::relocate_symlink_preserving_target;
     use std::fs;
+    use std::os::unix::fs::symlink;
     use tempfile::tempdir;
 
-    #[cfg(unix)]
-    use std::os::unix::fs::symlink;
-
-    #[cfg(unix)]
     #[test]
     fn relocate_symlink_preserving_target_keeps_raw_target() {
         let temp = tempdir().expect("temp dir");
@@ -66,5 +66,24 @@ mod tests {
             fs::read_link(&dst).expect("read relocated link"),
             src_root.join("data.txt")
         );
+    }
+
+    #[test]
+    fn relocate_symlink_preserving_target_rejects_existing_destination() {
+        let temp = tempdir().expect("temp dir");
+        let src_root = temp.path().join("src");
+        let dst_root = temp.path().join("dst");
+        fs::create_dir_all(&src_root).expect("src dir");
+        fs::create_dir_all(&dst_root).expect("dst dir");
+        fs::write(src_root.join("data.txt"), "payload").expect("write data");
+        let link = src_root.join("link");
+        symlink(src_root.join("data.txt"), &link).expect("symlink");
+        let dst = dst_root.join("link");
+        fs::write(&dst, "existing").expect("write dst");
+
+        relocate_symlink_preserving_target(&link, &dst).expect_err("existing dst should fail");
+
+        assert!(fs::symlink_metadata(&link).is_ok(), "source link remains");
+        assert_eq!(fs::read_to_string(&dst).expect("read dst"), "existing");
     }
 }

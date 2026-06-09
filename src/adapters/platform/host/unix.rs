@@ -28,7 +28,7 @@ impl HostFs for Host {
     }
 
     fn relocate_path(&self, src: &Path, dst: &Path) -> Result<(), RelocateFailure> {
-        fs::rename(src, dst).map_err(RelocateFailure::from_io)
+        rename_no_replace(src, dst)
     }
 
     fn snapshot_dir_acl(&self, _src_dir: &Path) -> Result<Option<PathBuf>, SymmError> {
@@ -38,4 +38,69 @@ impl HostFs for Host {
     fn restore_dir_acl(&self, _dst_dir: &Path, _snapshot: &Path) -> Result<(), SymmError> {
         Ok(())
     }
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn rename_no_replace(src: &Path, dst: &Path) -> Result<(), RelocateFailure> {
+    use std::ffi::CString;
+    use std::os::raw::{c_char, c_int, c_long};
+    use std::os::unix::ffi::OsStrExt;
+
+    const AT_FDCWD: c_int = -100;
+    const RENAME_NOREPLACE: u32 = 1;
+
+    #[cfg(target_arch = "x86_64")]
+    const SYS_RENAMEAT2: c_long = 316;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_RENAMEAT2: c_long = 276;
+
+    unsafe extern "C" {
+        fn syscall(num: c_long, ...) -> c_long;
+    }
+
+    let src = CString::new(src.as_os_str().as_bytes()).map_err(|_| {
+        RelocateFailure::from_io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "路径包含 NUL 字节",
+        ))
+    })?;
+    let dst = CString::new(dst.as_os_str().as_bytes()).map_err(|_| {
+        RelocateFailure::from_io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "路径包含 NUL 字节",
+        ))
+    })?;
+
+    let result = unsafe {
+        syscall(
+            SYS_RENAMEAT2,
+            AT_FDCWD,
+            src.as_ptr() as *const c_char,
+            AT_FDCWD,
+            dst.as_ptr() as *const c_char,
+            RENAME_NOREPLACE,
+        )
+    };
+    if result == 0 {
+        return Ok(());
+    }
+    let err = std::io::Error::last_os_error();
+    if matches!(
+        err.raw_os_error(),
+        Some(38) | Some(22) | Some(95) | Some(89)
+    ) {
+        return Err(RelocateFailure::no_replace_unsupported());
+    }
+    Err(RelocateFailure::from_io(err))
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+fn rename_no_replace(_src: &Path, _dst: &Path) -> Result<(), RelocateFailure> {
+    Err(RelocateFailure::no_replace_unsupported())
 }

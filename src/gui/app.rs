@@ -284,6 +284,7 @@ impl SymmApp {
         self.state.color_scheme = outcome.settings.color_scheme;
         self.state.font_size_pt = outcome.settings.font_size_pt;
         self.state.sidebar_width = outcome.settings.sidebar_width;
+        self.state.transient_sidebar_width = outcome.settings.sidebar_width;
         let persisted_data_dir = data_dir_from_settings(&outcome.settings);
         if !self.state.data_dir_runtime_override {
             self.state.data_dir = persisted_data_dir.clone();
@@ -476,11 +477,9 @@ impl SymmApp {
                 self.state.rm_dialog = None;
                 self.needs_reload = true;
                 self.state.checked_ids = outcome.remaining_ids;
-                if self
-                    .state
-                    .selected_id
-                    .is_some_and(|id| !self.state.checked_ids.contains(&id))
-                {
+                if self.state.selected_id.is_some_and(|id| {
+                    outcome.attempted_ids.contains(&id) && !self.state.checked_ids.contains(&id)
+                }) {
                     self.state.selected_id = None;
                     self.selected_view = None;
                 }
@@ -712,6 +711,7 @@ mod tests {
 
         app.finish_remove(Ok(RemoveOutcome {
             log: "已删除链接关系：demo\n失败：other：权限不足".to_string(),
+            attempted_ids: HashSet::from([1, 2]),
             remaining_ids: HashSet::from([2]),
             error: Some("部分删除失败：other".to_string()),
         }));
@@ -732,6 +732,7 @@ mod tests {
 
         app.finish_remove(Ok(RemoveOutcome {
             log: "已删除链接关系：demo".to_string(),
+            attempted_ids: HashSet::from([1]),
             remaining_ids: HashSet::new(),
             error: None,
         }));
@@ -749,12 +750,45 @@ mod tests {
 
         app.finish_remove(Ok(RemoveOutcome {
             log: "已删除链接关系：demo\n失败：other：权限不足".to_string(),
+            attempted_ids: HashSet::from([1, 2]),
             remaining_ids: HashSet::from([2]),
             error: Some("部分删除失败：other".to_string()),
         }));
 
         assert_eq!(app.state.selected_id, None);
         assert_eq!(app.state.checked_ids, HashSet::from([2]));
+    }
+
+    #[test]
+    fn remove_success_keeps_unattempted_selected_id() {
+        let mut app = test_app();
+        app.state.selected_id = Some(9);
+        app.state.checked_ids = [1].into_iter().collect();
+        app.selected_view = Some(LinkView {
+            record: LinkRecord {
+                id: 9,
+                name: "selected".to_string(),
+                link_path: "/tmp/selected-link".to_string(),
+                target_path: "/tmp/selected-target".to_string(),
+                link_kind: LinkKind::Symlink,
+                created_at: 0,
+                updated_at: 0,
+            },
+            index: 9,
+            status: LinkStatus::Ok,
+            status_error: None,
+        });
+
+        app.finish_remove(Ok(RemoveOutcome {
+            log: "已删除链接关系：demo".to_string(),
+            attempted_ids: HashSet::from([1]),
+            remaining_ids: HashSet::new(),
+            error: None,
+        }));
+
+        assert_eq!(app.state.selected_id, Some(9));
+        assert!(app.selected_view.is_some());
+        assert!(app.state.checked_ids.is_empty());
     }
 
     #[test]

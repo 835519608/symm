@@ -66,13 +66,13 @@ fn show_sidebar_panel(
     p: &theme::UiPalette,
 ) {
     let sidebar_max = theme::sidebar_max_width(ctx);
-    state.sidebar_width = state
-        .sidebar_width
+    state.transient_sidebar_width = state
+        .transient_sidebar_width
         .clamp(theme::SIDEBAR_WIDTH_MIN, sidebar_max);
 
     let sidebar_resp = egui::SidePanel::left(theme::SIDEBAR_PANEL_ID)
         .resizable(true)
-        .default_width(state.sidebar_width)
+        .default_width(state.transient_sidebar_width)
         .width_range(theme::SIDEBAR_WIDTH_MIN..=sidebar_max)
         .frame(theme::sidebar_frame(p))
         .show(ctx, |ui| match show_sidebar(ui, state, snapshot) {
@@ -88,7 +88,7 @@ fn show_sidebar_panel(
             SidebarAction::None => {}
         });
     if sidebar_resp.response.dragged() {
-        state.sidebar_width = sidebar_resp.response.rect.width();
+        state.transient_sidebar_width = sidebar_resp.response.rect.width();
     }
 }
 
