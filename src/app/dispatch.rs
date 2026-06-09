@@ -1,40 +1,30 @@
 use crate::domain::error::SymmError;
 use crate::ui::cli::Commands;
 use crate::workflows;
+use crate::workflows::link_ops::workflow::LinkOperation;
 use std::io::Write;
+use std::path::PathBuf;
 
 pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmError> {
-    let conn = crate::adapters::db::link_store::open()?;
     match command {
         Commands::Add { link, target } => {
-            let (link, target) = crate::app::cli_decisions::resolve_add_paths(
-                &conn,
-                link.as_deref(),
-                target.as_deref(),
-            )?;
-            let mut decisions = crate::app::cli_decisions::CliAddDecisions;
-            workflows::add::workflow::run_add(&conn, &link, &target, &mut decisions, writer)
+            let conn = crate::adapters::db::link_store::open()?;
+            execute_link_operation(&conn, LinkOperation::Add, link, target, writer)
         }
         Commands::Adopt { link, target } => {
-            let (link, target) = crate::app::cli_decisions::resolve_add_paths(
-                &conn,
-                link.as_deref(),
-                target.as_deref(),
-            )?;
-            let mut decisions = crate::app::cli_decisions::CliAddDecisions;
-            workflows::add::workflow::run_adopt(&conn, &link, &target, &mut decisions, writer)
+            let conn = crate::adapters::db::link_store::open()?;
+            execute_link_operation(&conn, LinkOperation::Adopt, link, target, writer)
         }
         Commands::Point { link, target } => {
-            let (link, target) = crate::app::cli_decisions::resolve_add_paths(
-                &conn,
-                link.as_deref(),
-                target.as_deref(),
-            )?;
-            let mut decisions = crate::app::cli_decisions::CliAddDecisions;
-            workflows::add::workflow::run_point(&conn, &link, &target, &mut decisions, writer)
+            let conn = crate::adapters::db::link_store::open()?;
+            execute_link_operation(&conn, LinkOperation::Point, link, target, writer)
         }
-        Commands::Rm { selectors } => workflows::rm::workflow::run_rm(&conn, &selectors, writer),
+        Commands::Rm { selectors } => {
+            let conn = crate::adapters::db::link_store::open()?;
+            workflows::rm::workflow::run_rm(&conn, &selectors, writer)
+        }
         Commands::Restore { selectors } => {
+            let conn = crate::adapters::db::link_store::open()?;
             workflows::rm::workflow::run_restore(&conn, &selectors, writer)
         }
         Commands::Ls {
@@ -43,10 +33,12 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
             limit,
             offset,
         } => {
+            let conn = crate::adapters::db::link_store::open()?;
             let wanted = status.map(|value| value.to_model());
             workflows::ls::workflow::run(&conn, json, wanted, limit, offset, writer)
         }
         Commands::Show { selector, json } => {
+            let conn = crate::adapters::db::link_store::open()?;
             workflows::show::workflow::run(&conn, selector.as_deref(), json, writer)
         }
         Commands::ElevatedListLocks { .. } | Commands::ElevatedKill { .. } => {
@@ -59,4 +51,24 @@ pub fn execute<W: Write>(command: Commands, writer: &mut W) -> Result<(), SymmEr
             message: "内部提权子命令应由 CLI 入口直接处理".to_string(),
         }),
     }
+}
+
+fn execute_link_operation<W: Write>(
+    conn: &rusqlite::Connection,
+    operation: LinkOperation,
+    link: Option<PathBuf>,
+    target: Option<PathBuf>,
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    let (link, target) =
+        crate::app::cli_decisions::resolve_link_op_paths(conn, link.as_deref(), target.as_deref())?;
+    let mut decisions = crate::app::cli_decisions::CliLinkOpDecisions;
+    workflows::link_ops::workflow::run_operation(
+        conn,
+        operation,
+        &link,
+        &target,
+        &mut decisions,
+        writer,
+    )
 }

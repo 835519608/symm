@@ -1,9 +1,10 @@
-//! `add` 前链接路径占用检测与解除。
+//! 链接操作前的 link 路径占用检测与解除。
 
 use crate::adapters::lock::{
     ProcInfo, empty_lock_list_notice, format_still_locked_message, kill_processes,
     list_locking_processes_with_progress, pre_scan_notices, wait_after_kill,
 };
+use crate::adapters::paths::presence;
 use crate::domain::error::SymmError;
 use crate::ui::progress::migration_reporter::MigrationProgressReporter;
 use std::io::Write;
@@ -21,7 +22,7 @@ pub(crate) fn ensure_link_not_locked_with_choice<W: Write>(
     choose_action: &mut impl FnMut(&[ProcInfo]) -> Result<LockResolutionAction, SymmError>,
 ) -> Result<(), SymmError> {
     reporter.write_line(&format!("正在检查链接是否被占用：{}", link.display()))?;
-    if !link.exists() {
+    if !presence::path_itself_exists(link)? {
         reporter.write_line("链接路径尚不存在，跳过占用检测")?;
         return Ok(());
     }

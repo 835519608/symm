@@ -16,6 +16,25 @@ pub enum SymmError {
     DbError { message: String },
     #[error("IO 错误：{message}")]
     IoError { message: String },
+    #[error(
+        "文件系统已变更但链接记录写入失败：operation={operation}, link={link_path}, target={target_path}；{message}"
+    )]
+    FilesystemAppliedButDbFailed {
+        operation: String,
+        link_path: String,
+        target_path: String,
+        message: String,
+    },
+    #[error(
+        "实体已迁移但创建 link 失败：link={link_path}, target={target_path}；链接记录尚未写入；{message}"
+    )]
+    EntityMigratedButLinkCreateFailed {
+        link_path: String,
+        target_path: String,
+        message: String,
+    },
+    #[error("批量操作失败：{message}")]
+    BatchFailure { message: String },
 }
 
 impl SymmError {
@@ -28,6 +47,11 @@ impl SymmError {
             SymmError::NotFound { .. } => "not_found",
             SymmError::DbError { .. } => "db_error",
             SymmError::IoError { .. } => "io_error",
+            SymmError::FilesystemAppliedButDbFailed { .. } => "filesystem_applied_but_db_failed",
+            SymmError::EntityMigratedButLinkCreateFailed { .. } => {
+                "entity_migrated_but_link_create_failed"
+            }
+            SymmError::BatchFailure { .. } => "batch_failure",
         }
     }
 }

@@ -1,4 +1,4 @@
-pub(crate) mod add;
+pub(crate) mod link_ops;
 pub(crate) mod list_views;
 pub(crate) mod ls;
 pub(crate) mod perf;
