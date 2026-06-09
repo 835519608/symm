@@ -242,7 +242,7 @@ impl GuiTexts {
 
     pub fn sidebar_stats(&self, total: usize, symlink: usize, junction: usize) -> String {
         match self.locale {
-            Locale::ZhCn => format!("共 {total} · 软链 {symlink} · 链接 {junction}"),
+            Locale::ZhCn => format!("共 {total} · 软链接 {symlink} · 目录联接 {junction}"),
             Locale::En => format!("{total} total · {symlink} symlinks · {junction} junctions"),
         }
     }
@@ -362,8 +362,8 @@ impl GuiTexts {
 
     pub fn link_op_add(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "创建链接",
-            Locale::En => "Add",
+            Locale::ZhCn => "创建/登记链接",
+            Locale::En => "Add/register",
         }
     }
 
@@ -528,12 +528,16 @@ impl GuiTexts {
         operation: crate::workflows::link_ops::workflow::LinkOperation,
     ) -> &'static str {
         match (self.locale, operation) {
-            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Add) => "创建链接",
+            (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Add) => {
+                "创建/登记链接"
+            }
             (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => {
                 "接管实体"
             }
             (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Point) => "改指向",
-            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Add) => "Add",
+            (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Add) => {
+                "Add/register"
+            }
             (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => "Adopt",
             (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Point) => "Point",
         }
@@ -545,7 +549,7 @@ impl GuiTexts {
     ) -> &'static str {
         match (self.locale, operation) {
             (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Add) => {
-                "写入数据库并创建链接"
+                "创建新链接，或登记已指向 target 的现有链接"
             }
             (Locale::ZhCn, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => {
                 "迁移 link 路径实体并创建链接"
@@ -554,7 +558,7 @@ impl GuiTexts {
                 "把现有链接改为指向新的 target"
             }
             (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Add) => {
-                "Save to database and create link"
+                "Create a new link, or register an existing link that already points to target"
             }
             (Locale::En, crate::workflows::link_ops::workflow::LinkOperation::Adopt) => {
                 "Move the link-path entity and create link"
@@ -671,15 +675,15 @@ impl GuiTexts {
 
     pub fn rm_mode_delete_only(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "只删除软链与数据库记录",
-            Locale::En => "Remove symlink and database record only",
+            Locale::ZhCn => "只删除 link 路径上的链接与数据库记录",
+            Locale::En => "Remove link and database record only",
         }
     }
 
     pub fn rm_mode_restore(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "删除软链，并把目标移回链接位置",
-            Locale::En => "Remove symlink and move target back to link path",
+            Locale::ZhCn => "移除 link，并把 target 移回 link 路径",
+            Locale::En => "Remove link and move target back to link path",
         }
     }
 

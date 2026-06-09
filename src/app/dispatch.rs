@@ -77,8 +77,8 @@ fn execute_link_operation<W: Write>(
     writer: &mut W,
 ) -> Result<(), SymmError> {
     let (link, target) =
-        crate::app::cli_decisions::resolve_link_op_paths(conn, link.as_deref(), target.as_deref())?;
-    let mut decisions = crate::app::cli_decisions::CliLinkOpDecisions;
+        crate::ui::cli_decisions::resolve_link_op_paths(conn, link.as_deref(), target.as_deref())?;
+    let mut decisions = crate::ui::cli_decisions::CliLinkOpDecisions;
     workflows::link_ops::workflow::run_operation(
         conn,
         operation,

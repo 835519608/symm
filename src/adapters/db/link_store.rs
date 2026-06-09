@@ -44,8 +44,13 @@ pub fn find_by_name_optional(
     repository::find_optional(conn, &LinkQuery::name_exact(name))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn find_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord>, SymmError> {
     repository::find_many_by_ids(conn, ids)
+}
+
+pub fn find_existing_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord>, SymmError> {
+    repository::find_existing_by_ids(conn, ids)
 }
 
 #[cfg(test)]

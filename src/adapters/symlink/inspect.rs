@@ -24,7 +24,7 @@ pub fn inspect_link_path(path: &Path) -> Result<LinkPathState, SymmError> {
             });
         }
     };
-    Ok(match kind_from_path_and_metadata(path, &meta) {
+    Ok(match kind_from_path_and_metadata(path, &meta)? {
         Some(kind) => LinkPathState::Link { kind },
         None => LinkPathState::Entity,
     })
@@ -55,18 +55,65 @@ fn paths_match(actual: PathBuf, expected: &Path) -> bool {
             .map(|cwd| cwd.join(expected))
             .unwrap_or_else(|_| expected.to_path_buf())
     };
-    if crate::adapters::paths::lexical::clean(&actual)
-        == crate::adapters::paths::lexical::clean(&expected)
-    {
+    let actual_clean = crate::adapters::paths::lexical::clean(&actual);
+    let expected_clean = crate::adapters::paths::lexical::clean(&expected);
+    if platform_paths_equal(&actual_clean, &expected_clean) {
         return true;
     }
-    match (dunce::canonicalize(actual), dunce::canonicalize(expected)) {
-        (Ok(a), Ok(e)) => a == e,
-        _ => false,
+    match (
+        dunce::canonicalize(&actual_clean),
+        dunce::canonicalize(&expected_clean),
+    ) {
+        (Ok(a), Ok(e)) if platform_paths_equal(&a, &e) => true,
+        _ => missing_leaf_paths_match(&actual_clean, &expected_clean),
     }
 }
 
-pub fn kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkKind> {
+fn missing_leaf_paths_match(actual: &Path, expected: &Path) -> bool {
+    let (Some(actual_parent), Some(expected_parent)) = (actual.parent(), expected.parent()) else {
+        return false;
+    };
+    let (Some(actual_file), Some(expected_file)) = (actual.file_name(), expected.file_name())
+    else {
+        return false;
+    };
+    let parents_match = match (
+        dunce::canonicalize(actual_parent),
+        dunce::canonicalize(expected_parent),
+    ) {
+        (Ok(actual), Ok(expected)) => platform_paths_equal(&actual, &expected),
+        _ => platform_paths_equal(actual_parent, expected_parent),
+    };
+    parents_match && platform_os_str_equal(actual_file, expected_file)
+}
+
+#[cfg(windows)]
+fn platform_paths_equal(left: &Path, right: &Path) -> bool {
+    left.as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy())
+}
+
+#[cfg(not(windows))]
+fn platform_paths_equal(left: &Path, right: &Path) -> bool {
+    left == right
+}
+
+#[cfg(windows)]
+fn platform_os_str_equal(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+#[cfg(not(windows))]
+fn platform_os_str_equal(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    left == right
+}
+
+pub fn kind_from_path_and_metadata(
+    path: &Path,
+    meta: &Metadata,
+) -> Result<Option<LinkKind>, SymmError> {
     #[cfg(windows)]
     {
         windows_kind_from_path_and_metadata(path, meta)
@@ -74,7 +121,7 @@ pub fn kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkK
     #[cfg(not(windows))]
     {
         let _ = path;
-        kind_from_metadata(meta)
+        Ok(kind_from_metadata(meta))
     }
 }
 
@@ -88,7 +135,10 @@ fn kind_from_metadata(meta: &Metadata) -> Option<LinkKind> {
 }
 
 #[cfg(windows)]
-fn windows_kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<LinkKind> {
+fn windows_kind_from_path_and_metadata(
+    path: &Path,
+    meta: &Metadata,
+) -> Result<Option<LinkKind>, SymmError> {
     use std::os::windows::fs::MetadataExt;
 
     const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
@@ -96,23 +146,23 @@ fn windows_kind_from_path_and_metadata(path: &Path, meta: &Metadata) -> Option<L
 
     let attrs = meta.file_attributes();
     if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
-        return None;
+        return Ok(None);
     }
 
-    match reparse_tag_from_path(path) {
+    Ok(match reparse_tag_from_path(path)? {
         Some(IO_REPARSE_TAG_SYMLINK) => Some(LinkKind::Symlink),
         Some(IO_REPARSE_TAG_MOUNT_POINT) if (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 => {
             Some(LinkKind::Junction)
         }
         _ => None,
-    }
+    })
 }
 
 #[cfg(windows)]
 use windows::Win32::System::SystemServices::{IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK};
 
 #[cfg(windows)]
-fn reparse_tag_from_path(path: &Path) -> Option<u32> {
+fn reparse_tag_from_path(path: &Path) -> Result<Option<u32>, SymmError> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
@@ -122,7 +172,11 @@ fn reparse_tag_from_path(path: &Path) -> Option<u32> {
     use windows::Win32::System::Ioctl::FSCTL_GET_REPARSE_POINT;
     use windows::core::PCWSTR;
 
-    let wide_path = crate::adapters::paths::windows::verbatim_wide_path(path)?;
+    let wide_path = crate::adapters::paths::windows::verbatim_wide_path(path).ok_or_else(|| {
+        SymmError::IoError {
+            message: format!("无法规范化 reparse 路径：{}", path.display()),
+        }
+    })?;
     let handle = unsafe {
         CreateFileW(
             PCWSTR(wide_path.as_ptr()),
@@ -134,7 +188,9 @@ fn reparse_tag_from_path(path: &Path) -> Option<u32> {
             None,
         )
     }
-    .ok()?;
+    .map_err(|e| SymmError::IoError {
+        message: format!("无法打开 reparse point {}：{e}", path.display()),
+    })?;
 
     let mut buffer = vec![0u8; MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize];
     let mut bytes_returned = 0u32;
@@ -152,12 +208,20 @@ fn reparse_tag_from_path(path: &Path) -> Option<u32> {
     };
     let _ = unsafe { CloseHandle(handle) };
 
-    result.ok()?;
+    result.map_err(|e| SymmError::IoError {
+        message: format!("无法读取 reparse tag {}：{e}", path.display()),
+    })?;
     if bytes_returned < 4 {
-        return None;
+        return Err(SymmError::IoError {
+            message: format!("reparse 数据过短：{}", path.display()),
+        });
     }
 
-    Some(u32::from_le_bytes(buffer[0..4].try_into().ok()?))
+    Ok(Some(u32::from_le_bytes(buffer[0..4].try_into().map_err(
+        |_| SymmError::IoError {
+            message: format!("无法解析 reparse tag：{}", path.display()),
+        },
+    )?)))
 }
 
 #[cfg(test)]
@@ -171,7 +235,7 @@ mod tests {
 
     fn existing_link_kind(path: &Path) -> Option<LinkKind> {
         let meta = fs::symlink_metadata(path).ok()?;
-        kind_from_path_and_metadata(path, &meta)
+        kind_from_path_and_metadata(path, &meta).ok().flatten()
     }
 
     fn create_junction(target: &Path, link: &Path) {

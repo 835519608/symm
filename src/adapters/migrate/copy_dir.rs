@@ -87,7 +87,12 @@ where
                 files_copied,
                 current_item,
             })?;
+            continue;
         }
+
+        return Err(SymmError::InvalidArgument {
+            message: format!("目录迁移不支持此类型的条目：{}", src_path.display()),
+        });
     }
 
     for (src_link, dst_link) in deferred_symlinks {
@@ -206,6 +211,29 @@ mod tests {
 
         assert!(
             matches!(err, SymmError::IoError { ref message } if message == "stop"),
+            "unexpected: {err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_dir_tree_rejects_unsupported_entries() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src_dir");
+        let dst = temp.path().join("dst_dir");
+        fs::create_dir_all(&src).expect("dir");
+        let fifo = src.join("pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo should succeed");
+
+        let err = copy_dir_tree_with_progress(&src, &dst, &mut |_event| Ok(()))
+            .expect_err("unsupported entry should fail");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("不支持")),
             "unexpected: {err:?}"
         );
     }

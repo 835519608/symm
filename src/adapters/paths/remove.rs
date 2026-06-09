@@ -8,7 +8,7 @@ use std::path::Path;
 pub fn remove_any(path: &Path) -> Result<(), SymmError> {
     match fs::symlink_metadata(path) {
         Ok(meta) => {
-            if symlink::kind_from_path_and_metadata(path, &meta).is_some() {
+            if symlink::kind_from_path_and_metadata(path, &meta)?.is_some() {
                 symlink::unlink(path)?;
                 return Ok(());
             }

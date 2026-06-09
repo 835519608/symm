@@ -208,6 +208,7 @@ pub fn find_optional(
     .next())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn find_many_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord>, SymmError> {
     let mut ordered = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(MAX_QUERY_PARAMS) {
@@ -220,6 +221,22 @@ pub fn find_many_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord
                 selector: format!("#{id}"),
             })?;
             ordered.push(record);
+        }
+    }
+    Ok(ordered)
+}
+
+pub fn find_existing_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord>, SymmError> {
+    let mut ordered = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(MAX_QUERY_PARAMS) {
+        let by_id: HashMap<i64, LinkRecord> = find_many_by_id_chunk(conn, chunk)?
+            .into_iter()
+            .map(|record| (record.id, record))
+            .collect();
+        for id in chunk {
+            if let Some(record) = by_id.get(id) {
+                ordered.push(record.clone());
+            }
         }
     }
     Ok(ordered)

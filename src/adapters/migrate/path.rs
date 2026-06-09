@@ -66,19 +66,11 @@ where
         source: src.display().to_string(),
     })?;
     if let Err(remove_err) = remove::remove_any(src) {
-        if let Err(cleanup_err) = remove::remove_any(dst) {
-            return Err(SymmError::IoError {
-                message: format!(
-                    "复制迁移完成，但源路径删不掉：{remove_err}；同时目标清理失败：{cleanup_err}（源路径仍未完全移除：{}，目标可能已在 {}，请手动处理后重试）",
-                    src.display(),
-                    dst.display()
-                ),
-            });
-        }
-        return Err(SymmError::IoError {
+        return Err(SymmError::EntityCopiedButSourceCleanupFailed {
+            source_path: src.display().to_string(),
+            target_path: dst.display().to_string(),
             message: format!(
-                "复制迁移完成，但源路径删不掉：{remove_err}（已清理目标 {}，源路径仍未完全移除，请修复权限后重试）",
-                dst.display()
+                "复制迁移完成，但源路径删不掉：{remove_err}；已保留 target 副本，请确认源路径残留后手动处理"
             ),
         });
     }
@@ -98,7 +90,7 @@ fn path_is_link(path: &Path) -> Result<bool, SymmError> {
     let meta = fs::symlink_metadata(path).map_err(|e| SymmError::IoError {
         message: format!("无法读取迁移路径元数据：{e}"),
     })?;
-    Ok(symlink::kind_from_path_and_metadata(path, &meta).is_some())
+    Ok(symlink::kind_from_path_and_metadata(path, &meta)?.is_some())
 }
 
 #[cfg(test)]

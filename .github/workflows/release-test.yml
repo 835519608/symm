@@ -55,9 +55,9 @@ on:
         type: string
         required: false
       release_semver:
-        description: 可选，手动 test-run-* 写入产物的 X.Y.Z；留空则读取 Cargo.toml
+        description: 手动 test-run-* 写入产物的 X.Y.Z
         type: string
-        required: false
+        required: true
 
 permissions:
   contents: write

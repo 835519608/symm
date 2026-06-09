@@ -25,12 +25,20 @@ runs:
 
         SHA="${INPUT_SHA:-${GITHUB_SHA}}"
         REPO="${GITHUB_REPOSITORY}"
+        DEFAULT_BRANCH="$(gh api "/repos/${REPO}" --jq '.default_branch')"
 
-        echo "检查 commit ${SHA} 的 CI（${WORKFLOW_FILE}）…"
+        echo "检查默认分支 ${DEFAULT_BRANCH} 上 commit ${SHA} 的 CI（${WORKFLOW_FILE}）…"
+
+        git fetch --no-tags origin "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+        if ! git merge-base --is-ancestor "${SHA}" "origin/${DEFAULT_BRANCH}"; then
+          echo "::error::commit ${SHA} 不在默认分支 ${DEFAULT_BRANCH} 上，不能发布。"
+          echo "::error::请先合并到默认分支并等待默认分支 push CI 通过。"
+          exit 1
+        fi
 
         runs_json=$(gh api \
           -H "Accept: application/vnd.github+json" \
-          "/repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?head_sha=${SHA}&per_page=20")
+          "/repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?branch=${DEFAULT_BRANCH}&event=push&head_sha=${SHA}&per_page=20")
 
         latest=$(echo "$runs_json" | jq -r '
           [.workflow_runs[]]
@@ -38,8 +46,8 @@ runs:
         ')
 
         if [ -z "${latest}" ] || [ "${latest}" = "null" ]; then
-          echo "::error::commit ${SHA} 上未找到 CI 运行记录。"
-          echo "::error::请先 push 到默认分支，待 Actions「CI」三端矩阵全部通过后再打 tag 或手动触发打包。"
+          echo "::error::commit ${SHA} 上未找到默认分支 push 触发的 ${WORKFLOW_FILE} 运行记录。"
+          echo "::error::请先 push 到默认分支，待必需 Actions 全部通过后再打 tag 或手动触发打包。"
           exit 1
         fi
 

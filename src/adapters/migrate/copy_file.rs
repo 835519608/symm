@@ -21,7 +21,7 @@ where
         message: format!("无法读取源路径元数据：{e}"),
     })?;
 
-    if symlink::kind_from_path_and_metadata(src, &meta).is_some() {
+    if symlink::kind_from_path_and_metadata(src, &meta)?.is_some() {
         copy_link_path(src, dst, reporter)?;
         return Ok(());
     }

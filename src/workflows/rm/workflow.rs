@@ -154,23 +154,39 @@ fn run_remove<W: Write>(
     progress_mode: ProgressSinkMode,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
-    let records = match selection {
-        RmSelection::Selectors(selectors) => resolve_records(conn, selectors, mode)?,
+    let resolved = match selection {
+        RmSelection::Selectors(selectors) => ResolvedRecords {
+            records: resolve_records(conn, selectors, mode)?,
+            failures: Vec::new(),
+        },
         RmSelection::RecordIds(ids) => records_from_ids(conn, ids)?,
     };
-    run_resolved_records(conn, records, mode, writer, started, progress_mode)
+    run_resolved_records(
+        conn,
+        resolved.records,
+        resolved.failures,
+        mode,
+        writer,
+        started,
+        progress_mode,
+    )
+}
+
+struct ResolvedRecords {
+    records: Vec<LinkRecord>,
+    failures: Vec<(String, SymmError)>,
 }
 
 fn run_resolved_records<W: Write>(
     conn: &rusqlite::Connection,
     records: Vec<LinkRecord>,
+    mut failures: Vec<(String, SymmError)>,
     mode: RemoveMode,
     writer: &mut W,
     started: Instant,
     progress_mode: ProgressSinkMode,
 ) -> Result<(), SymmError> {
     let mut labels = Vec::with_capacity(records.len());
-    let mut failures = Vec::new();
     for record in records {
         match remove_one(conn, &record, mode, writer, progress_mode) {
             Ok(label) => labels.push(label),
@@ -282,13 +298,30 @@ fn resolve_records(
 fn records_from_ids(
     conn: &rusqlite::Connection,
     ids: &[i64],
-) -> Result<Vec<LinkRecord>, SymmError> {
+) -> Result<ResolvedRecords, SymmError> {
     if ids.is_empty() {
         return Err(SymmError::InvalidArgument {
             message: "未指定要操作的记录".to_string(),
         });
     }
-    link_store::find_by_ids(conn, ids)
+    let records = link_store::find_existing_by_ids(conn, ids)?;
+    let existing = records
+        .iter()
+        .map(|record| record.id)
+        .collect::<std::collections::HashSet<_>>();
+    let failures = ids
+        .iter()
+        .filter(|id| !existing.contains(id))
+        .map(|id| {
+            (
+                format!("#{id}"),
+                SymmError::NotFound {
+                    selector: format!("#{id}"),
+                },
+            )
+        })
+        .collect();
+    Ok(ResolvedRecords { records, failures })
 }
 
 fn remove_one<W: Write>(
@@ -376,7 +409,7 @@ fn apply_delete_link_only<W: Write>(
     } else if link_status == LinkStatus::Stale {
         writeln!(
             writer,
-            "提示：{} 已不是软链，只删记录（路径文件仍保留）",
+            "提示：{} 已不是记录期望的链接，只删记录（路径实体仍保留）",
             record.link_path
         )
         .map_err(|e| SymmError::IoError {
@@ -417,7 +450,38 @@ fn restore_target_to_link<W: Write>(
     migrate::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)
     })
-    .map_err(|e| RestoreFailure::LinkRemoved(filesystem_applied_but_record_kept(record, e)))
+    .or_else(|err| finish_restore_migration_error(writer, record, err))
+}
+
+fn finish_restore_migration_error<W: Write>(
+    writer: &mut W,
+    record: &LinkRecord,
+    err: SymmError,
+) -> Result<(), RestoreFailure> {
+    match err {
+        SymmError::EntityCopiedButSourceCleanupFailed {
+            target_path,
+            message,
+            ..
+        } => {
+            writeln!(
+                writer,
+                "提示：restore 已把实体恢复到 link 路径，但旧 target 清理失败：{message}；请手动检查并清理 {target_path}"
+            )
+            .map_err(|e| {
+                RestoreFailure::LinkRemoved(filesystem_applied_but_record_kept(
+                    record,
+                    SymmError::IoError {
+                        message: e.to_string(),
+                    },
+                ))
+            })?;
+            Ok(())
+        }
+        err => Err(RestoreFailure::LinkRemoved(
+            filesystem_applied_but_record_kept(record, err),
+        )),
+    }
 }
 
 fn filesystem_applied_but_record_delete_failed(
@@ -653,6 +717,30 @@ mod tests {
     }
 
     #[test]
+    fn restore_copy_cleanup_failure_can_still_delete_record() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        let record = record("restore-cleanup", &link, &target);
+        let mut output = Vec::new();
+
+        finish_restore_migration_error(
+            &mut output,
+            &record,
+            SymmError::EntityCopiedButSourceCleanupFailed {
+                source_path: path_text(&target),
+                target_path: path_text(&link),
+                message: "源路径删不掉".to_string(),
+            },
+        )
+        .expect("cleanup failure should not keep restore record");
+
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(text.contains("旧 target 清理失败"));
+        assert!(text.contains(&path_text(&link)));
+    }
+
+    #[test]
     fn partial_batch_preserves_half_applied_record_code() {
         let failures = vec![(
             "half".to_string(),
@@ -704,6 +792,7 @@ mod tests {
         let err = run_resolved_records(
             &conn,
             records,
+            Vec::new(),
             RemoveMode::DeleteLinkOnly,
             &mut writer,
             Instant::now(),
@@ -719,5 +808,27 @@ mod tests {
         assert!(fs::symlink_metadata(&success_link).is_err());
         assert!(fs::symlink_metadata(&half_link).is_err());
         assert!(half_target.exists());
+    }
+
+    #[test]
+    fn rm_by_ids_continues_when_one_selected_id_disappeared() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        symlink::create_link(&target, &link).expect("create link");
+        let conn = memory_db();
+        insert_record(&conn, "live", &link, &target);
+        let mut output = Vec::new();
+
+        let err = run_rm_by_ids_buffered(&conn, &[1, 99], &mut output)
+            .expect_err("missing id should be reported as partial failure");
+
+        assert!(matches!(err, SymmError::BatchFailure { .. }));
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(target.exists());
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(text.contains("已删除链接关系"));
+        assert!(text.contains("#99"));
     }
 }

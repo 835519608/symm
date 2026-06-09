@@ -142,11 +142,13 @@ pub fn create_link_direct(target: &Path, link: &Path) -> Result<LinkKind, SymmEr
             Ok(()) => return Ok(LinkKind::Symlink),
             Err(e) => {
                 let mapped = map_link_io_error(e);
-                if needs_link_elevation(&mapped) {
-                    return Err(mapped);
+                match create_junction(target, link) {
+                    Ok(()) => return Ok(LinkKind::Junction),
+                    Err(_) if needs_link_elevation(&mapped) => {
+                        return Err(mapped);
+                    }
+                    Err(junction_err) => return Err(junction_err),
                 }
-                create_junction(target, link)?;
-                return Ok(LinkKind::Junction);
             }
         }
     }
@@ -170,7 +172,7 @@ pub fn write_symlink_direct(link: &Path, target: &Path) -> Result<(), SymmError>
 
 pub(crate) fn infer_link_write_kind(src_link: &Path) -> Result<LinkWriteKind, SymmError> {
     let meta = fs::symlink_metadata(src_link).map_err(ioe)?;
-    match symlink::kind_from_path_and_metadata(src_link, &meta) {
+    match symlink::kind_from_path_and_metadata(src_link, &meta)? {
         Some(LinkKind::Junction) => Ok(LinkWriteKind::Junction),
         Some(LinkKind::Symlink) if is_directory_reparse_point(&meta) => {
             Ok(LinkWriteKind::DirSymlink)
@@ -205,7 +207,7 @@ pub fn needs_link_elevation(err: &SymmError) -> bool {
 }
 
 pub fn infer_link_kind_after_elevated(target: &Path, link: &Path) -> Result<LinkKind, SymmError> {
-    infer_existing_link_kind(link).ok_or_else(|| SymmError::IoError {
+    infer_existing_link_kind(link)?.ok_or_else(|| SymmError::IoError {
         message: format!(
             "提权创建链接后无法识别链接类型：{} -> {}",
             link.display(),
@@ -214,8 +216,8 @@ pub fn infer_link_kind_after_elevated(target: &Path, link: &Path) -> Result<Link
     })
 }
 
-fn infer_existing_link_kind(link: &Path) -> Option<LinkKind> {
-    let meta = fs::symlink_metadata(link).ok()?;
+fn infer_existing_link_kind(link: &Path) -> Result<Option<LinkKind>, SymmError> {
+    let meta = fs::symlink_metadata(link).map_err(ioe)?;
     symlink::kind_from_path_and_metadata(link, &meta)
 }
 

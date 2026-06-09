@@ -324,6 +324,7 @@ src/
     theme/                       # 字体、配色、排版
   ui/
     cli.rs                       # clap 命令定义
+    cli_decisions.rs             # CLI 交互决策与模板选择
     output.rs                    # 表格 / JSON / 错误 JSON
     interaction/                 # inquire 交互
     progress/                    # 迁移进度输出
@@ -429,7 +430,7 @@ Windows 安装包目前只为 x64 构建；Windows arm64 / x86 提供便携 zip�
 | `release-test.yml` | `vX.Y.Z-test*` tag 或手动触发 | Pre-release，不设为 Latest，可按目标包控制 |
 | `cleanup-test-releases.yml` | 定时或手动 | 清理旧测试 Pre-release，只保留最新测试包 |
 
-发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 最新的 `ci.yml` 和 `workflow-lint.yml` 都已成功。发布 tag 不应指向只修改 README、ADR、AGENTS 或本地工具配置的维护 commit；这类文档-only 变更不触发打包所需的 CI，发布 tag 应指向已有成功 CI 的代码、脚本、打包、assets 或 workflow 相关 commit。
+发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验 tag 指向的 commit 位于默认分支，且默认分支 push 触发的 `ci.yml` 和 `workflow-lint.yml` 都已成功。发布 tag 不应指向只修改 README、ADR、AGENTS 或本地工具配置的维护 commit；这类文档-only 变更不触发打包所需的 CI，发布 tag 应指向已有成功默认分支 push CI 的代码、脚本、打包、assets 或 workflow 相关 commit。
 
 Runner 矩阵：
 
@@ -446,7 +447,7 @@ Runner 矩阵：
 正式发布流程：
 
 1. 推送 `vX.Y.Z` tag。
-2. 校验该 commit 的 CI 已通过。
+2. 校验该 commit 在默认分支上的 push CI 已通过。
 3. 解析版本号并准备 Release 正文。
 4. 各平台构建并上传临时 artifact。
 5. 发布 job 下载全部 artifact，生成统一 `SHA256SUMS`，创建 / 更新正式 Release。
@@ -475,19 +476,21 @@ Runner 矩阵：
 | `build_macos_x64` | `true` | macOS x64 便携包 |
 | `build_macos_arm64` | `false` | macOS arm64 便携包 |
 | `release_notes` | 空 | 可选，覆盖测试 Release 正文 |
-| `release_semver` | 空 | 可选，手动 `test-run-*` 写入产物的 `X.Y.Z` |
+| `release_semver` | 无 | 必填，手动 `test-run-*` 写入产物的 `X.Y.Z` |
 
 手动触发默认只构建 `windows-x64`、`linux-x64`、`macos-x64`。
 
 ```bash
 # 只打 Windows x64
 gh workflow run release-test.yml \
+  -f release_semver=0.2.1 \
   -f build_windows_x64=true \
   -f build_linux_x64=false \
   -f build_macos_x64=false
 
 # 只打 Linux arm64
 gh workflow run release-test.yml \
+  -f release_semver=0.2.1 \
   -f build_windows_x64=false \
   -f build_linux_x64=false \
   -f build_macos_x64=false \
@@ -501,7 +504,7 @@ gh workflow run release-test.yml \
   -f build_macos_x64=false
 ```
 
-手动触发没有 semver tag，Release tag 会使用 `test-run-<run_id>`；未传 `release_semver` 时版本号来自当前 `Cargo.toml`。
+手动触发没有 semver tag，Release tag 会使用 `test-run-<run_id>`；必须显式传入 `release_semver`，避免测试包版本号从当前 `Cargo.toml` 回退。
 
 ## 维护约定
 

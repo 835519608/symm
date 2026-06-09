@@ -25,7 +25,7 @@ pub fn recreate_symlink(
 
 pub(super) fn link_kind_at(path: &Path) -> Result<Option<LinkKind>, SymmError> {
     let meta = fs::symlink_metadata(path).map_err(ioe)?;
-    Ok(symlink::kind_from_path_and_metadata(path, &meta))
+    symlink::kind_from_path_and_metadata(path, &meta)
 }
 
 /// 目录树内是否存在软链接（发现首个即返回，用于避免无意义的 rebase 重写遍历）。

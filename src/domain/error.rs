@@ -53,6 +53,14 @@ pub enum SymmError {
         target_path: String,
         message: String,
     },
+    #[error(
+        "实体已复制到 target 但源路径清理失败：source={source_path}, target={target_path}；{message}"
+    )]
+    EntityCopiedButSourceCleanupFailed {
+        source_path: String,
+        target_path: String,
+        message: String,
+    },
     #[error("批量操作失败：{message}")]
     BatchFailure { message: String },
 }
@@ -79,6 +87,9 @@ impl SymmError {
             }
             SymmError::EntityMigratedButLinkCreateFailed { .. } => {
                 "entity_migrated_but_link_create_failed"
+            }
+            SymmError::EntityCopiedButSourceCleanupFailed { .. } => {
+                "entity_copied_but_source_cleanup_failed"
             }
             SymmError::BatchFailure { .. } => "batch_failure",
         }

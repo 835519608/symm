@@ -371,8 +371,11 @@ fn apply_filesystem_change<W: Write>(
             migrate::migrate_path(link_path, &target, &mut |event| {
                 reporter.handle_migration_event(event)
             })
-            .map_err(|e| SymmError::IoError {
-                message: format!("接管失败：无法把 link 实体迁到 target：{e}"),
+            .map_err(|err| match err {
+                SymmError::EntityCopiedButSourceCleanupFailed { .. } => err,
+                other => SymmError::IoError {
+                    message: format!("接管失败：无法把 link 实体迁到 target：{other}"),
+                },
             })?;
             let target_norm = runtime_paths::normalize_target_known_exists(&target)?;
             let link_kind = create_managed_link(reporter, link_path, link_norm, &target_norm)
@@ -696,7 +699,7 @@ fn replace_link_via_temp(
             },
         )
     })?;
-    symlink::kind_from_path_and_metadata(link, &meta).ok_or_else(|| {
+    symlink::kind_from_path_and_metadata(link, &meta)?.ok_or_else(|| {
         point_applied_but_record_unwritten(
             link_norm,
             target_norm,

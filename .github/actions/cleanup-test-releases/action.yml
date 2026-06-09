@@ -27,12 +27,17 @@ runs:
         '
 
         if [ -n "${KEEP_TAG}" ]; then
-          if ! gh release view "${KEEP_TAG}" --json tagName,isPrerelease \
-            --jq 'select(.isPrerelease) | .tagName' >/dev/null; then
+          if ! keep_json="$(gh release view "${KEEP_TAG}" --json tagName,isPrerelease)"; then
             echo "::error::指定保留的测试 Release 不存在或不是 Pre-release：${KEEP_TAG}"
             exit 1
           fi
-          keep_tag="${KEEP_TAG}"
+          keep_tag_name="$(jq -r '.tagName' <<< "${keep_json}")"
+          keep_is_prerelease="$(jq -r '.isPrerelease' <<< "${keep_json}")"
+          if [ "${keep_is_prerelease}" != "true" ] || ! [[ "${keep_tag_name}" =~ -test|^test-run- ]]; then
+            echo "::error::指定保留的测试 Release 不存在或不是 Pre-release：${KEEP_TAG}"
+            exit 1
+          fi
+          keep_tag="${keep_tag_name}"
           echo "保留本次测试包：${keep_tag}"
         else
           keep_tag="$(gh release list --limit 200 --json tagName,isPrerelease,publishedAt \

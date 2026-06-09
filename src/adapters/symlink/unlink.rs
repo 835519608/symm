@@ -7,7 +7,7 @@ use std::path::Path;
 pub fn unlink(link: &Path) -> Result<(), SymmError> {
     match fs::symlink_metadata(link) {
         Ok(meta) => {
-            let Some(kind) = super::kind_from_path_and_metadata(link, &meta) else {
+            let Some(kind) = super::kind_from_path_and_metadata(link, &meta)? else {
                 return Ok(());
             };
             if should_remove_with_remove_dir(&meta, link, kind) {

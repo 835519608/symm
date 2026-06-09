@@ -33,7 +33,7 @@ impl EntityFingerprint {
         let meta = fs::symlink_metadata(path).map_err(|e| SymmError::IoError {
             message: format!("无法确认 link 路径实体身份：{e}"),
         })?;
-        if symlink::kind_from_path_and_metadata(path, &meta).is_some() {
+        if symlink::kind_from_path_and_metadata(path, &meta)?.is_some() {
             return Err(entity_changed(path));
         }
         Self::from_metadata(path, &meta)
