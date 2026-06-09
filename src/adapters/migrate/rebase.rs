@@ -29,7 +29,8 @@ pub(super) fn link_kind_at(path: &Path) -> Result<Option<LinkKind>, SymmError> {
 }
 
 /// 目录树内是否存在软链接（发现首个即返回，用于避免无意义的 rebase 重写遍历）。
-pub fn tree_contains_symlink(root: &Path) -> Result<bool, SymmError> {
+#[cfg(test)]
+fn tree_contains_symlink(root: &Path) -> Result<bool, SymmError> {
     let meta = fs::symlink_metadata(root).map_err(ioe)?;
     if !meta.is_dir() {
         return Ok(false);

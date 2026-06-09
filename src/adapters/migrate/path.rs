@@ -1,6 +1,6 @@
 use super::relocate_symlink::relocate_symlink;
 use super::{copy_file, rebase};
-use crate::adapters::paths::remove;
+use crate::adapters::paths::{presence, remove};
 use crate::adapters::platform::{HostFs, format_relocate_failure, host_platform};
 use crate::domain::error::SymmError;
 use std::path::Path;
@@ -46,8 +46,12 @@ where
     }
 
     if let Some(acl_file) = host_platform().snapshot_dir_acl(src)? {
+        let acl_file = TempAclSnapshot::new(acl_file);
         copy_file::copy_path_with_progress(src, dst, reporter)?;
-        host_platform().restore_dir_acl(dst, &acl_file)?;
+        if let Err(err) = host_platform().restore_dir_acl(dst, acl_file.path()) {
+            let _ = remove::remove_any(dst);
+            return Err(err);
+        }
     } else {
         copy_file::copy_path_with_progress(src, dst, reporter)?;
     }
@@ -66,7 +70,8 @@ where
     Ok(())
 }
 
-pub fn move_path_without_progress(src: &Path, dst: &Path) -> Result<(), SymmError> {
+#[cfg(test)]
+fn move_path_without_progress(src: &Path, dst: &Path) -> Result<(), SymmError> {
     let mut noop = |_event: MigrationEvent| Ok(());
     migrate_path(src, dst, &mut noop)
 }
@@ -75,23 +80,13 @@ pub fn can_use_fast_move(src: &Path, dst: &Path) -> Result<bool, SymmError> {
     let dst_parent = dst.parent().ok_or_else(|| SymmError::InvalidArgument {
         message: "无法解析目标父目录".to_string(),
     })?;
-    if !dst_parent.exists() {
+    if !presence::target_exists(dst_parent)? {
         return Err(SymmError::TargetNotFound {
             path: dst_parent.display().to_string(),
         });
     }
 
     host_platform().same_volume(src, dst_parent)
-}
-
-pub fn fs_extra_error(e: fs_extra::error::Error) -> SymmError {
-    let message = match e.kind {
-        fs_extra::error::ErrorKind::Io(ref io_err) => {
-            crate::adapters::errors::io::format_io_error(io_err)
-        }
-        _ => e.to_string(),
-    };
-    SymmError::IoError { message }
 }
 
 pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), SymmError> {
@@ -103,6 +98,26 @@ pub fn move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<(), Sy
             })
         }
         Err(failure) => Err(format_relocate_failure(role, failure)),
+    }
+}
+
+struct TempAclSnapshot {
+    path: std::path::PathBuf,
+}
+
+impl TempAclSnapshot {
+    fn new(path: std::path::PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempAclSnapshot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -238,6 +253,38 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_path_with_progress_preserves_directory_modes() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src");
+        let nested = src.join("nested");
+        let dst = temp.path().join("dst");
+        fs::create_dir_all(&nested).expect("create dirs");
+        fs::write(nested.join("file.txt"), "payload").expect("write nested file");
+        fs::set_permissions(&src, fs::Permissions::from_mode(0o555)).expect("chmod root");
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o555)).expect("chmod nested");
+
+        copy_path_with_progress(&src, &dst, &mut |_event| Ok(())).expect("copy dir");
+
+        let root_mode = fs::metadata(&dst)
+            .expect("dst metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        let nested_mode = fs::metadata(dst.join("nested"))
+            .expect("nested metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            fs::read_to_string(dst.join("nested").join("file.txt")).expect("read copied file"),
+            "payload"
+        );
+        assert_eq!(root_mode, 0o555);
+        assert_eq!(nested_mode, 0o555);
     }
 
     #[test]

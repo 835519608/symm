@@ -4,6 +4,7 @@
 //! 批次内若有受防护/过滤驱动拦截的路径，会对整批 `RmGetList` 失败，故对 `ACCESS_DENIED` 做二分拆分。
 
 use super::ProcInfo;
+use crate::adapters::paths::presence;
 use crate::domain::error::SymmError;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -37,7 +38,7 @@ pub fn list_locking_processes_for_path(
     mut progress: impl FnMut(super::LockProbeProgress),
 ) -> Result<Vec<ProcInfo>, SymmError> {
     // link 尚不存在时无文件可注册，等价于无占用（add 会在该路径创建软链）。
-    if !root.exists() {
+    if !presence::path_itself_exists(root)? {
         return Ok(vec![]);
     }
 

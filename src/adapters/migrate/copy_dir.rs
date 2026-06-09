@@ -1,12 +1,11 @@
 use super::{
     MigrationEvent,
-    copy_file::{COPY_BUFFER_SIZE, copy_permissions},
+    copy_file::{COPY_BUFFER_SIZE, copy_permissions, copy_regular_file_with_progress},
     rebase,
 };
 use crate::adapters::errors::io::ioe;
 use crate::domain::error::SymmError;
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use walkdir::WalkDir;
@@ -22,6 +21,7 @@ where
     let mut copied_bytes: u64 = 0;
     let mut files_copied: u64 = 0;
     let mut deferred_symlinks: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut deferred_dir_permissions: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut buf = vec![0u8; COPY_BUFFER_SIZE];
 
     let mut entries = WalkDir::new(src).follow_links(false).into_iter();
@@ -50,6 +50,7 @@ where
 
         if file_type.is_dir() {
             fs::create_dir_all(&dst_path).map_err(ioe)?;
+            deferred_dir_permissions.push((src_path.to_path_buf(), dst_path));
             continue;
         }
 
@@ -58,14 +59,19 @@ where
             let current_item = src_path
                 .file_name()
                 .map(|s| Arc::<str>::from(s.to_string_lossy()));
-            copied_bytes = copy_file_with_progress(
+            copied_bytes = copy_regular_file_with_progress(
                 src_path,
                 &dst_path,
                 copied_bytes,
-                files_copied,
                 current_item.clone(),
                 &mut buf,
-                reporter,
+                &mut |copied_bytes, current_item| {
+                    reporter(MigrationEvent::Copying {
+                        copied_bytes,
+                        files_copied,
+                        current_item,
+                    })
+                },
             )?;
             files_copied += 1;
             reporter(MigrationEvent::Copying {
@@ -89,6 +95,15 @@ where
         })?;
     }
 
+    apply_deferred_dir_permissions(deferred_dir_permissions)?;
+    Ok(())
+}
+
+fn apply_deferred_dir_permissions(mut dirs: Vec<(PathBuf, PathBuf)>) -> Result<(), SymmError> {
+    dirs.sort_by(|a, b| b.1.components().count().cmp(&a.1.components().count()));
+    for (src, dst) in dirs {
+        copy_permissions(&src, &dst)?;
+    }
     Ok(())
 }
 
@@ -97,39 +112,6 @@ fn ensure_parent_dir(path: &Path) -> Result<(), SymmError> {
         fs::create_dir_all(parent).map_err(ioe)?;
     }
     Ok(())
-}
-
-fn copy_file_with_progress<F>(
-    src: &Path,
-    dst: &Path,
-    mut copied_bytes: u64,
-    files_copied: u64,
-    current_item: Option<Arc<str>>,
-    buf: &mut [u8],
-    reporter: &mut F,
-) -> Result<u64, SymmError>
-where
-    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
-{
-    let mut reader = fs::File::open(src).map_err(ioe)?;
-    let mut writer = fs::File::create(dst).map_err(ioe)?;
-
-    loop {
-        let n = reader.read(buf).map_err(ioe)?;
-        if n == 0 {
-            break;
-        }
-        writer.write_all(&buf[..n]).map_err(ioe)?;
-        copied_bytes = copied_bytes.saturating_add(n as u64);
-        reporter(MigrationEvent::Copying {
-            copied_bytes,
-            files_copied,
-            current_item: current_item.clone(),
-        })?;
-    }
-    writer.flush().map_err(ioe)?;
-    copy_permissions(src, dst)?;
-    Ok(copied_bytes)
 }
 
 #[cfg(test)]

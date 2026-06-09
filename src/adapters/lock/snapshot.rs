@@ -42,17 +42,23 @@ pub fn parse_snapshot(content: &str) -> Result<Vec<ProcInfo>, SymmError> {
     }
 
     let mut out = Vec::new();
-    for line in lines {
+    for (index, line) in lines.enumerate() {
+        let line_no = index + 2;
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
         let Some((pid_raw, display)) = line.split_once('\t') else {
-            continue;
+            return Err(SymmError::IoError {
+                message: format!("占用快照第 {line_no} 行格式无效"),
+            });
         };
-        let Ok(pid) = pid_raw.trim().parse::<u32>() else {
-            continue;
-        };
+        let pid = pid_raw
+            .trim()
+            .parse::<u32>()
+            .map_err(|e| SymmError::IoError {
+                message: format!("占用快照第 {line_no} 行 pid 无效：{e}"),
+            })?;
         out.push(ProcInfo {
             pid,
             display: display.to_string(),
@@ -92,5 +98,25 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].pid, 42);
         assert_eq!(parsed[1].pid, 99);
+    }
+
+    #[test]
+    fn snapshot_rejects_bad_line_format() {
+        let err =
+            parse_snapshot("symm-lock-snapshot-v1\nmissing-tab").expect_err("bad line should fail");
+
+        assert!(
+            matches!(err, crate::domain::error::SymmError::IoError { message } if message.contains("第 2 行格式无效"))
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_bad_pid() {
+        let err =
+            parse_snapshot("symm-lock-snapshot-v1\nabc\tprocess").expect_err("bad pid should fail");
+
+        assert!(
+            matches!(err, crate::domain::error::SymmError::IoError { message } if message.contains("第 2 行 pid 无效"))
+        );
     }
 }

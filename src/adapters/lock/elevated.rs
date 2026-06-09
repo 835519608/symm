@@ -10,27 +10,22 @@ use std::env;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 pub fn list_locking_processes(
     path: &Path,
     mut progress: impl FnMut(LockProbeProgress),
 ) -> Result<Vec<ProcInfo>, SymmError> {
-    let snapshot = temp_snapshot_path("list");
-    let log = temp_snapshot_path("elev-log");
-    let progress_file = temp_snapshot_path("elev-progress");
-    if snapshot.exists() {
-        let _ = std::fs::remove_file(&snapshot);
-    }
-    if log.exists() {
-        let _ = std::fs::remove_file(&log);
-    }
-    if progress_file.exists() {
-        let _ = std::fs::remove_file(&progress_file);
-    }
+    let session = ElevatedLockProbeSession::new();
+    let snapshot = session.snapshot().to_path_buf();
+    let log = session.log().to_path_buf();
+    let progress_file = session.progress().to_path_buf();
 
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
@@ -99,9 +94,6 @@ pub fn list_locking_processes(
             &log,
         )
     })?;
-    let _ = std::fs::remove_file(&snapshot);
-    let _ = std::fs::remove_file(&log);
-    let _ = std::fs::remove_file(&progress_file);
     Ok(procs)
 }
 
@@ -167,13 +159,53 @@ where
     privilege::spawn_elevated_subcommand(args)
 }
 
-fn temp_snapshot_path(kind: &str) -> PathBuf {
-    let mut path = env::temp_dir();
+struct ElevatedLockProbeSession {
+    snapshot: PathBuf,
+    log: PathBuf,
+    progress: PathBuf,
+}
+
+impl ElevatedLockProbeSession {
+    fn new() -> Self {
+        let stem = unique_temp_stem();
+        Self {
+            snapshot: temp_session_path(&stem, "snapshot"),
+            log: temp_session_path(&stem, "log"),
+            progress: temp_session_path(&stem, "progress"),
+        }
+    }
+
+    fn snapshot(&self) -> &Path {
+        &self.snapshot
+    }
+
+    fn log(&self) -> &Path {
+        &self.log
+    }
+
+    fn progress(&self) -> &Path {
+        &self.progress
+    }
+}
+
+impl Drop for ElevatedLockProbeSession {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.snapshot);
+        let _ = std::fs::remove_file(&self.log);
+        let _ = std::fs::remove_file(&self.progress);
+    }
+}
+
+fn unique_temp_stem() -> String {
     let pid = std::process::id();
     let tick = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis();
-    path.push(format!("symm-{kind}-{pid}-{tick}.locks"));
-    path
+        .as_nanos();
+    let sequence = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("symm-lock-probe-{pid}-{tick}-{sequence}")
+}
+
+fn temp_session_path(stem: &str, kind: &str) -> PathBuf {
+    env::temp_dir().join(format!("{stem}-{kind}.tmp"))
 }

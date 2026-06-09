@@ -9,7 +9,7 @@ pub fn internal_target(
     raw_target: &Path,
     source_roots: &[PathBuf],
 ) -> PathBuf {
-    let resolved = if raw_target.is_absolute() {
+    let resolved_raw = if raw_target.is_absolute() {
         raw_target.to_path_buf()
     } else {
         src_link
@@ -22,9 +22,11 @@ pub fn internal_target(
             })
             .join(raw_target)
     };
+    let resolved = crate::adapters::paths::lexical::clean(&resolved_raw);
 
     for base in source_roots {
-        if let Ok(rel) = resolved.strip_prefix(base) {
+        let base = crate::adapters::paths::lexical::clean(base);
+        if let Ok(rel) = resolved.strip_prefix(&base) {
             return dst_root.join(rel);
         }
     }
@@ -73,5 +75,19 @@ mod tests {
             &roots,
         );
         assert_eq!(target, dst_root.join("nested").join("file.txt"));
+    }
+
+    #[test]
+    fn internal_target_rebases_relative_parent_components_under_root() {
+        let src_root = PathBuf::from("/data/agent");
+        let dst_root = PathBuf::from("/data/agent1");
+        let roots = source_roots(&src_root);
+        let target = internal_target(
+            &dst_root,
+            &src_root.join("links").join("link"),
+            &PathBuf::from("../data/file.txt"),
+            &roots,
+        );
+        assert_eq!(target, dst_root.join("data").join("file.txt"));
     }
 }

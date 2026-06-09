@@ -1,7 +1,7 @@
 use super::copy_dir;
 use super::path::MigrationEvent;
 use crate::adapters::errors::io::ioe;
-use crate::adapters::paths::remove;
+use crate::adapters::paths::{presence, remove};
 use crate::domain::error::SymmError;
 use std::fs;
 use std::io::{Read, Write};
@@ -25,7 +25,7 @@ where
     }
 
     if meta.is_dir() {
-        if dst.exists() {
+        if presence::path_itself_exists(dst)? {
             return Err(SymmError::InvalidArgument {
                 message: "迁移失败：目标目录已存在".to_string(), // keep
             });
@@ -35,6 +35,10 @@ where
         })?;
 
         if let Err(err) = copy_dir::copy_dir_tree_with_progress(src, dst, reporter) {
+            let _ = remove::remove_any(dst);
+            return Err(err);
+        }
+        if let Err(err) = copy_permissions(src, dst) {
             let _ = remove::remove_any(dst);
             return Err(err);
         }
@@ -51,26 +55,39 @@ where
         .file_name()
         .map(|s| Arc::<str>::from(s.to_string_lossy()));
     let mut buf = vec![0u8; COPY_BUFFER_SIZE];
-    if let Err(err) = copy_file_buffered(src, dst, current_item, &mut buf, reporter) {
+    if let Err(err) = copy_regular_file_with_progress(
+        src,
+        dst,
+        0,
+        current_item,
+        &mut buf,
+        &mut |copied_bytes, current_item| {
+            reporter(MigrationEvent::Copying {
+                copied_bytes,
+                files_copied: 1,
+                current_item,
+            })
+        },
+    ) {
         let _ = remove::remove_any(dst);
         return Err(err);
     }
     Ok(())
 }
 
-fn copy_file_buffered<F>(
+pub(crate) fn copy_regular_file_with_progress<F>(
     src: &Path,
     dst: &Path,
+    mut copied_bytes: u64,
     current_item: Option<Arc<str>>,
     buf: &mut [u8],
     reporter: &mut F,
-) -> Result<(), SymmError>
+) -> Result<u64, SymmError>
 where
-    F: FnMut(MigrationEvent) -> Result<(), SymmError>,
+    F: FnMut(u64, Option<Arc<str>>) -> Result<(), SymmError>,
 {
     let mut reader = fs::File::open(src).map_err(ioe)?;
     let mut writer = fs::File::create(dst).map_err(ioe)?;
-    let mut copied_bytes = 0u64;
     loop {
         let n = reader.read(buf).map_err(ioe)?;
         if n == 0 {
@@ -78,14 +95,11 @@ where
         }
         writer.write_all(&buf[..n]).map_err(ioe)?;
         copied_bytes = copied_bytes.saturating_add(n as u64);
-        reporter(MigrationEvent::Copying {
-            copied_bytes,
-            files_copied: 1,
-            current_item: current_item.clone(),
-        })?;
+        reporter(copied_bytes, current_item.clone())?;
     }
     writer.flush().map_err(ioe)?;
-    copy_permissions(src, dst)
+    copy_permissions(src, dst)?;
+    Ok(copied_bytes)
 }
 
 pub(crate) fn copy_permissions(src: &Path, dst: &Path) -> Result<(), SymmError> {
