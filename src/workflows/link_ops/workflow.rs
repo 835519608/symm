@@ -189,8 +189,8 @@ enum EntityFingerprintInner {
     },
     #[cfg(windows)]
     Windows {
-        volume: Option<u32>,
-        index: Option<u64>,
+        volume: u32,
+        index: u64,
         creation_time: u64,
         last_write_time: u64,
         len: u64,
@@ -227,8 +227,8 @@ impl EntityFingerprint {
         let identity = windows_file_identity(path)?;
         Ok(Self {
             inner: EntityFingerprintInner::Windows {
-                volume: Some(identity.volume),
-                index: Some(identity.index),
+                volume: identity.volume,
+                index: identity.index,
                 creation_time: identity.creation_time,
                 last_write_time: identity.last_write_time,
                 len: identity.len,
