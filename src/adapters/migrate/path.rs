@@ -66,9 +66,18 @@ where
         source: src.display().to_string(),
     })?;
     if let Err(remove_err) = remove::remove_any(src) {
+        if let Err(cleanup_err) = remove::remove_any(dst) {
+            return Err(SymmError::IoError {
+                message: format!(
+                    "复制迁移完成，但源路径删不掉：{remove_err}；同时目标清理失败：{cleanup_err}（源路径仍未完全移除：{}，目标可能已在 {}，请手动处理后重试）",
+                    src.display(),
+                    dst.display()
+                ),
+            });
+        }
         return Err(SymmError::IoError {
             message: format!(
-                "跨盘复制完成，但源路径删不掉：{remove_err}（目标已在 {}，请手动清理源）",
+                "复制迁移完成，但源路径删不掉：{remove_err}（已清理目标 {}，源路径仍未完全移除，请修复权限后重试）",
                 dst.display()
             ),
         });
