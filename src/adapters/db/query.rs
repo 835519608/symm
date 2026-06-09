@@ -8,7 +8,6 @@ pub enum StringMatch {
 
 #[derive(Debug, Clone, Default)]
 pub struct LinkQuery {
-    pub id: Option<i64>,
     pub name: Option<String>,
     pub name_match: StringMatch,
     pub link_path: Option<String>,
@@ -18,13 +17,6 @@ pub struct LinkQuery {
 }
 
 impl LinkQuery {
-    pub fn id(id: i64) -> Self {
-        Self {
-            id: Some(id),
-            ..Self::default()
-        }
-    }
-
     pub fn name_exact(name: impl Into<String>) -> Self {
         Self {
             name: Some(name.into()),
@@ -43,9 +35,6 @@ impl LinkQuery {
 
     pub fn describe(&self) -> String {
         let mut parts = Vec::new();
-        if let Some(id) = self.id {
-            parts.push(format!("id={id}"));
-        }
         if let Some(name) = &self.name {
             parts.push(format!(
                 "name {} {:?}",
@@ -96,6 +85,7 @@ mod tests {
         let q = LinkQuery::name_exact("demo");
         assert_eq!(q.name.as_deref(), Some("demo"));
         assert_eq!(q.name_match, StringMatch::Exact);
-        assert!(q.id.is_none());
+        assert!(q.link_path.is_none());
+        assert!(q.target_path.is_none());
     }
 }

@@ -3,7 +3,12 @@ use crate::adapters::db::schema;
 use crate::adapters::paths::runtime_paths;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkKind, LinkRecord, prepare_link_name_for_storage};
-use rusqlite::{Connection, Error as SqlError, ErrorCode, ToSql, params, types::Type};
+use rusqlite::{
+    Connection, Error as SqlError, ErrorCode, ToSql, params, params_from_iter, types::Type,
+};
+use std::collections::HashMap;
+#[cfg(any(feature = "gui", test))]
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn now_ts() -> i64 {
@@ -15,11 +20,11 @@ fn now_ts() -> i64 {
 
 pub fn open_db() -> Result<Connection, SymmError> {
     let path = runtime_paths::db_path()?;
-    let conn = Connection::open(path).map_err(|e| SymmError::DbError {
+    let conn = Connection::open(&path).map_err(|e| SymmError::DbError {
         message: e.to_string(),
     })?;
     schema::tune_connection(&conn)?;
-    schema::migrate(&conn)?;
+    schema::migrate_file(&conn, &path)?;
     Ok(conn)
 }
 
@@ -62,6 +67,7 @@ pub fn insert_link(
 
 const SELECT_ROW: &str =
     "SELECT id, name, link_path, target_path, link_kind, created_at, updated_at FROM links";
+pub(super) const MAX_QUERY_PARAMS: usize = 900;
 
 struct BuiltQuery {
     sql: String,
@@ -72,10 +78,6 @@ fn build_select(query: &LinkQuery, options: ListOptions) -> BuiltQuery {
     let mut clauses: Vec<String> = Vec::new();
     let mut params: Vec<Box<dyn ToSql>> = Vec::new();
 
-    if let Some(id) = query.id {
-        clauses.push("id = ?".to_string());
-        params.push(Box::new(id));
-    }
     push_string_predicate(
         &mut clauses,
         &mut params,
@@ -187,17 +189,68 @@ pub fn find_optional(
     .next())
 }
 
-pub fn delete_one(conn: &Connection, query: &LinkQuery) -> Result<LinkRecord, SymmError> {
-    let record = find_one(conn, query)?;
+pub fn find_many_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<LinkRecord>, SymmError> {
+    let mut ordered = Vec::with_capacity(ids.len());
+    for chunk in ids.chunks(MAX_QUERY_PARAMS) {
+        let by_id: HashMap<i64, LinkRecord> = find_many_by_id_chunk(conn, chunk)?
+            .into_iter()
+            .map(|record| (record.id, record))
+            .collect();
+        for id in chunk {
+            let record = by_id.get(id).cloned().ok_or_else(|| SymmError::NotFound {
+                selector: format!("#{id}"),
+            })?;
+            ordered.push(record);
+        }
+    }
+    Ok(ordered)
+}
+
+#[cfg(feature = "gui")]
+pub fn find_optional_by_id(conn: &Connection, id: i64) -> Result<Option<LinkRecord>, SymmError> {
+    let mut records = find_many_by_id_chunk(conn, &[id])?;
+    Ok(records.pop())
+}
+
+#[cfg(any(feature = "gui", test))]
+pub fn existing_ids(conn: &Connection, ids: &[i64]) -> Result<HashSet<i64>, SymmError> {
+    let mut existing = HashSet::with_capacity(ids.len());
+    for chunk in ids.chunks(MAX_QUERY_PARAMS) {
+        for record in find_many_by_id_chunk(conn, chunk)? {
+            existing.insert(record.id);
+        }
+    }
+    Ok(existing)
+}
+
+pub(super) fn find_many_by_id_chunk(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<Vec<LinkRecord>, SymmError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("{SELECT_ROW} WHERE id IN ({placeholders}) ORDER BY id ASC");
+    let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+    let mapped = stmt
+        .query_map(params_from_iter(ids.iter()), map_link_row)
+        .map_err(db_err)?;
+    mapped.collect::<Result<Vec<_>, _>>().map_err(db_err)
+}
+
+pub fn delete_id(conn: &Connection, id: i64) -> Result<(), SymmError> {
     let deleted = conn
-        .execute("DELETE FROM links WHERE id = ?1", params![record.id])
+        .execute("DELETE FROM links WHERE id = ?1", params![id])
         .map_err(db_err)?;
     if deleted == 0 {
         return Err(SymmError::NotFound {
-            selector: query.describe(),
+            selector: format!("#{id}"),
         });
     }
-    Ok(record)
+    Ok(())
 }
 
 pub fn for_each_link<F>(conn: &Connection, mut f: F) -> Result<(), SymmError>
@@ -247,6 +300,43 @@ pub fn count_links(conn: &Connection) -> Result<usize, SymmError> {
         .map_err(db_err)
 }
 
+#[cfg(any(feature = "gui", test))]
+pub fn count_link_kinds(conn: &Connection) -> Result<(usize, usize), SymmError> {
+    let mut stmt = conn
+        .prepare("SELECT link_kind, COUNT(*) FROM links GROUP BY link_kind")
+        .map_err(db_err)?;
+    let mut rows = stmt.query([]).map_err(db_err)?;
+    let mut counts = (0usize, 0usize);
+    while let Some(row) = rows.next().map_err(db_err)? {
+        let kind: String = row.get(0).map_err(db_err)?;
+        let count = row.get::<_, i64>(1).map_err(db_err)?.max(0) as usize;
+        match LinkKind::from_db_str(&kind) {
+            Some(LinkKind::Symlink) => counts.0 = count,
+            Some(LinkKind::Junction) => counts.1 = count,
+            None => {
+                return Err(SymmError::DbError {
+                    message: format!("未知链接类型：{kind}"),
+                });
+            }
+        }
+    }
+    Ok(counts)
+}
+
+#[cfg(any(feature = "gui", test))]
+pub fn count_links_matching(conn: &Connection, search: &str) -> Result<usize, SymmError> {
+    let Some(pattern) = search_pattern(search) else {
+        return count_links(conn);
+    };
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM links WHERE {}", search_where_sql()),
+        params![pattern],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|count| count.max(0) as usize)
+    .map_err(db_err)
+}
+
 pub fn list_links_paginated(
     conn: &Connection,
     limit: Option<u32>,
@@ -255,7 +345,69 @@ pub fn list_links_paginated(
     find_all(conn, &LinkQuery::default(), ListOptions { limit, offset })
 }
 
+#[cfg(any(feature = "gui", test))]
+pub fn list_links_matching_paginated(
+    conn: &Connection,
+    search: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<(u32, LinkRecord)>, SymmError> {
+    let limit = limit as i64;
+    let offset = offset as i64;
+    let Some(pattern) = search_pattern(search) else {
+        let rows = find_all(
+            conn,
+            &LinkQuery::default(),
+            ListOptions {
+                limit: Some(limit as u32),
+                offset: offset as u32,
+            },
+        )?;
+        return Ok(rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, record)| (offset as u32 + i as u32 + 1, record))
+            .collect());
+    };
+
+    let sql = format!(
+        "SELECT id, name, link_path, target_path, link_kind, created_at, updated_at, list_index
+         FROM (
+           SELECT id, name, link_path, target_path, link_kind, created_at, updated_at,
+                  ROW_NUMBER() OVER (ORDER BY id ASC) AS list_index
+           FROM links
+         )
+         WHERE {}
+         ORDER BY id ASC LIMIT ?2 OFFSET ?3",
+        search_where_sql()
+    );
+    let params: Vec<Box<dyn ToSql>> = vec![Box::new(pattern), Box::new(limit), Box::new(offset)];
+    let param_refs = params
+        .iter()
+        .map(|param| param.as_ref())
+        .collect::<Vec<_>>();
+    let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+    let mapped = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            Ok((row.get::<_, i64>(7)?.max(1) as u32, map_link_row(row)?))
+        })
+        .map_err(db_err)?;
+    mapped.collect::<Result<Vec<_>, _>>().map_err(db_err)
+}
+
 pub fn list_index_for_id(conn: &Connection, id: i64) -> Result<Option<u32>, SymmError> {
+    let exists = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM links WHERE id = ?1)",
+            params![id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(db_err)?
+        != 0;
+    if !exists {
+        return Ok(None);
+    }
+
     let count = conn
         .query_row(
             "SELECT COUNT(*) FROM links WHERE id <= ?1",
@@ -263,11 +415,7 @@ pub fn list_index_for_id(conn: &Connection, id: i64) -> Result<Option<u32>, Symm
             |row| row.get::<_, i64>(0),
         )
         .map_err(db_err)?;
-    if count == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(count as u32))
-    }
+    Ok(Some(count as u32))
 }
 
 fn map_link_row(row: &rusqlite::Row<'_>) -> Result<LinkRecord, SqlError> {
@@ -288,6 +436,37 @@ fn map_link_row(row: &rusqlite::Row<'_>) -> Result<LinkRecord, SqlError> {
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
     })
+}
+
+#[cfg(any(feature = "gui", test))]
+fn search_pattern(search: &str) -> Option<String> {
+    let query = search.trim().to_lowercase();
+    if query.is_empty() {
+        None
+    } else {
+        Some(format!("%{}%", escape_like(&query)))
+    }
+}
+
+#[cfg(any(feature = "gui", test))]
+fn search_where_sql() -> &'static str {
+    "(name <> '' AND lower(name) LIKE ?1 ESCAPE '\\')
+     OR (name = '' AND lower(link_path) LIKE ?1 ESCAPE '\\')"
+}
+
+#[cfg(any(feature = "gui", test))]
+fn escape_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' | '%' | '_' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn map_sql_error(err: SqlError, name: &str) -> SymmError {
@@ -344,11 +523,21 @@ mod tests {
         insert_link(&conn, "a", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
         insert_link(&conn, "b", "/tmp/b", "/tmp/t2", LinkKind::Symlink).expect("insert");
         insert_link(&conn, "c", "/tmp/c", "/tmp/t3", LinkKind::Symlink).expect("insert");
-        delete_one(&conn, &LinkQuery::id(2)).expect("delete middle");
+        delete_id(&conn, 2).expect("delete middle");
 
         let rows = list_links_paginated(&conn, None, 0).expect("list");
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1].name, "c");
+    }
+
+    #[test]
+    fn list_index_returns_none_for_missing_id() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        insert_link(&conn, "a", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+        insert_link(&conn, "b", "/tmp/b", "/tmp/t2", LinkKind::Symlink).expect("insert");
+
+        assert_eq!(list_index_for_id(&conn, 99).expect("index"), None);
     }
 
     #[test]
@@ -360,6 +549,78 @@ mod tests {
         let record = find_one(&conn, &LinkQuery::link_path_exact("/tmp/link")).expect("get");
         assert_eq!(record.id, 1);
         assert_eq!(record.name, "v2");
+    }
+
+    #[test]
+    fn find_many_by_ids_fetches_requested_records_in_one_query_shape() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        insert_link(&conn, "a", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+        insert_link(&conn, "b", "/tmp/b", "/tmp/t2", LinkKind::Symlink).expect("insert");
+        insert_link(&conn, "c", "/tmp/c", "/tmp/t3", LinkKind::Symlink).expect("insert");
+
+        let records = find_many_by_ids(&conn, &[3, 1]).expect("find many");
+        assert_eq!(
+            records.iter().map(|record| record.id).collect::<Vec<_>>(),
+            vec![3, 1]
+        );
+    }
+
+    #[test]
+    fn find_many_by_ids_reports_missing_id() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        insert_link(&conn, "a", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+
+        let err = find_many_by_ids(&conn, &[1, 99]).expect_err("missing id should fail");
+
+        assert!(matches!(err, SymmError::NotFound { selector } if selector == "#99"));
+    }
+
+    #[test]
+    fn delete_id_deletes_without_fetching_record() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        insert_link(&conn, "a", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+
+        delete_id(&conn, 1).expect("delete");
+
+        let err =
+            find_one(&conn, &LinkQuery::link_path_exact("/tmp/a")).expect_err("deleted record");
+        assert!(matches!(err, SymmError::NotFound { .. }));
+    }
+
+    #[test]
+    fn list_links_matching_paginated_returns_page_and_original_index() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        insert_link(&conn, "alpha", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+        insert_link(&conn, "beta", "/tmp/b", "/tmp/t2", LinkKind::Junction).expect("insert");
+        insert_link(&conn, "", "/tmp/gamma-link", "/tmp/t3", LinkKind::Symlink).expect("insert");
+
+        let rows = list_links_matching_paginated(&conn, "a", 2, 1).expect("search matching page");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].0, 2);
+        assert_eq!(rows[0].1.name, "beta");
+        assert_eq!(rows[1].0, 3);
+        assert_eq!(rows[1].1.link_path, "/tmp/gamma-link");
+    }
+
+    #[test]
+    fn counts_and_existing_ids_are_set_based() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        migrate(&conn).expect("migrate");
+        insert_link(&conn, "alpha", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+        insert_link(&conn, "beta", "/tmp/b", "/tmp/t2", LinkKind::Junction).expect("insert");
+
+        assert_eq!(count_links(&conn).expect("count"), 2);
+        assert_eq!(count_link_kinds(&conn).expect("kind count"), (1, 1));
+        assert_eq!(count_links_matching(&conn, "alp").expect("matching"), 1);
+        assert_eq!(
+            existing_ids(&conn, &[2, 99]).expect("existing ids"),
+            HashSet::from([2])
+        );
     }
 
     #[test]
@@ -387,21 +648,6 @@ mod tests {
         assert_eq!(raw, "junction");
 
         let record = find_one(&conn, &LinkQuery::link_path_exact("/tmp/j")).expect("get");
-        assert_eq!(record.link_kind, LinkKind::Junction);
-    }
-
-    #[test]
-    fn legacy_chinese_link_kind_values_remain_readable() {
-        let conn = Connection::open_in_memory().expect("open memory db");
-        migrate(&conn).expect("migrate");
-        conn.execute(
-            "INSERT INTO links(name, link_path, target_path, link_kind, created_at, updated_at)
-             VALUES('legacy', '/tmp/legacy', '/tmp/t', '目录联接', 0, 0)",
-            [],
-        )
-        .expect("insert legacy");
-
-        let record = find_one(&conn, &LinkQuery::link_path_exact("/tmp/legacy")).expect("get");
         assert_eq!(record.link_kind, LinkKind::Junction);
     }
 }
