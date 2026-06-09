@@ -547,6 +547,7 @@ fn ls_table_defaults_to_first_page_and_keeps_global_indices() {
         .success()
         .stdout(contains("item-100"))
         .stdout(predicates::str::contains("item-101").not())
+        .stdout(contains("显示结果 1-100"))
         .stdout(contains("下一页：symm-cli ls --limit 100 --offset 100"));
 
     cmd()
@@ -1468,6 +1469,7 @@ fn ls_status_filters_broken_and_missing() {
         .success()
         .stdout(contains("missing-item"))
         .stdout(predicates::str::contains("missing-item-2").not())
+        .stdout(contains("显示匹配结果 1-1"))
         .stdout(contains(
             "下一页：symm-cli ls --limit 1 --offset 1 --status missing",
         ));

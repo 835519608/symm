@@ -57,9 +57,14 @@ pub fn write_list_table_footer<W: Write>(
         page.offset + 1
     };
     let end = page.offset + page.emitted as u32;
+    let range_label = if page.status.is_some() {
+        "显示匹配结果"
+    } else {
+        "显示结果"
+    };
     writeln!(
         writer,
-        "\n显示结果 {start}-{end}；表格序号是全库 ls 序号，可用于 show/rm/restore。"
+        "\n{range_label} {start}-{end}；表格序号是全库 ls 序号，可用于 show/rm/restore。"
     )
     .map_err(io_err)?;
     if page.has_more {

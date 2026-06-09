@@ -72,6 +72,7 @@ pub fn show_link_op_dialog(ctx: &egui::Context, state: &mut AppState) -> LinkOpD
             }
             ModalSection::FooterCustom(ui) => {
                 let operation = state.link_op_form.operation;
+                let confirming_unlock = state.link_op_form.lock_confirmation.is_some();
                 split_row(
                     ui,
                     |ui| {
@@ -89,8 +90,16 @@ pub fn show_link_op_dialog(ctx: &egui::Context, state: &mut AppState) -> LinkOpD
                     |ui| {
                         if button(ui)
                             .icon(Icon::Link)
-                            .label(t.link_op_submit(operation))
-                            .tip(t.link_op_submit_tip(operation))
+                            .label(if confirming_unlock {
+                                t.lock_confirm_submit()
+                            } else {
+                                t.link_op_submit(operation)
+                            })
+                            .tip(if confirming_unlock {
+                                t.lock_confirm_submit_tip()
+                            } else {
+                                t.link_op_submit_tip(operation)
+                            })
                             .enabled(enabled)
                             .show()
                             .clicked()
@@ -142,6 +151,13 @@ fn show_link_op_form(
     form: &mut LinkOpForm,
     browse: PathBrowse<'_>,
 ) {
+    let before = (
+        form.operation,
+        form.link_path.clone(),
+        form.target_path.clone(),
+        form.name.clone(),
+        form.lock_policy,
+    );
     ui.horizontal_wrapped(|ui| {
         ui.radio_value(&mut form.operation, LinkOperation::Add, t.link_op_add());
         ui.radio_value(&mut form.operation, LinkOperation::Adopt, t.link_op_adopt());
@@ -180,6 +196,17 @@ fn show_link_op_form(
                 t.lock_cancel(),
             );
         });
+
+    let after = (
+        form.operation,
+        form.link_path.clone(),
+        form.target_path.clone(),
+        form.name.clone(),
+        form.lock_policy,
+    );
+    if before != after && form.lock_confirmation.take().is_some() {
+        form.error = None;
+    }
 
     if let Some(err) = &form.error {
         ui.add_space(theme::gap(ui));

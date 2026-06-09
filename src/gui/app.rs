@@ -1,11 +1,13 @@
 use crate::domain::gui_settings::{ColorScheme, GuiSettings, data_dir_from_settings};
 use crate::domain::model::{LinkKind, LinkRecord, LinkStatus, LinkView};
-use crate::gui::data::{ReloadedLinks, RemoveOutcome};
+use crate::gui::data::{GuiLinkOpError, ReloadedLinks, RemoveOutcome};
 use crate::gui::icon;
 use crate::gui::panels::{open_rm_dialog_batch_ids, validate_link_op_form};
 use crate::gui::settings_store;
 use crate::gui::shell::{self, LinkOpDialogAction, RmDialogAction, SettingsDialogAction};
-use crate::gui::state::{AppState, LinkSnapshot, RmDialog, SettingsDraft, SettingsSection};
+use crate::gui::state::{
+    AppState, LinkOpLockConfirmation, LinkSnapshot, RmDialog, SettingsDraft, SettingsSection,
+};
 use crate::gui::tasks::{GuiTask, GuiTaskResult, SettingsApplyOutcome, TaskPoll};
 use crate::gui::theme;
 use crate::gui::theme::ThemePreference;
@@ -527,15 +529,24 @@ impl SymmApp {
         let name = form.name.trim().to_string();
         let operation = form.operation;
         let lock = form.lock_policy;
+        let unlock_confirmed = form.lock_confirmation.as_ref().is_some_and(|confirmation| {
+            confirmation.matches(operation, &form.link_path, &form.target_path, &name)
+        });
         let data_dir = PathBuf::from(self.state.data_dir.trim());
         self.spawn_task(ctx, move || {
             GuiTaskResult::LinkOp(crate::gui::data::apply_link_op(
-                &data_dir, operation, &link, &target, &name, lock,
+                &data_dir,
+                operation,
+                &link,
+                &target,
+                &name,
+                lock,
+                unlock_confirmed,
             ))
         });
     }
 
-    fn finish_link_op(&mut self, result: Result<String, crate::domain::error::SymmError>) {
+    fn finish_link_op(&mut self, result: Result<String, GuiLinkOpError>) {
         let t = self.state.texts();
         let form = &mut self.state.link_op_form;
         match result {
@@ -549,14 +560,25 @@ impl SymmApp {
                 form.link_path.clear();
                 form.target_path.clear();
                 form.name.clear();
+                form.lock_confirmation = None;
                 self.needs_reload = true;
                 self.state.show_link_op_dialog = false;
                 self.toast(message, 3000);
             }
-            Err(err) => {
+            Err(GuiLinkOpError::LockConfirmationRequired { procs }) => {
+                form.lock_confirmation = Some(LinkOpLockConfirmation::new(
+                    form.operation,
+                    form.link_path.clone(),
+                    form.target_path.clone(),
+                    form.name.trim().to_string(),
+                ));
+                form.error = Some(t.lock_unlock_confirmation_required(&procs));
+            }
+            Err(GuiLinkOpError::Workflow(err)) => {
                 if link_op_error_needs_reload(&err) {
                     self.needs_reload = true;
                 }
+                form.lock_confirmation = None;
                 form.error = Some(err.to_string());
             }
         }
@@ -792,6 +814,34 @@ mod tests {
         assert_eq!(app.state.selected_id, Some(9));
         assert!(app.selected_view.is_some());
         assert!(app.state.checked_ids.is_empty());
+    }
+
+    #[test]
+    fn link_op_lock_confirmation_required_sets_confirmation_state() {
+        let mut app = test_app();
+        app.state.link_op_form.operation =
+            crate::workflows::link_ops::workflow::LinkOperation::Adopt;
+        app.state.link_op_form.link_path = "/tmp/link".to_string();
+        app.state.link_op_form.target_path = "/tmp/target".to_string();
+        app.state.link_op_form.name = "demo".to_string();
+        app.state.link_op_form.lock_policy = crate::gui::state::LinkOpLockPolicy::Unlock;
+
+        app.finish_link_op(Err(GuiLinkOpError::LockConfirmationRequired {
+            procs: vec![crate::adapters::lock::ProcInfo {
+                pid: 42,
+                display: "demo.exe".to_string(),
+            }],
+        }));
+
+        assert!(app.state.link_op_form.lock_confirmation.is_some());
+        let err = app
+            .state
+            .link_op_form
+            .error
+            .as_deref()
+            .expect("confirmation message");
+        assert!(err.contains("42"));
+        assert!(err.contains("demo.exe"));
     }
 
     #[test]

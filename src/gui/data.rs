@@ -1,4 +1,5 @@
 use crate::adapters::db::link_store;
+use crate::adapters::lock::{self, ProcInfo};
 use crate::adapters::status;
 use crate::domain::error::SymmError;
 use crate::domain::gui_settings::{GuiSettings, data_dir_from_settings};
@@ -25,6 +26,11 @@ pub struct RemoveOutcome {
     pub attempted_ids: HashSet<i64>,
     pub remaining_ids: HashSet<i64>,
     pub error: Option<String>,
+}
+
+pub enum GuiLinkOpError {
+    LockConfirmationRequired { procs: Vec<ProcInfo> },
+    Workflow(SymmError),
 }
 
 pub fn reload(
@@ -109,19 +115,51 @@ pub fn apply_link_op(
     target: &Path,
     name: &str,
     lock: LinkOpLockPolicy,
-) -> Result<String, SymmError> {
-    let conn = link_store::open_at(data_dir)?;
+    unlock_confirmed: bool,
+) -> Result<String, GuiLinkOpError> {
+    let conn = link_store::open_at(data_dir).map_err(GuiLinkOpError::Workflow)?;
+    if lock == LinkOpLockPolicy::Unlock && !unlock_confirmed {
+        let procs = locking_processes_for_confirmation(link)?;
+        if !procs.is_empty() {
+            return Err(GuiLinkOpError::LockConfirmationRequired { procs });
+        }
+    }
     let mut writer = VecWriter(Vec::new());
-    let mut decisions = GuiLinkOpDecisions { name, lock };
-    crate::workflows::link_ops::workflow::run_operation(
+    let mut decisions = GuiLinkOpDecisions {
+        name,
+        lock: confirmed_lock_policy(lock, unlock_confirmed),
+    };
+    crate::workflows::link_ops::workflow::run_operation_buffered(
         &conn,
         operation,
         link,
         target,
         &mut decisions,
         &mut writer,
-    )?;
+    )
+    .map_err(GuiLinkOpError::Workflow)?;
     Ok(writer.into_log())
+}
+
+fn locking_processes_for_confirmation(link: &Path) -> Result<Vec<ProcInfo>, GuiLinkOpError> {
+    match std::fs::symlink_metadata(link) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(GuiLinkOpError::Workflow(SymmError::IoError {
+                message: err.to_string(),
+            }));
+        }
+    }
+    lock::list_locking_processes_with_progress(link, |_| {}).map_err(GuiLinkOpError::Workflow)
+}
+
+fn confirmed_lock_policy(lock: LinkOpLockPolicy, unlock_confirmed: bool) -> LinkOpLockPolicy {
+    if lock == LinkOpLockPolicy::Unlock && !unlock_confirmed {
+        LinkOpLockPolicy::Cancel
+    } else {
+        lock
+    }
 }
 
 pub fn remove_links(
@@ -140,8 +178,10 @@ pub fn remove_links(
     let conn = link_store::open_at(data_dir)?;
     let mut writer = VecWriter(Vec::new());
     let result = match mode {
-        RemoveMode::DeleteLinkOnly => workflow::run_rm_by_ids(&conn, ids, &mut writer),
-        RemoveMode::RestoreTargetToLink => workflow::run_restore_by_ids(&conn, ids, &mut writer),
+        RemoveMode::DeleteLinkOnly => workflow::run_rm_by_ids_buffered(&conn, ids, &mut writer),
+        RemoveMode::RestoreTargetToLink => {
+            workflow::run_restore_by_ids_buffered(&conn, ids, &mut writer)
+        }
     };
     let error = result.err().map(|err| err.to_string());
     let remaining_ids = if error.is_some() {
@@ -268,5 +308,33 @@ mod tests {
         };
 
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn gui_lock_decisions_can_cancel_when_locking_processes_exist() {
+        let mut decisions = GuiLinkOpDecisions {
+            name: "",
+            lock: LinkOpLockPolicy::Cancel,
+        };
+        let procs = [crate::adapters::lock::ProcInfo {
+            pid: 42,
+            display: "demo.exe".to_string(),
+        }];
+
+        let choice = decisions.lock_choice(&procs).expect("lock choice");
+
+        assert_eq!(choice, LinkOpLockChoice::Cancel);
+    }
+
+    #[test]
+    fn unconfirmed_unlock_policy_is_downgraded_to_cancel() {
+        assert_eq!(
+            confirmed_lock_policy(LinkOpLockPolicy::Unlock, false),
+            LinkOpLockPolicy::Cancel
+        );
+        assert_eq!(
+            confirmed_lock_policy(LinkOpLockPolicy::Unlock, true),
+            LinkOpLockPolicy::Unlock
+        );
     }
 }

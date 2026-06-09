@@ -5,7 +5,9 @@ use crate::adapters::paths::runtime_paths;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkKind, LinkRecord, prepare_link_name_for_storage};
-use crate::ui::progress::migration_reporter::{MigrationProgressReporter, WorkflowProgressEvent};
+use crate::ui::progress::migration_reporter::{
+    MigrationProgressReporter, ProgressSinkMode, WorkflowProgressEvent,
+};
 use crate::workflows::link_ops::lock_gate;
 use crate::workflows::perf;
 use std::fs;
@@ -53,9 +55,56 @@ pub fn run_operation<W: Write>(
     decisions: &mut impl LinkOpDecisionProvider,
     writer: &mut W,
 ) -> Result<(), SymmError> {
+    run_operation_with_progress_mode(
+        conn,
+        operation,
+        link,
+        target,
+        decisions,
+        writer,
+        ProgressSinkMode::Terminal,
+    )
+}
+
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn run_operation_buffered<W: Write>(
+    conn: &rusqlite::Connection,
+    operation: LinkOperation,
+    link: &Path,
+    target: &Path,
+    decisions: &mut impl LinkOpDecisionProvider,
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    run_operation_with_progress_mode(
+        conn,
+        operation,
+        link,
+        target,
+        decisions,
+        writer,
+        ProgressSinkMode::Buffered,
+    )
+}
+
+fn run_operation_with_progress_mode<W: Write>(
+    conn: &rusqlite::Connection,
+    operation: LinkOperation,
+    link: &Path,
+    target: &Path,
+    decisions: &mut impl LinkOpDecisionProvider,
+    writer: &mut W,
+    progress_mode: ProgressSinkMode,
+) -> Result<(), SymmError> {
     let started = Instant::now();
-    let (link_norm, target_norm) =
-        execute_operation(conn, operation, link, target, decisions, writer)?;
+    let (link_norm, target_norm) = execute_operation(
+        conn,
+        operation,
+        link,
+        target,
+        decisions,
+        writer,
+        progress_mode,
+    )?;
     perf::log_perf_lazy(operation.perf_label(), started.elapsed(), || {
         vec![("link_path", link_norm), ("target_path", target_norm)]
     });
@@ -69,6 +118,7 @@ fn execute_operation<W: Write>(
     target: &Path,
     decisions: &mut impl LinkOpDecisionProvider,
     writer: &mut W,
+    progress_mode: ProgressSinkMode,
 ) -> Result<(String, String), SymmError> {
     let link_norm = runtime_paths::normalize_link(link);
     let existing = link_store::find_by_link_path(conn, &link_norm)?;
@@ -78,7 +128,7 @@ fn execute_operation<W: Write>(
     let applies_filesystem_change = change.applies_filesystem_change();
     let name_input = prepare_record_name(conn, decisions, existing.as_ref())?;
     ensure_planned_link_state_unchanged(link_path, &change)?;
-    let mut reporter = MigrationProgressReporter::new(writer);
+    let mut reporter = MigrationProgressReporter::new_with_mode(writer, progress_mode);
     let (target_norm, link_kind) =
         apply_filesystem_change(&mut reporter, decisions, &link_norm, link_path, change)?;
     if let Err(err) = reporter.handle_workflow_event(WorkflowProgressEvent::PersistingDb {
@@ -266,11 +316,13 @@ fn windows_file_identity(path: &Path) -> Result<WindowsFileIdentity, SymmError> 
     };
     use windows::core::PCWSTR;
 
-    let wide_path = verbatim_wide_path(path).ok_or_else(|| SymmError::InvalidArgument {
-        message: format!(
-            "无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
-            path.display()
-        ),
+    let wide_path = crate::adapters::paths::windows::verbatim_wide_path(path).ok_or_else(|| {
+        SymmError::InvalidArgument {
+            message: format!(
+                "无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
+                path.display()
+            ),
+        }
     })?;
     let handle = unsafe {
         CreateFileW(
@@ -306,45 +358,6 @@ fn windows_file_identity(path: &Path) -> Result<WindowsFileIdentity, SymmError> 
 #[cfg(windows)]
 fn filetime_to_u64(filetime: windows::Win32::Foundation::FILETIME) -> u64 {
     ((filetime.dwHighDateTime as u64) << 32) | filetime.dwLowDateTime as u64
-}
-
-#[cfg(windows)]
-fn verbatim_wide_path(path: &Path) -> Option<Vec<u16>> {
-    use std::os::windows::ffi::OsStrExt;
-
-    fn wide(s: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(s).encode_wide().collect()
-    }
-
-    let absolute;
-    let path = if path.is_absolute() {
-        path
-    } else {
-        absolute = std::env::current_dir().ok()?.join(path);
-        absolute.as_path()
-    };
-
-    let raw: Vec<u16> = path.as_os_str().encode_wide().collect();
-    let verbatim = wide(r"\\?\");
-    let nt_verbatim = wide(r"\??\");
-    if raw.starts_with(&verbatim) || raw.starts_with(&nt_verbatim) {
-        let mut out = raw;
-        out.push(0);
-        return Some(out);
-    }
-
-    let unc = wide(r"\\");
-    let mut out = if raw.starts_with(&unc) {
-        let mut prefixed = wide(r"\\?\UNC\");
-        prefixed.extend_from_slice(&raw[2..]);
-        prefixed
-    } else {
-        let mut prefixed = verbatim;
-        prefixed.extend_from_slice(&raw);
-        prefixed
-    };
-    out.push(0);
-    Some(out)
 }
 
 impl LinkOperation {

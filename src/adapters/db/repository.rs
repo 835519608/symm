@@ -437,16 +437,9 @@ pub fn list_links_matching_paginated(
     };
 
     let sql = format!(
-        "WITH page AS (
-           SELECT id, name, link_path, target_path, link_kind, created_at, updated_at
-           FROM links
-           WHERE {}
-           ORDER BY id ASC LIMIT ?2 OFFSET ?3
-         )
-         SELECT id, name, link_path, target_path, link_kind, created_at, updated_at,
-                (SELECT COUNT(*) FROM links AS all_links WHERE all_links.id <= page.id) AS list_index
-         FROM page
-         ORDER BY id ASC",
+        "{SELECT_ROW}
+         WHERE {}
+         ORDER BY id ASC LIMIT ?2 OFFSET ?3",
         search_where_sql()
     );
     let params: Vec<Box<dyn ToSql>> = vec![Box::new(pattern), Box::new(limit), Box::new(offset)];
@@ -456,11 +449,13 @@ pub fn list_links_matching_paginated(
         .collect::<Vec<_>>();
     let mut stmt = conn.prepare(&sql).map_err(db_err)?;
     let mapped = stmt
-        .query_map(param_refs.as_slice(), |row| {
-            Ok((row.get::<_, i64>(7)?.max(1) as u32, map_link_row(row)?))
-        })
+        .query_map(param_refs.as_slice(), map_link_row)
         .map_err(db_err)?;
-    mapped.collect::<Result<Vec<_>, _>>().map_err(db_err)
+    mapped
+        .enumerate()
+        .map(|(i, row)| Ok((offset as u32 + i as u32 + 1, row?)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_err)
 }
 
 pub fn list_index_for_id(conn: &Connection, id: i64) -> Result<Option<u32>, SymmError> {
@@ -659,10 +654,11 @@ mod tests {
     }
 
     #[test]
-    fn list_links_matching_paginated_returns_page_and_original_index() {
+    fn list_links_matching_paginated_returns_page_and_match_index() {
         let conn = Connection::open_in_memory().expect("open memory db");
         migrate(&conn).expect("migrate");
         insert_link(&conn, "alpha", "/tmp/a", "/tmp/t1", LinkKind::Symlink).expect("insert");
+        insert_link(&conn, "zzz", "/tmp/zzz", "/tmp/t0", LinkKind::Symlink).expect("insert");
         insert_link(&conn, "beta", "/tmp/b", "/tmp/t2", LinkKind::Junction).expect("insert");
         insert_link(&conn, "", "/tmp/gamma-link", "/tmp/t3", LinkKind::Symlink).expect("insert");
 

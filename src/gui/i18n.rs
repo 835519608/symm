@@ -490,6 +490,39 @@ impl GuiTexts {
         }
     }
 
+    pub fn lock_unlock_confirmation_required(
+        &self,
+        procs: &[crate::adapters::lock::ProcInfo],
+    ) -> String {
+        let lines = procs
+            .iter()
+            .map(|proc| format!("{} {}", proc.pid, proc.display))
+            .collect::<Vec<_>>()
+            .join("\n");
+        match self.locale {
+            Locale::ZhCn => {
+                format!("检测到占用进程。再次点击“确认并结束进程”才会结束这些进程：\n{lines}")
+            }
+            Locale::En => format!(
+                "Locking processes were found. Click \"Confirm and close processes\" again to close them:\n{lines}"
+            ),
+        }
+    }
+
+    pub fn lock_confirm_submit(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "确认并结束进程",
+            Locale::En => "Confirm and close processes",
+        }
+    }
+
+    pub fn lock_confirm_submit_tip(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "结束已展示的占用进程并继续链接操作",
+            Locale::En => "Close the shown locking processes and continue",
+        }
+    }
+
     pub fn link_op_submit(
         &self,
         operation: crate::workflows::link_ops::workflow::LinkOperation,
@@ -593,13 +626,6 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "目标路径",
             Locale::En => "Target path",
-        }
-    }
-
-    pub fn field_index(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "序号",
-            Locale::En => "Index",
         }
     }
 

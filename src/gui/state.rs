@@ -13,8 +13,8 @@ pub const DEFAULT_PAGE_SIZE: u32 = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LinkOpLockPolicy {
-    #[default]
     Unlock,
+    #[default]
     Cancel,
 }
 
@@ -25,8 +25,46 @@ pub struct LinkOpForm {
     pub target_path: String,
     pub name: String,
     pub lock_policy: LinkOpLockPolicy,
+    pub lock_confirmation: Option<LinkOpLockConfirmation>,
     pub status_message: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LinkOpLockConfirmation {
+    operation: LinkOperation,
+    link_path: String,
+    target_path: String,
+    name: String,
+}
+
+impl LinkOpLockConfirmation {
+    pub fn new(
+        operation: LinkOperation,
+        link_path: String,
+        target_path: String,
+        name: String,
+    ) -> Self {
+        Self {
+            operation,
+            link_path,
+            target_path,
+            name,
+        }
+    }
+
+    pub fn matches(
+        &self,
+        operation: LinkOperation,
+        link_path: &str,
+        target_path: &str,
+        name: &str,
+    ) -> bool {
+        self.operation == operation
+            && self.link_path == link_path
+            && self.target_path == target_path
+            && self.name == name
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -255,6 +293,13 @@ mod tests {
         let draft = SettingsDraft::from_state(&state);
 
         assert_eq!(draft.data_dir, "/tmp/symm-env");
+    }
+
+    #[test]
+    fn link_op_form_defaults_to_cancel_lock_handling() {
+        let form = LinkOpForm::default();
+
+        assert_eq!(form.lock_policy, LinkOpLockPolicy::Cancel);
     }
 
     #[test]

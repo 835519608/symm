@@ -41,7 +41,7 @@ scripts/fetch-gui-font.sh
 构建 GUI 与 CLI：
 
 ```bash
-cargo build --release --features gui --bin symm --bin symm-cli
+mise run build
 ```
 
 产物：
@@ -53,12 +53,12 @@ cargo build --release --features gui --bin symm --bin symm-cli
 本地开发推荐入口：
 
 ```bash
-cargo run --bin symm --features gui
-cargo run --bin symm-cli -- --help
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets
-cargo test --features gui --lib
+mise run run-gui
+mise run run-help
+mise run fmt-check
+mise run clippy
+mise run test
+mise run test-gui
 ```
 
 发布门禁以 GitHub Actions 为准；本地检查用于提前发现问题，不代替远端 CI。
@@ -179,7 +179,9 @@ GUI 使用 `eframe` / `egui`，通过 `gui` feature 构建。它复用 CLI 的�
 主要能力：
 
 - 侧栏搜索、状态刷新、详情查看。
+- GUI 列表选择和批量操作使用 record id，不显示也不依赖 CLI 的全库 `ls` 序号。
 - 链接操作对话框中显式选择创建链接、接管实体或改指向。
+- GUI 默认不结束占用进程；只有先展示占用进程列表，并由用户再次确认后，才会结束占用进程并继续链接操作。
 - 批量删除链接关系，也可单独执行恢复目标到链接位置。
 - 设置明暗模式、配色、字号、侧栏宽度和数据目录。
 - 内嵌 Noto Sans SC 和 Phosphor 图标字体，不依赖系统字体。
@@ -272,6 +274,7 @@ Windows 占用检测说明：
 
 - 同盘迁移使用 `rename`，随后对目标树做单遍 rebase。
 - 跨盘迁移使用复制，进度按已复制字节和已处理文件数输出。
+- 跨盘目录复制保持文件内容流式处理；为恢复目录权限和重建内部链接，允许暂存目录权限与内部链接元数据，不要求严格 O(目录深度) 内存。
 - 树内绝对路径软链会改写到新根。
 - 相对路径软链通常不改写。
 - 指向树外的链接保持原目标。
@@ -426,7 +429,7 @@ Windows 安装包目前只为 x64 构建；Windows arm64 / x86 提供便携 zip�
 | `release-test.yml` | `vX.Y.Z-test*` tag 或手动触发 | Pre-release，不设为 Latest，可按目标包控制 |
 | `cleanup-test-releases.yml` | 定时或手动 | 清理旧测试 Pre-release，只保留最新测试包 |
 
-发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 的 `ci.yml` 已成功。若该 commit 修改了 workflow 或 action，还会校验 `workflow-lint.yml` 已成功。
+发布 workflow 不重复跑测试；它们先用 `.github/actions/verify-ci-passed` 校验当前 commit 的 `ci.yml` 已成功。发布 tag 不应指向只修改 README、ADR、AGENTS 或本地工具配置的维护 commit；这类文档-only 变更不触发打包所需的 CI，发布 tag 应指向已有成功 CI 的代码、脚本、打包、assets 或 workflow 相关 commit。若该 commit 修改了 workflow 或 action，还会校验 `workflow-lint.yml` 已成功。
 
 Runner 矩阵：
 
@@ -494,7 +497,7 @@ gh workflow run release-test.yml \
 
 ## 维护约定
 
-- 改 Rust 代码后优先跑 `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、`cargo test --all-targets` 和 `cargo test --features gui --lib`。
+- 改 Rust 代码后优先跑 `mise run fmt-check`、`mise run clippy`、`mise run test` 和 `mise run test-gui`；提交前优先跑 `mise run ci`。
 - 发布和测试包以 GitHub Actions 结果为准，不以本地 `target/release/*` 作为交付物。
 - 改 workflow 或 action 时，远端 `workflow-lint.yml` 必须通过；本机没有 `actionlint` 时不要声称已跑。
 - 修改分层相关代码时，保持 `workflows` 无平台分支，平台差异集中在 adapters。

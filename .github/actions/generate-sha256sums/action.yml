@@ -1,0 +1,26 @@
+name: Generate SHA256SUMS
+description: 在发布产物目录生成排序稳定的 SHA256SUMS
+
+inputs:
+  dist_dir:
+    description: 包含发布产物的目录
+    required: false
+    default: dist
+
+runs:
+  using: composite
+  steps:
+    - name: 生成 SHA256SUMS
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${{ inputs.dist_dir }}"
+        if ! find . -maxdepth 1 -type f ! -name SHA256SUMS -print -quit | grep -q .; then
+          echo "::error::没有找到可发布产物"
+          exit 1
+        fi
+        : > SHA256SUMS
+        while IFS= read -r -d '' file; do
+          sha256sum "${file#./}" >> SHA256SUMS
+        done < <(find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z)
+        cat SHA256SUMS

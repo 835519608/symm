@@ -61,7 +61,6 @@ fn show_detail(ui: &mut Ui, state: &AppState, view: &LinkView) {
             &view.target_path,
             &t.copy_field_tip(t.field_target_path()),
         );
-        detail_field(ui, &p, t.field_index(), &view.index.to_string());
         detail_field(ui, &p, t.field_id(), &view.id.to_string());
     });
 }

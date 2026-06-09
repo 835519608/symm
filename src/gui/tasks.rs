@@ -1,6 +1,5 @@
-use crate::domain::error::SymmError;
 use crate::domain::gui_settings::GuiSettings;
-use crate::gui::data::{ReloadedLinks, RemoveOutcome};
+use crate::gui::data::{GuiLinkOpError, ReloadedLinks, RemoveOutcome};
 use crate::gui::state::{LinkSnapshot, SettingsDraft};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
@@ -11,7 +10,7 @@ pub struct GuiTask {
 
 pub enum GuiTaskResult {
     Reload(Result<ReloadedLinks, String>),
-    LinkOp(Result<String, SymmError>),
+    LinkOp(Result<String, GuiLinkOpError>),
     Remove(Result<RemoveOutcome, String>),
     SettingsApply {
         draft: SettingsDraft,

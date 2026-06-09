@@ -1,7 +1,7 @@
 use crate::adapters::lock::LockProbeProgress;
 use crate::adapters::migrate::MigrationEvent;
 use crate::domain::error::SymmError;
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::time::{Duration, Instant};
 
 pub struct MigrationProgressReporter<'a, W: Write> {
@@ -9,6 +9,12 @@ pub struct MigrationProgressReporter<'a, W: Write> {
     is_terminal: bool,
     last_copy_report_at: Option<Instant>,
     last_copy_snapshot: Option<(u64, u64)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressSinkMode {
+    Terminal,
+    Buffered,
 }
 
 #[derive(Debug, Clone)]
@@ -19,10 +25,10 @@ pub enum WorkflowProgressEvent {
 }
 
 impl<'a, W: Write> MigrationProgressReporter<'a, W> {
-    pub fn new(writer: &'a mut W) -> Self {
+    pub fn new_with_mode(writer: &'a mut W, mode: ProgressSinkMode) -> Self {
         Self {
             writer,
-            is_terminal: std::io::stdout().is_terminal(),
+            is_terminal: mode == ProgressSinkMode::Terminal,
             last_copy_report_at: None,
             last_copy_snapshot: None,
         }

@@ -5,7 +5,7 @@ use crate::adapters::status;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::{LinkRecord, LinkStatus};
-use crate::ui::progress::migration_reporter::MigrationProgressReporter;
+use crate::ui::progress::migration_reporter::{MigrationProgressReporter, ProgressSinkMode};
 use crate::workflows::perf;
 use crate::workflows::select;
 use crate::workflows::selector;
@@ -55,6 +55,7 @@ pub fn run_rm<W: Write>(
         RmSelection::Selectors(selectors),
         RemoveMode::DeleteLinkOnly,
         writer,
+        ProgressSinkMode::Terminal,
     )
 }
 
@@ -69,10 +70,11 @@ pub fn run_restore<W: Write>(
         RmSelection::Selectors(selectors),
         RemoveMode::RestoreTargetToLink,
         writer,
+        ProgressSinkMode::Terminal,
     )
 }
 
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[allow(dead_code)]
 pub fn run_rm_by_ids<W: Write>(
     conn: &rusqlite::Connection,
     ids: &[i64],
@@ -83,10 +85,11 @@ pub fn run_rm_by_ids<W: Write>(
         RmSelection::RecordIds(ids),
         RemoveMode::DeleteLinkOnly,
         writer,
+        ProgressSinkMode::Terminal,
     )
 }
 
-#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+#[allow(dead_code)]
 pub fn run_restore_by_ids<W: Write>(
     conn: &rusqlite::Connection,
     ids: &[i64],
@@ -97,6 +100,37 @@ pub fn run_restore_by_ids<W: Write>(
         RmSelection::RecordIds(ids),
         RemoveMode::RestoreTargetToLink,
         writer,
+        ProgressSinkMode::Terminal,
+    )
+}
+
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn run_rm_by_ids_buffered<W: Write>(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    run_remove(
+        conn,
+        RmSelection::RecordIds(ids),
+        RemoveMode::DeleteLinkOnly,
+        writer,
+        ProgressSinkMode::Buffered,
+    )
+}
+
+#[cfg_attr(not(feature = "gui"), allow(dead_code))]
+pub fn run_restore_by_ids_buffered<W: Write>(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+    writer: &mut W,
+) -> Result<(), SymmError> {
+    run_remove(
+        conn,
+        RmSelection::RecordIds(ids),
+        RemoveMode::RestoreTargetToLink,
+        writer,
+        ProgressSinkMode::Buffered,
     )
 }
 
@@ -110,13 +144,14 @@ fn run_remove<W: Write>(
     selection: RmSelection<'_>,
     mode: RemoveMode,
     writer: &mut W,
+    progress_mode: ProgressSinkMode,
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let records = match selection {
         RmSelection::Selectors(selectors) => resolve_records(conn, selectors)?,
         RmSelection::RecordIds(ids) => records_from_ids(conn, ids)?,
     };
-    run_resolved_records(conn, records, mode, writer, started)
+    run_resolved_records(conn, records, mode, writer, started, progress_mode)
 }
 
 fn run_resolved_records<W: Write>(
@@ -125,11 +160,12 @@ fn run_resolved_records<W: Write>(
     mode: RemoveMode,
     writer: &mut W,
     started: Instant,
+    progress_mode: ProgressSinkMode,
 ) -> Result<(), SymmError> {
     let mut labels = Vec::with_capacity(records.len());
     let mut failures = Vec::new();
     for record in records {
-        match remove_one(conn, &record, mode, writer) {
+        match remove_one(conn, &record, mode, writer, progress_mode) {
             Ok(label) => labels.push(label),
             Err(err) => failures.push((record_label(&record), err)),
         }
@@ -252,6 +288,7 @@ fn remove_one<W: Write>(
     record: &LinkRecord,
     mode: RemoveMode,
     writer: &mut W,
+    progress_mode: ProgressSinkMode,
 ) -> Result<String, SymmError> {
     let link = Path::new(&record.link_path);
     let link_status = status::try_for_record(record)?;
@@ -259,7 +296,7 @@ fn remove_one<W: Write>(
     let filesystem_applied = match mode {
         RemoveMode::RestoreTargetToLink => {
             ensure_restorable(record, link_status)?;
-            if let Err(err) = restore_target_to_link(writer, record, link_status) {
+            if let Err(err) = restore_target_to_link(writer, record, link_status, progress_mode) {
                 match err {
                     RestoreFailure::LinkUnchanged(err) => return Err(err),
                     RestoreFailure::LinkRemoved(err) => return Err(err),
@@ -361,13 +398,14 @@ fn restore_target_to_link<W: Write>(
     writer: &mut W,
     record: &LinkRecord,
     planned_status: LinkStatus,
+    progress_mode: ProgressSinkMode,
 ) -> Result<(), RestoreFailure> {
     let link = Path::new(&record.link_path);
     let target = Path::new(&record.target_path);
     ensure_restore_link_state_unchanged(record, planned_status)
         .map_err(RestoreFailure::LinkUnchanged)?;
     symlink::unlink(link).map_err(RestoreFailure::LinkUnchanged)?;
-    let mut reporter = MigrationProgressReporter::new(writer);
+    let mut reporter = MigrationProgressReporter::new_with_mode(writer, progress_mode);
     migrate::migrate_path(target, link, &mut |event| {
         reporter.handle_migration_event(event)
     })
@@ -582,8 +620,13 @@ mod tests {
         let record = record("restore-kept", &link, &target);
         let mut writer = FailWriter;
 
-        let err = restore_target_to_link(&mut writer, &record, LinkStatus::Ok)
-            .expect_err("progress write should fail after unlink");
+        let err = restore_target_to_link(
+            &mut writer,
+            &record,
+            LinkStatus::Ok,
+            ProgressSinkMode::Terminal,
+        )
+        .expect_err("progress write should fail after unlink");
 
         let RestoreFailure::LinkRemoved(SymmError::FilesystemAppliedButRecordKept {
             operation,
@@ -656,6 +699,7 @@ mod tests {
             RemoveMode::DeleteLinkOnly,
             &mut writer,
             Instant::now(),
+            ProgressSinkMode::Terminal,
         )
         .expect_err("summary output should fail after collecting half-applied failure");
 
