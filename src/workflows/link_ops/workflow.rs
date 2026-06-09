@@ -121,7 +121,7 @@ fn execute_operation<W: Write>(
     writer: &mut W,
     progress_mode: ProgressSinkMode,
 ) -> Result<(String, String), SymmError> {
-    let link_norm = runtime_paths::normalize_link(link);
+    let link_norm = runtime_paths::normalize_link(link)?;
     let existing = link_store::find_by_link_path(conn, &link_norm)?;
     let link_path = Path::new(&link_norm);
     let link_state = symlink::inspect_link_path(link_path)?;
@@ -980,7 +980,10 @@ mod tests {
             panic!("unexpected error: {err:?}");
         };
         assert_eq!(operation, "add");
-        assert_eq!(link_path, runtime_paths::normalize_link(&link));
+        assert_eq!(
+            link_path,
+            runtime_paths::normalize_link(&link).expect("link norm")
+        );
         assert_eq!(
             target_path,
             runtime_paths::normalize_target(&target).expect("target norm")
@@ -1020,9 +1023,12 @@ mod tests {
             matches!(err, SymmError::IoError { ref message } if message.contains("writer failed after db")),
             "unexpected error: {err:?}"
         );
-        let stored = link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-            .expect("query link")
-            .expect("db record should exist");
+        let stored = link_store::find_by_link_path(
+            &conn,
+            &runtime_paths::normalize_link(&link).expect("link norm"),
+        )
+        .expect("query link")
+        .expect("db record should exist");
         assert_eq!(stored.name, "db-fail");
     }
 
@@ -1051,9 +1057,12 @@ mod tests {
             matches!(err, SymmError::IoError { ref message } if message.contains("writer failed after numeric rename")),
             "unexpected error: {err:?}"
         );
-        let stored = link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-            .expect("query link")
-            .expect("db record should exist");
+        let stored = link_store::find_by_link_path(
+            &conn,
+            &runtime_paths::normalize_link(&link).expect("link norm"),
+        )
+        .expect("query link")
+        .expect("db record should exist");
         assert_eq!(stored.name, "link-42");
     }
 
@@ -1081,9 +1090,12 @@ mod tests {
             std::fs::read_to_string(&link).expect("read through created link"),
             "payload"
         );
-        let stored = link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-            .expect("query link")
-            .expect("db record should exist");
+        let stored = link_store::find_by_link_path(
+            &conn,
+            &runtime_paths::normalize_link(&link).expect("link norm"),
+        )
+        .expect("query link")
+        .expect("db record should exist");
         assert_eq!(stored.name, "db-fail");
     }
 
@@ -1151,9 +1163,12 @@ mod tests {
             "late entity"
         );
         assert!(
-            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-                .expect("query link")
-                .is_none(),
+            link_store::find_by_link_path(
+                &conn,
+                &runtime_paths::normalize_link(&link).expect("link norm")
+            )
+            .expect("query link")
+            .is_none(),
             "changed link path should not be persisted"
         );
     }
@@ -1196,9 +1211,12 @@ mod tests {
             "competing"
         );
         assert!(
-            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-                .expect("query link")
-                .is_none(),
+            link_store::find_by_link_path(
+                &conn,
+                &runtime_paths::normalize_link(&link).expect("link norm")
+            )
+            .expect("query link")
+            .is_none(),
             "changed point source link should not be persisted"
         );
     }
@@ -1298,9 +1316,12 @@ mod tests {
             "must not create a broken link when target vanished"
         );
         assert!(
-            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-                .expect("query link")
-                .is_none(),
+            link_store::find_by_link_path(
+                &conn,
+                &runtime_paths::normalize_link(&link).expect("link norm")
+            )
+            .expect("query link")
+            .is_none(),
             "removed target should not be persisted"
         );
     }
@@ -1335,9 +1356,12 @@ mod tests {
             "unexpected error: {err:?}"
         );
         assert!(
-            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-                .expect("query link")
-                .is_none(),
+            link_store::find_by_link_path(
+                &conn,
+                &runtime_paths::normalize_link(&link).expect("link norm")
+            )
+            .expect("query link")
+            .is_none(),
             "removed target should not be persisted"
         );
         assert!(
@@ -1381,9 +1405,12 @@ mod tests {
             "old"
         );
         assert!(
-            link_store::find_by_link_path(&conn, &runtime_paths::normalize_link(&link))
-                .expect("query link")
-                .is_none(),
+            link_store::find_by_link_path(
+                &conn,
+                &runtime_paths::normalize_link(&link).expect("link norm")
+            )
+            .expect("query link")
+            .is_none(),
             "removed target should not be persisted"
         );
     }

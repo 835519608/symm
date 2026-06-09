@@ -80,15 +80,60 @@ pub fn rebase_symlinks_in_tree(dst_root: &Path, src_root: &Path) -> Result<(), S
             continue;
         }
         let recreate_spec = symlink::capture_recreate_spec(link_path)?;
-        remove::remove_any(link_path)?;
-        symlink::write_symlink_from_spec(recreate_spec, link_path, &rebased)?;
+        replace_symlink_preserving_old(link_path, recreate_spec, &raw, &rebased)?;
     }
     Ok(())
 }
 
+fn replace_symlink_preserving_old(
+    link_path: &Path,
+    recreate_spec: symlink::LinkRecreateSpec,
+    raw: &Path,
+    rebased: &Path,
+) -> Result<(), SymmError> {
+    replace_symlink_with_writer(
+        link_path,
+        recreate_spec,
+        raw,
+        rebased,
+        symlink::write_symlink_from_spec,
+    )
+}
+
+fn replace_symlink_with_writer<F>(
+    link_path: &Path,
+    recreate_spec: symlink::LinkRecreateSpec,
+    raw: &Path,
+    rebased: &Path,
+    mut write: F,
+) -> Result<(), SymmError>
+where
+    F: FnMut(symlink::LinkRecreateSpec, &Path, &Path) -> Result<(), SymmError>,
+{
+    remove::remove_any(link_path)?;
+    match write(recreate_spec, link_path, rebased) {
+        Ok(()) => Ok(()),
+        Err(write_err) => {
+            if let Err(restore_err) = write(recreate_spec, link_path, raw) {
+                return Err(SymmError::IoError {
+                    message: format!(
+                        "重写内部链接失败：{write_err}；恢复旧链接也失败：{restore_err}"
+                    ),
+                });
+            }
+            Err(write_err)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{rebase_symlinks_in_tree, recreate_symlink, tree_contains_symlink};
+    use super::{
+        rebase_symlinks_in_tree, recreate_symlink, replace_symlink_with_writer,
+        tree_contains_symlink,
+    };
+    use crate::adapters::symlink;
+    use crate::domain::error::SymmError;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -184,6 +229,40 @@ mod tests {
         assert_eq!(
             fs::read_link(&dst_link).expect("read"),
             dst_root.join("f.txt")
+        );
+    }
+
+    #[test]
+    fn replace_symlink_restores_old_link_when_rebased_write_fails() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("lnk");
+        let new_target = temp.path().join("new-target.txt");
+        fs::write(&target, "old").expect("write old target");
+        fs::write(&new_target, "new").expect("write new target");
+        symlink_file(&target, &link);
+        let spec = symlink::capture_recreate_spec(&link).expect("capture spec");
+
+        let err = replace_symlink_with_writer(
+            &link,
+            spec,
+            &target,
+            &new_target,
+            |spec, path, write_target| {
+                if write_target == new_target {
+                    return Err(SymmError::IoError {
+                        message: "injected write failure".to_string(),
+                    });
+                }
+                symlink::write_symlink_from_spec(spec, path, write_target)
+            },
+        )
+        .expect_err("rebased write should fail");
+
+        assert!(err.to_string().contains("injected write failure"));
+        assert_eq!(
+            fs::read_to_string(&link).expect("old link should be restored"),
+            "old"
         );
     }
 }

@@ -92,115 +92,18 @@ jobs:
 
       - id: meta
         shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ "${{ github.event_name }}" = "push" ]; then
-            RELEASE_TAG="${{ github.ref_name }}"
-          else
-            RELEASE_TAG="test-run-${{ github.run_id }}"
-          fi
-
-          build_windows_x64=false
-          build_windows_arm64=false
-          build_windows_x86=false
-          build_linux_x64=false
-          build_linux_arm64=false
-          build_macos_x64=false
-          build_macos_arm64=false
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            [ "${{ inputs.build_windows_x64 }}" = "true" ] && build_windows_x64=true
-            [ "${{ inputs.build_windows_arm64 }}" = "true" ] && build_windows_arm64=true
-            [ "${{ inputs.build_windows_x86 }}" = "true" ] && build_windows_x86=true
-            [ "${{ inputs.build_linux_x64 }}" = "true" ] && build_linux_x64=true
-            [ "${{ inputs.build_linux_arm64 }}" = "true" ] && build_linux_arm64=true
-            [ "${{ inputs.build_macos_x64 }}" = "true" ] && build_macos_x64=true
-            [ "${{ inputs.build_macos_arm64 }}" = "true" ] && build_macos_arm64=true
-          elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test[0-9] ]]; then
-            echo "::error::测试 tag 格式无效：${RELEASE_TAG}"
-            echo "勿在 test 后加数字（如 v0.1.0-test15）；应使用 vX.Y.Z-test 或 vX.Y.Z-test-windows"
-            exit 1
-          elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test$ ]]; then
-            build_windows_x64=true
-            build_windows_arm64=true
-            build_windows_x86=true
-            build_linux_x64=true
-            build_linux_arm64=true
-            build_macos_x64=true
-            build_macos_arm64=true
-          elif [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test-(.+)$ ]]; then
-            suffix="${BASH_REMATCH[1]}"
-            IFS='-' read -ra parts <<< "${suffix}"
-            for part in "${parts[@]}"; do
-              case "${part}" in
-                windows|win)
-                  build_windows_x64=true
-                  build_windows_arm64=true
-                  build_windows_x86=true
-                  ;;
-                linux)
-                  build_linux_x64=true
-                  build_linux_arm64=true
-                  ;;
-                macos|mac)
-                  build_macos_x64=true
-                  build_macos_arm64=true
-                  ;;
-                *)
-                  echo "::error::未知平台段「${part}」（tag: ${RELEASE_TAG}）。期望形如 v0.1.0-test-windows 或 v0.1.0-test-windows-linux"
-                  exit 1
-                  ;;
-              esac
-            done
-            if ! $build_windows_x64 && ! $build_windows_arm64 && ! $build_windows_x86 && ! $build_linux_x64 && ! $build_linux_arm64 && ! $build_macos_x64 && ! $build_macos_arm64; then
-              echo "::error::未识别任何平台（tag: ${RELEASE_TAG}）"
-              exit 1
-            fi
-          elif [[ "${RELEASE_TAG}" =~ ^test-run- ]]; then
-            build_windows_x64=true
-            build_linux_x64=true
-            build_macos_x64=true
-          else
-            echo "::error::测试 tag 格式无效：${RELEASE_TAG}"
-            echo "期望：vX.Y.Z-test 或 vX.Y.Z-test-<platform(s)>（如 v0.1.1-test-windows）"
-            exit 1
-          fi
-
-          if ! $build_windows_x64 && ! $build_windows_arm64 && ! $build_windows_x86 && ! $build_linux_x64 && ! $build_linux_arm64 && ! $build_macos_x64 && ! $build_macos_arm64; then
-            echo "::error::至少选择一个目标包"
-            exit 1
-          fi
-
-          expected_assets=()
-          $build_windows_x64 && expected_assets+=("symm-setup-windows-x64.exe" "symm-portable-windows-x64.zip")
-          $build_windows_arm64 && expected_assets+=("symm-portable-windows-arm64.zip")
-          $build_windows_x86 && expected_assets+=("symm-portable-windows-x86.zip")
-          $build_linux_x64 && expected_assets+=("symm-portable-linux-x64.zip")
-          $build_linux_arm64 && expected_assets+=("symm-portable-linux-arm64.zip")
-          $build_macos_x64 && expected_assets+=("symm-portable-macos-x64.zip")
-          $build_macos_arm64 && expected_assets+=("symm-portable-macos-arm64.zip")
-
-          {
-            echo "release_tag=${RELEASE_TAG}"
-            echo "build_windows_x64=${build_windows_x64}"
-            echo "build_windows_arm64=${build_windows_arm64}"
-            echo "build_windows_x86=${build_windows_x86}"
-            echo "build_linux_x64=${build_linux_x64}"
-            echo "build_linux_arm64=${build_linux_arm64}"
-            echo "build_macos_x64=${build_macos_x64}"
-            echo "build_macos_arm64=${build_macos_arm64}"
-            echo "expected_assets<<ASSETS_EOF"
-            printf '%s\n' "${expected_assets[@]}"
-            echo "ASSETS_EOF"
-            echo "expected_assets_with_checksums<<ASSETS_WITH_CHECKSUMS_EOF"
-            printf '%s\n' "${expected_assets[@]}"
-            echo "SHA256SUMS"
-            echo "ASSETS_WITH_CHECKSUMS_EOF"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Release tag: ${RELEASE_TAG}"
-          echo "Targets: windows-x64=${build_windows_x64} windows-arm64=${build_windows_arm64} windows-x86=${build_windows_x86} linux-x64=${build_linux_x64} linux-arm64=${build_linux_arm64} macos-x64=${build_macos_x64} macos-arm64=${build_macos_arm64}"
+        env:
+          SYMM_EVENT_NAME: ${{ github.event_name }}
+          SYMM_REF_NAME: ${{ github.ref_name }}
+          SYMM_RUN_ID: ${{ github.run_id }}
+          INPUT_BUILD_WINDOWS_X64: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows_x64 || 'false' }}
+          INPUT_BUILD_WINDOWS_ARM64: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows_arm64 || 'false' }}
+          INPUT_BUILD_WINDOWS_X86: ${{ github.event_name == 'workflow_dispatch' && inputs.build_windows_x86 || 'false' }}
+          INPUT_BUILD_LINUX_X64: ${{ github.event_name == 'workflow_dispatch' && inputs.build_linux_x64 || 'false' }}
+          INPUT_BUILD_LINUX_ARM64: ${{ github.event_name == 'workflow_dispatch' && inputs.build_linux_arm64 || 'false' }}
+          INPUT_BUILD_MACOS_X64: ${{ github.event_name == 'workflow_dispatch' && inputs.build_macos_x64 || 'false' }}
+          INPUT_BUILD_MACOS_ARM64: ${{ github.event_name == 'workflow_dispatch' && inputs.build_macos_arm64 || 'false' }}
+        run: .github/scripts/plan-test-release.sh
 
       - name: 校验当前 commit 的 CI 已通过
         uses: ./.github/actions/verify-ci-passed

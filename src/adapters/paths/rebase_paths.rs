@@ -26,12 +26,42 @@ pub fn internal_target(
 
     for base in source_roots {
         let base = crate::adapters::paths::lexical::clean(base);
-        if let Ok(rel) = resolved.strip_prefix(&base) {
+        if let Some(rel) = strip_prefix_platform(&resolved, &base) {
             return dst_root.join(rel);
         }
     }
 
     raw_target.to_path_buf()
+}
+
+#[cfg(not(windows))]
+fn strip_prefix_platform(path: &Path, base: &Path) -> Option<PathBuf> {
+    path.strip_prefix(base).ok().map(Path::to_path_buf)
+}
+
+#[cfg(windows)]
+fn strip_prefix_platform(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_components = path.components().collect::<Vec<_>>();
+    let base_components = base.components().collect::<Vec<_>>();
+    if base_components.len() > path_components.len() {
+        return None;
+    }
+    for (path_component, base_component) in path_components.iter().zip(base_components.iter()) {
+        if !component_eq_ignore_ascii_case(*path_component, *base_component) {
+            return None;
+        }
+    }
+    Some(path_components[base_components.len()..].iter().collect())
+}
+
+#[cfg(windows)]
+fn component_eq_ignore_ascii_case(
+    left: std::path::Component<'_>,
+    right: std::path::Component<'_>,
+) -> bool {
+    left.as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.as_os_str().to_string_lossy())
 }
 
 /// 迁移/rebase 时用于匹配旧根路径的根目录列表（含 staging 别名）。
@@ -89,5 +119,20 @@ mod tests {
             &roots,
         );
         assert_eq!(target, dst_root.join("data").join("file.txt"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn internal_target_rebases_windows_prefix_case_insensitively() {
+        let src_root = PathBuf::from(r"C:\Data\Agent");
+        let dst_root = PathBuf::from(r"C:\Data\Agent1");
+        let roots = source_roots(&src_root);
+        let target = internal_target(
+            &dst_root,
+            &src_root.join("link"),
+            &PathBuf::from(r"c:\data\agent\nested\file.txt"),
+            &roots,
+        );
+        assert_eq!(target, dst_root.join("nested").join("file.txt"));
     }
 }

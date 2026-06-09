@@ -28,6 +28,9 @@ impl HostFs for Host {
     fn relocate_path(&self, src: &Path, dst: &Path) -> Result<(), RelocateFailure> {
         match fs::rename(src, dst) {
             Ok(()) => Ok(()),
+            Err(e) if is_cross_device_rename_error(&e) => {
+                Err(RelocateFailure::no_replace_unsupported())
+            }
             Err(e)
                 if e.raw_os_error() == Some(5)
                     && fs::symlink_metadata(src)
@@ -254,9 +257,15 @@ fn is_directory_reparse_point(meta: &Metadata) -> bool {
 
 fn path_prefix(path: &Path) -> Option<String> {
     path.components().find_map(|component| match component {
-        Component::Prefix(prefix) => Some(prefix.as_os_str().to_string_lossy().to_string()),
+        Component::Prefix(prefix) => {
+            Some(prefix.as_os_str().to_string_lossy().to_ascii_lowercase())
+        }
         _ => None,
     })
+}
+
+fn is_cross_device_rename_error(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::CrossesDevices || err.raw_os_error() == Some(17)
 }
 
 fn create_junction(target: &Path, link: &Path) -> Result<(), SymmError> {

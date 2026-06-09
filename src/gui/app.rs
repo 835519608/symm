@@ -1033,6 +1033,21 @@ mod tests {
     }
 
     #[test]
+    fn reload_preserves_checked_ids_that_still_exist_across_pages() {
+        let mut app = test_app();
+        app.state.checked_ids = HashSet::from([1, 2, 3]);
+
+        app.apply_reload_result(Ok(ReloadedLinks {
+            snapshot: LinkSnapshot::new(Vec::new()),
+            all_ids: HashSet::from([2, 3, 4]),
+            page_index: 1,
+        }));
+
+        assert_eq!(app.state.checked_ids, HashSet::from([2, 3]));
+        assert_eq!(app.state.page_index, 1);
+    }
+
+    #[test]
     fn selected_detail_refreshes_from_snapshot_on_explicit_click() {
         let mut app = test_app();
         app.state.selected_id = Some(9);

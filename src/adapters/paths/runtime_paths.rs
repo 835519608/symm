@@ -27,6 +27,6 @@ pub fn normalize_target_known_exists(path: &Path) -> Result<String, SymmError> {
     super::normalize::normalize_target_known_exists(path)
 }
 
-pub fn normalize_link(path: &Path) -> String {
+pub fn normalize_link(path: &Path) -> Result<String, SymmError> {
     super::normalize::normalize_link(path)
 }

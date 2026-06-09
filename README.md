@@ -138,7 +138,7 @@ SYMM_HOME=/var/lib/symm symm-cli ls
 
 ## 环境变量
 
-CLI 默认在需要决策时弹出终端交互菜单。下列变量用于跳过对应菜单，适合脚本或自动化场景。变量值不合法时会直接报错，不会静默回退到菜单。
+CLI 默认在需要决策时弹出终端交互菜单。下列变量用于跳过对应菜单，适合脚本或自动化场景。有枚举约束的变量值不合法时会直接报错，不会静默回退到菜单；空路径变量视为未设置，仍按正常交互或参数缺失处理。
 
 | 变量 | 用途 |
 |------|------|
@@ -511,4 +511,5 @@ gh workflow run release-test.yml \
 - 改 Rust 代码后优先跑 `mise run fmt-check`、`mise run clippy`、`mise run test` 和 `mise run test-gui`；提交前优先跑 `mise run ci`。
 - 发布和测试包以 GitHub Actions 结果为准，不以本地 `target/release/*` 作为交付物。
 - 改 workflow 或 action 时，远端 `workflow-lint.yml` 必须通过；本机没有 `actionlint` 时不要声称已跑。
+- 改测试包 tag 解析或目标产物规则时，必须同步更新 `.github/scripts/plan-test-release.sh --self-test` 覆盖的语义场景。
 - 修改分层相关代码时，保持 `workflows` 无平台分支，平台差异集中在 adapters。
