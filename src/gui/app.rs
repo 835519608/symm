@@ -313,6 +313,8 @@ impl SymmApp {
             self.manual_refresh_pending = false;
         }
         if outcome.data_dir_changed {
+            self.state.search.clear();
+            self.search_reload_at = None;
             self.state.page_index = 0;
             self.state.selected_id = None;
             self.selected_view = None;
@@ -940,6 +942,32 @@ mod tests {
                 .expect("save error toast")
                 .contains("disk full")
         );
+    }
+
+    #[test]
+    fn settings_apply_data_dir_change_clears_search_state() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        app.state.search = "old-db-filter".to_string();
+        app.search_reload_at = Some(Instant::now());
+        let settings = GuiSettings {
+            data_dir: Some("/tmp/new-active-dir".to_string()),
+            ..GuiSettings::default()
+        };
+
+        app.finish_settings_apply(
+            SettingsDraft::from_state(&app.state),
+            Ok(SettingsApplyOutcome {
+                settings,
+                snapshot: Some(LinkSnapshot::default()),
+                data_dir_changed: true,
+                save_error: None,
+            }),
+            &ctx,
+        );
+
+        assert!(app.state.search.is_empty());
+        assert_eq!(app.search_reload_at, None);
     }
 
     #[test]

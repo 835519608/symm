@@ -3,7 +3,7 @@
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
-use rusqlite::{Connection, DatabaseName, Error as SqlError, Row, params};
+use rusqlite::{Connection, DatabaseName, Error as SqlError, OptionalExtension, Row, params};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -491,38 +491,69 @@ fn expected_legacy_columns_without_link_kind() -> Vec<ColumnInfo> {
 }
 
 fn has_current_indexes(conn: &Connection) -> Result<bool, SymmError> {
-    Ok(has_unique_index_for_column(conn, "link_path")?
-        && has_named_index(conn, "ux_links_name_nonempty")?)
-}
-
-fn has_named_index(conn: &Connection, name: &str) -> Result<bool, SymmError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
-        params![name],
-        |row| row.get::<_, i64>(0),
+    Ok(
+        has_named_unique_index_for_column(conn, "ux_links_link_path", "link_path", false, None)?
+            && has_named_unique_index_for_column(
+                conn,
+                "ux_links_name_nonempty",
+                "name",
+                true,
+                Some("WHERE name <> ''"),
+            )?,
     )
-    .map(|exists| exists != 0)
-    .map_err(db_err)
 }
 
-fn has_unique_index_for_column(conn: &Connection, column_name: &str) -> Result<bool, SymmError> {
+fn has_named_unique_index_for_column(
+    conn: &Connection,
+    index_name: &str,
+    column_name: &str,
+    partial: bool,
+    expected_where: Option<&str>,
+) -> Result<bool, SymmError> {
+    let Some(info) = index_info_by_name(conn, index_name)? else {
+        return Ok(false);
+    };
+    if !info.unique || info.partial != partial {
+        return Ok(false);
+    }
+    let columns = index_columns(conn, index_name)?;
+    if columns.as_slice() != [column_name] {
+        return Ok(false);
+    }
+    let Some(expected_where) = expected_where else {
+        return Ok(true);
+    };
+    let Some(sql) = index_sql(conn, index_name)? else {
+        return Ok(false);
+    };
+    Ok(normalize_predicate(&sql).contains(&normalize_predicate(expected_where)))
+}
+
+struct IndexInfo {
+    unique: bool,
+    partial: bool,
+}
+
+fn index_info_by_name(conn: &Connection, wanted: &str) -> Result<Option<IndexInfo>, SymmError> {
     let mut stmt = conn.prepare("PRAGMA index_list(links)").map_err(db_err)?;
     let rows = stmt
         .query_map([], |row| {
-            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(2)? != 0))
+            Ok((
+                row.get::<_, String>(1)?,
+                IndexInfo {
+                    unique: row.get::<_, i64>(2)? != 0,
+                    partial: row.get::<_, i64>(4)? != 0,
+                },
+            ))
         })
         .map_err(db_err)?;
     for row in rows {
-        let (index_name, unique) = row.map_err(db_err)?;
-        if !unique {
-            continue;
-        }
-        let columns = index_columns(conn, &index_name)?;
-        if columns.len() == 1 && columns[0] == column_name {
-            return Ok(true);
+        let (index_name, info) = row.map_err(db_err)?;
+        if index_name == wanted {
+            return Ok(Some(info));
         }
     }
-    Ok(false)
+    Ok(None)
 }
 
 fn index_columns(conn: &Connection, index_name: &str) -> Result<Vec<String>, SymmError> {
@@ -536,6 +567,23 @@ fn index_columns(conn: &Connection, index_name: &str) -> Result<Vec<String>, Sym
         .query_map([], |row| row.get::<_, String>(2))
         .map_err(db_err)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(db_err)
+}
+
+fn index_sql(conn: &Connection, index_name: &str) -> Result<Option<String>, SymmError> {
+    conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        params![index_name],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(db_err)
+}
+
+fn normalize_predicate(sql: &str) -> String {
+    normalize_ddl(sql)
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
 }
 
 fn quote_identifier(value: &str) -> String {
@@ -578,6 +626,38 @@ mod tests {
             )
             .expect("index count");
         assert_eq!(index_count, 2);
+    }
+
+    #[test]
+    fn current_index_check_rejects_wrong_named_name_index_shape() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        conn.execute_batch(&format!(
+            "CREATE TABLE {CURRENT_LINKS_TABLE_SQL};
+             CREATE UNIQUE INDEX ux_links_link_path ON links(link_path);
+             CREATE INDEX ux_links_name_nonempty ON links(target_path);"
+        ))
+        .expect("schema with wrong name index");
+
+        assert!(
+            !has_current_indexes(&conn).expect("check indexes"),
+            "current schema must not accept a wrong index just because its name matches"
+        );
+    }
+
+    #[test]
+    fn current_index_check_requires_partial_name_index_predicate() {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        conn.execute_batch(&format!(
+            "CREATE TABLE {CURRENT_LINKS_TABLE_SQL};
+             CREATE UNIQUE INDEX ux_links_link_path ON links(link_path);
+             CREATE UNIQUE INDEX ux_links_name_nonempty ON links(name);"
+        ))
+        .expect("schema with non-partial name index");
+
+        assert!(
+            !has_current_indexes(&conn).expect("check indexes"),
+            "current schema must require the nonempty-name partial unique index"
+        );
     }
 
     #[test]

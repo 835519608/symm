@@ -522,7 +522,7 @@ fn mutate_link_path_after_lock<W: Write>(
             ensure_existing_link_unchanged(link_path, existing_kind, existing_target)?;
             ensure_target_still_exists(target_norm)?;
             emit_creating_link(reporter, link_norm, target_norm)?;
-            replace_link_via_temp(link_path, link_norm, target_norm)
+            replace_link_via_temp(link_path, link_norm, target_norm, existing_kind)
         }
     }
 }
@@ -659,6 +659,7 @@ fn replace_link_via_temp(
     link: &Path,
     link_norm: &str,
     target_norm: &str,
+    expected_kind: LinkKind,
 ) -> Result<LinkKind, SymmError> {
     let target = Path::new(target_norm);
     let old_target = fs::read_link(link).map_err(|e| SymmError::IoError {
@@ -667,29 +668,22 @@ fn replace_link_via_temp(
     let spec = symlink::capture_recreate_spec(link)?;
     let temp = unique_temp_link_path(link);
     symlink::write_symlink_from_spec(spec, &temp, target)?;
-    if let Err(err) = symlink::unlink(link) {
+    if let Err(err) = remove_expected_link_for_point(link, expected_kind, &old_target) {
         let _ = symlink::unlink(&temp);
         return Err(err);
     }
-    if let Err(err) = fs::rename(&temp, link) {
-        let restore = symlink::write_symlink_from_spec(spec, link, &old_target);
-        if restore.is_ok() {
-            let _ = symlink::unlink(&temp);
-        }
-        let state = match restore {
-            Ok(()) => "旧 link 已恢复".to_string(),
-            Err(restore_err) => format!(
-                "旧 link 已移除且恢复失败：{restore_err}；临时 link 保留在 {}",
-                temp.display()
-            ),
-        };
-        return Err(SymmError::IoError {
-            message: format!(
-                "改指向失败：临时 link 已创建，但替换 {} 失败：{err}；{state}",
-                link.display(),
-            ),
-        });
+    if let Err(err) = symlink::write_symlink_from_spec(spec, link, target) {
+        return finish_point_write_failure(
+            link,
+            link_norm,
+            target_norm,
+            &temp,
+            spec,
+            &old_target,
+            err,
+        );
     }
+    let _ = symlink::unlink(&temp);
     let meta = fs::symlink_metadata(link).map_err(|e| {
         point_applied_but_record_unwritten(
             link_norm,
@@ -708,6 +702,46 @@ fn replace_link_via_temp(
             },
         )
     })
+}
+
+fn finish_point_write_failure(
+    link: &Path,
+    link_norm: &str,
+    target_norm: &str,
+    temp: &Path,
+    spec: symlink::LinkRecreateSpec,
+    old_target: &Path,
+    err: SymmError,
+) -> Result<LinkKind, SymmError> {
+    let restore = symlink::write_symlink_from_spec(spec, link, old_target);
+    let _ = symlink::unlink(temp);
+    if let Err(restore_err) = restore {
+        return Err(point_applied_but_record_unwritten(
+            link_norm,
+            target_norm,
+            SymmError::IoError {
+                message: format!(
+                    "改指向失败：旧 link 已移除，创建新 link 失败：{err}；恢复旧 link 也失败：{restore_err}"
+                ),
+            },
+        ));
+    }
+    Err(SymmError::IoError {
+        message: format!(
+            "改指向失败：旧 link 已恢复，创建新 link {} 失败：{err}",
+            link.display(),
+        ),
+    })
+}
+
+fn remove_expected_link_for_point(
+    link: &Path,
+    expected_kind: LinkKind,
+    expected_target: &Path,
+) -> Result<(), SymmError> {
+    ensure_existing_link_unchanged(link, expected_kind, expected_target)?;
+    symlink::unlink(link)?;
+    ensure_link_missing(link)
 }
 
 fn point_applied_but_record_unwritten(
@@ -1167,6 +1201,69 @@ mod tests {
                 .expect("query link")
                 .is_none(),
             "changed point source link should not be persisted"
+        );
+    }
+
+    #[test]
+    fn point_strict_remove_rejects_entity_without_overwriting_it() {
+        let temp = tempdir().expect("temp dir");
+        let old_target = temp.path().join("old-target.txt");
+        let link = temp.path().join("point-link.txt");
+        std::fs::write(&old_target, "old").expect("write old target");
+        symlink::create_link(&old_target, &link).expect("create old link");
+        symlink::unlink(&link).expect("remove old link");
+        std::fs::write(&link, "external entity").expect("write competing entity");
+
+        let err = remove_expected_link_for_point(&link, LinkKind::Symlink, &old_target)
+            .expect_err("entity at link path should abort point removal");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("状态已变化")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link).expect("read competing entity"),
+            "external entity"
+        );
+    }
+
+    #[test]
+    fn point_restore_failure_reports_half_applied_filesystem() {
+        let temp = tempdir().expect("temp dir");
+        let old_target = temp.path().join("old-target.txt");
+        let source_link = temp.path().join("source-link.txt");
+        let link = temp.path().join("point-link.txt");
+        let temp_link = temp.path().join("temp-link.txt");
+        std::fs::write(&old_target, "old").expect("write old target");
+        symlink::create_link(&old_target, &source_link).expect("create source link");
+        symlink::create_link(&old_target, &temp_link).expect("create temp link");
+        std::fs::write(&link, "external entity").expect("occupy link path");
+        let spec = symlink::capture_recreate_spec(&source_link).expect("capture spec");
+
+        let err = finish_point_write_failure(
+            &link,
+            "/tmp/link",
+            "/tmp/new-target",
+            &temp_link,
+            spec,
+            &old_target,
+            SymmError::IoError {
+                message: "new link failed".to_string(),
+            },
+        )
+        .expect_err("restore failure should report half-applied point");
+
+        assert!(matches!(
+            err,
+            SymmError::FilesystemAppliedButDbFailed { ref operation, .. } if operation == "point"
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&link).expect("read competing entity"),
+            "external entity"
+        );
+        assert!(
+            std::fs::symlink_metadata(&temp_link).is_err(),
+            "temporary link should be cleaned up"
         );
     }
 
