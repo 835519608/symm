@@ -41,7 +41,7 @@ scripts/fetch-gui-font.sh
 构建 GUI 与 CLI：
 
 ```bash
-mise run build
+cargo build --locked --release --features gui --bin symm --bin symm-cli
 ```
 
 产物：
@@ -50,16 +50,16 @@ mise run build
 - `target/release/symm-cli`：命令行工具
 - Windows 上扩展名为 `.exe`
 
-本地开发推荐入口：
+本地开发常用检查：
 
 ```bash
-mise run run-gui
-mise run run-help
-mise run fmt-check
-mise run clippy
-mise run test
-mise run test-gui
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets
+cargo test --locked --features gui --lib
 ```
+
+个人工作区若配置了 `mise` 任务，也可以用对应的 `mise run ...` 入口；这些任务不是仓库交付契约。
 
 发布门禁以 GitHub Actions 为准；本地检查用于提前发现问题，不代替远端 CI。
 
@@ -194,13 +194,13 @@ GUI 使用 `eframe` / `egui`，通过 `gui` feature 构建。它复用 CLI 的�
 |------|---------------|---------|
 | 建链 | `symlink` | 优先软链接；目录软链失败时可降级为 junction |
 | 同盘判断 | `dev` | 盘符 |
-| 查占用 | `fuser` / `lsof`；需要时走 sudo 子进程 | Restart Manager；非管理员时走 UAC 子进程 |
-| 结束占用 | sudo 子进程 | UAC 子进程 + `TerminateProcess` |
+| 查占用 | 当前用户直接执行 `fuser` / `lsof`，不为普通扫描提权 | Restart Manager；非管理员时走 UAC 子进程 |
+| 结束占用 | 先当前用户 `kill`；权限不足时走 sudo 子进程 | UAC 子进程 + `TerminateProcess` |
 | 建链提权 | 无 | 普通建链失败且需要提权时走 UAC |
 | 跨盘目录 ACL | 不适用 | `icacls` 快照，失败则跳过恢复 |
 | 同盘迁移软链 | `rename` + 树内 rebase | `rename`；拒绝访问时重建链接 |
 
-交互式终端下 Linux / macOS 的 `sudo` 可输入密码；无 TTY 自动化环境可能失败。
+Linux / macOS 的普通占用扫描不需要 `sudo`，无 TTY 自动化环境在没有占用时不会因提权失败而中断。只有用户选择结束当前用户无权结束的占用进程时才可能触发 `sudo`；交互式终端可输入密码，无 TTY 自动化环境可能失败。
 
 Windows 占用检测说明：
 

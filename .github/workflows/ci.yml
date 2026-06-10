@@ -123,9 +123,40 @@ jobs:
           - name: linux-x64-portable
             runner: ubuntu-24.04
             package_action: portable
+            archive_name: symm-portable-linux-x64-smoke.zip
+          - name: linux-arm64-portable
+            runner: ubuntu-24.04-arm
+            package_action: portable
+            archive_name: symm-portable-linux-arm64-smoke.zip
+          - name: macos-x64-portable
+            runner: macos-15-intel
+            package_action: portable
+            archive_name: symm-portable-macos-x64-smoke.zip
+          - name: macos-arm64-portable
+            runner: macos-15
+            package_action: portable
+            archive_name: symm-portable-macos-arm64-smoke.zip
           - name: windows-x64-installer
             runner: windows-2025-vs2026
             package_action: windows
+            portable_name: symm-portable-windows-x64-smoke.zip
+            installer_name: symm-setup-windows-x64-smoke.exe
+            build_target: ""
+            build_installer: "true"
+          - name: windows-arm64-portable
+            runner: windows-11-arm
+            package_action: windows
+            portable_name: symm-portable-windows-arm64-smoke.zip
+            installer_name: ""
+            build_target: ""
+            build_installer: "false"
+          - name: windows-x86-portable
+            runner: windows-2025-vs2026
+            package_action: windows
+            portable_name: symm-portable-windows-x86-smoke.zip
+            installer_name: ""
+            build_target: i686-pc-windows-msvc
+            build_installer: "false"
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -137,7 +168,7 @@ jobs:
         if: ${{ matrix.package_action == 'portable' }}
         uses: ./.github/actions/package-portable
         with:
-          archive_name: symm-portable-linux-x64-smoke.zip
+          archive_name: ${{ matrix.archive_name }}
           release_semver: 0.0.0
 
       - name: Windows 安装包烟测
@@ -145,5 +176,7 @@ jobs:
         uses: ./.github/actions/package-windows
         with:
           release_semver: 0.0.0
-          portable_name: symm-portable-windows-x64-smoke.zip
-          installer_name: symm-setup-windows-x64-smoke.exe
+          build_target: ${{ matrix.build_target }}
+          portable_name: ${{ matrix.portable_name }}
+          installer_name: ${{ matrix.installer_name }}
+          build_installer: ${{ matrix.build_installer }}

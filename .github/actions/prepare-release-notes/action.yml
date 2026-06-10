@@ -34,10 +34,17 @@ runs:
           body="Release ${GITHUB_REF_NAME:-${GITHUB_SHA}}"
         fi
 
+        while :; do
+          delimiter="NOTES_EOF_$(date +%s%N)_${RANDOM}"
+          if ! printf '%s\n' "${body}" | grep -qxF "${delimiter}"; then
+            break
+          fi
+        done
+
         {
-          echo "body<<NOTES_EOF"
+          echo "body<<${delimiter}"
           printf '%s\n' "${body}"
-          echo "NOTES_EOF"
+          echo "${delimiter}"
         } >> "${GITHUB_OUTPUT}"
 
         echo "Release 说明已就绪（${#body} 字符，来自 commit 提交说明）"

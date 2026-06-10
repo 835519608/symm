@@ -1,23 +1,39 @@
 //! 查锁/杀进程：通过提权子进程执行（`runas`）；调用方已在 `lock::mod` 完成分流。
 
+#[cfg(windows)]
 use super::ProcInfo;
-use super::elevated_progress::{ProgressAppender, spawn_progress_relay};
-use super::snapshot::{read_snapshot, write_snapshot};
+use super::elevated_progress::ProgressAppender;
+#[cfg(windows)]
+use super::elevated_progress::spawn_progress_relay;
+#[cfg(windows)]
+use super::snapshot::read_snapshot;
+use super::snapshot::write_snapshot;
 use crate::adapters::platform::privilege;
 use crate::adapters::platform::process::{LockProbeProgress, PlatformProcess, platform};
 use crate::domain::error::SymmError;
+#[cfg(windows)]
 use std::env;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
+#[cfg(windows)]
 use std::sync::Arc;
+#[cfg(windows)]
 use std::sync::atomic::AtomicU64;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use std::sync::mpsc;
+#[cfg(windows)]
 use std::thread;
+#[cfg(windows)]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(windows)]
 pub fn list_locking_processes(
     path: &Path,
     mut progress: impl FnMut(LockProbeProgress),
@@ -125,6 +141,7 @@ pub fn elevated_list_locks_entry(
     write_snapshot(output, &procs)
 }
 
+#[cfg(windows)]
 fn enrich_elevated_error(err: SymmError, log: &Path) -> SymmError {
     let detail = std::fs::read_to_string(log).unwrap_or_default();
     let detail = detail.trim();
@@ -144,6 +161,7 @@ fn enrich_elevated_error(err: SymmError, log: &Path) -> SymmError {
     }
 }
 
+#[cfg(windows)]
 fn elevated_log_indicates_io_failure(detail: &str) -> bool {
     detail.contains("收集占用检测路径失败")
         || detail.contains("IoError")
@@ -159,12 +177,14 @@ where
     privilege::spawn_elevated_subcommand(args)
 }
 
+#[cfg(windows)]
 struct ElevatedLockProbeSession {
     snapshot: PathBuf,
     log: PathBuf,
     progress: PathBuf,
 }
 
+#[cfg(windows)]
 impl ElevatedLockProbeSession {
     fn new() -> Self {
         let stem = unique_temp_stem();
@@ -188,6 +208,7 @@ impl ElevatedLockProbeSession {
     }
 }
 
+#[cfg(windows)]
 impl Drop for ElevatedLockProbeSession {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.snapshot);
@@ -196,6 +217,7 @@ impl Drop for ElevatedLockProbeSession {
     }
 }
 
+#[cfg(windows)]
 fn unique_temp_stem() -> String {
     let pid = std::process::id();
     let tick = SystemTime::now()
@@ -206,6 +228,7 @@ fn unique_temp_stem() -> String {
     format!("symm-lock-probe-{pid}-{tick}-{sequence}")
 }
 
+#[cfg(windows)]
 fn temp_session_path(stem: &str, kind: &str) -> PathBuf {
     env::temp_dir().join(format!("{stem}-{kind}.tmp"))
 }

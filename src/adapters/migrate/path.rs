@@ -5,8 +5,10 @@ use crate::adapters::platform::{HostFs, format_relocate_failure, host_platform};
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
+use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
 pub enum MigrationEvent {
@@ -60,6 +62,8 @@ where
         }
     }
 
+    let source_snapshot = SourceSnapshot::capture(src)?;
+
     if let Some(acl_file) = host_platform().snapshot_dir_acl(src)? {
         let acl_file = TempAclSnapshot::new(acl_file);
         copy_file::copy_path_with_progress(src, dst, reporter)?;
@@ -69,6 +73,20 @@ where
         }
     } else {
         copy_file::copy_path_with_progress(src, dst, reporter)?;
+    }
+
+    if let Err(err) = source_snapshot.ensure_unchanged(src) {
+        let cleanup = remove::remove_any(dst).err();
+        return Err(SymmError::InvalidArgument {
+            message: match cleanup {
+                Some(cleanup) => format!(
+                    "迁移失败：源路径复制期间发生变化，已保留源路径但清理 target 副本失败：{err}；清理错误：{cleanup}"
+                ),
+                None => format!(
+                    "迁移失败：源路径复制期间发生变化，已保留源路径并清理 target 副本，请重新执行：{err}"
+                ),
+            },
+        });
     }
 
     reporter(MigrationEvent::RemovingSource {
@@ -99,7 +117,12 @@ fn ensure_destination_not_inside_source(src: &Path, dst: &Path) -> Result<(), Sy
     let meta = fs::symlink_metadata(src).map_err(|e| SymmError::IoError {
         message: format!("无法读取迁移源路径元数据：{}：{e}", src.display()),
     })?;
-    if !meta.is_dir() || dst == src || !dst.starts_with(src) {
+    if !meta.is_dir() {
+        return Ok(());
+    }
+    let src = canonicalize_existing_path(src)?;
+    let dst = canonicalize_existing_prefix(dst)?;
+    if dst != src && !dst.starts_with(&src) {
         return Ok(());
     }
     Err(SymmError::InvalidArgument {
@@ -109,6 +132,55 @@ fn ensure_destination_not_inside_source(src: &Path, dst: &Path) -> Result<(), Sy
             dst.display()
         ),
     })
+}
+
+fn canonicalize_existing_path(path: &Path) -> Result<PathBuf, SymmError> {
+    dunce::canonicalize(path).map_err(|e| SymmError::IoError {
+        message: format!("无法规范化路径：{}：{e}", path.display()),
+    })
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, SymmError> {
+    let clean = absolute_lexical(path)?;
+    if let Ok(canonical) = dunce::canonicalize(&clean) {
+        return Ok(canonical);
+    }
+
+    let mut missing = Vec::new();
+    let mut cursor = clean.as_path();
+    loop {
+        if cursor.as_os_str().is_empty() {
+            return Ok(clean);
+        }
+        if presence::path_itself_exists(cursor)? {
+            let mut out = canonicalize_existing_path(cursor)?;
+            for component in missing.iter().rev() {
+                out.push(component);
+            }
+            return Ok(out);
+        }
+        let Some(name) = cursor.file_name() else {
+            return Ok(clean);
+        };
+        missing.push(name.to_os_string());
+        let Some(parent) = cursor.parent() else {
+            return Ok(clean);
+        };
+        cursor = parent;
+    }
+}
+
+fn absolute_lexical(path: &Path) -> Result<PathBuf, SymmError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| SymmError::IoError {
+                message: format!("无法读取当前目录：{e}"),
+            })?
+            .join(path)
+    };
+    Ok(crate::adapters::paths::lexical::clean(&absolute))
 }
 
 fn path_is_link(path: &Path) -> Result<bool, SymmError> {
@@ -156,6 +228,141 @@ fn try_move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<bool, 
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceSnapshot {
+    entries: Vec<SourceSnapshotEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceSnapshotEntry {
+    rel_path: PathBuf,
+    kind: SourceEntryKind,
+    len: u64,
+    modified: Option<SystemTime>,
+    platform: SourcePlatformSnapshot,
+    link_target: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SourcePlatformSnapshot {
+    #[cfg(unix)]
+    Unix {
+        dev: u64,
+        ino: u64,
+        ctime: i64,
+        ctime_nsec: i64,
+        mode: u32,
+    },
+    #[cfg(windows)]
+    Windows {
+        volume: Option<u32>,
+        index: Option<u64>,
+        creation_time: u64,
+        last_write_time: u64,
+        file_attributes: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceEntryKind {
+    File,
+    Dir,
+    Symlink,
+    Other,
+}
+
+impl SourceSnapshot {
+    fn capture(root: &Path) -> Result<Self, SymmError> {
+        let mut entries = Vec::new();
+        let root_meta = fs::symlink_metadata(root).map_err(|e| SymmError::IoError {
+            message: format!("无法读取迁移源路径元数据：{}：{e}", root.display()),
+        })?;
+        if !root_meta.is_dir() || symlink::kind_from_path_and_metadata(root, &root_meta)?.is_some()
+        {
+            entries.push(SourceSnapshotEntry::capture(root, PathBuf::new())?);
+            return Ok(Self { entries });
+        }
+
+        for entry in WalkDir::new(root).follow_links(false) {
+            let entry = entry.map_err(|e| SymmError::IoError {
+                message: format!("扫描迁移源路径失败：{e}"),
+            })?;
+            let path = entry.path();
+            let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+            entries.push(SourceSnapshotEntry::capture(path, rel)?);
+        }
+        entries.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        Ok(Self { entries })
+    }
+
+    fn ensure_unchanged(&self, root: &Path) -> Result<(), SymmError> {
+        let current = Self::capture(root)?;
+        if &current == self {
+            return Ok(());
+        }
+        Err(SymmError::InvalidArgument {
+            message: format!("源路径已变化：{}", root.display()),
+        })
+    }
+}
+
+impl SourceSnapshotEntry {
+    fn capture(path: &Path, rel_path: PathBuf) -> Result<Self, SymmError> {
+        let meta = fs::symlink_metadata(path).map_err(|e| SymmError::IoError {
+            message: format!("无法读取迁移源路径元数据：{}：{e}", path.display()),
+        })?;
+        let file_type = meta.file_type();
+        let kind = if file_type.is_symlink() {
+            SourceEntryKind::Symlink
+        } else if meta.is_dir() {
+            SourceEntryKind::Dir
+        } else if meta.is_file() {
+            SourceEntryKind::File
+        } else {
+            SourceEntryKind::Other
+        };
+        let link_target = if kind == SourceEntryKind::Symlink {
+            Some(fs::read_link(path).map_err(|e| SymmError::IoError {
+                message: format!("无法读取源链接指向：{}：{e}", path.display()),
+            })?)
+        } else {
+            None
+        };
+        Ok(Self {
+            rel_path,
+            kind,
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            platform: source_platform_snapshot(&meta),
+            link_target,
+        })
+    }
+}
+
+#[cfg(unix)]
+fn source_platform_snapshot(meta: &fs::Metadata) -> SourcePlatformSnapshot {
+    use std::os::unix::fs::MetadataExt;
+    SourcePlatformSnapshot::Unix {
+        dev: meta.dev(),
+        ino: meta.ino(),
+        ctime: meta.ctime(),
+        ctime_nsec: meta.ctime_nsec(),
+        mode: meta.mode(),
+    }
+}
+
+#[cfg(windows)]
+fn source_platform_snapshot(meta: &fs::Metadata) -> SourcePlatformSnapshot {
+    use std::os::windows::fs::MetadataExt;
+    SourcePlatformSnapshot::Windows {
+        volume: meta.volume_serial_number(),
+        index: meta.file_index(),
+        creation_time: meta.creation_time(),
+        last_write_time: meta.last_write_time(),
+        file_attributes: meta.file_attributes(),
+    }
+}
+
 struct TempAclSnapshot {
     path: std::path::PathBuf,
 }
@@ -178,7 +385,7 @@ impl Drop for TempAclSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{MigrationEvent, migrate_path, move_path_without_progress};
+    use super::{MigrationEvent, SourceSnapshot, migrate_path, move_path_without_progress};
     use crate::adapters::migrate::copy_file::copy_path_with_progress;
     use crate::adapters::migrate::rebase;
     use crate::domain::error::SymmError;
@@ -266,6 +473,76 @@ mod tests {
         );
         assert!(src.exists(), "source should remain in place");
         assert!(!dst.exists(), "destination must not be created");
+    }
+
+    #[test]
+    fn migrate_path_rejects_lexical_destination_inside_source() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src_dir");
+        let dst = temp
+            .path()
+            .join("outside")
+            .join("..")
+            .join("src_dir")
+            .join("nested")
+            .join("dst_dir");
+        fs::create_dir_all(&src).expect("create source");
+        fs::create_dir_all(temp.path().join("outside")).expect("create outside");
+        fs::write(src.join("payload.txt"), "payload").expect("write source");
+
+        let err =
+            migrate_path(&src, &dst, &mut |_event| Ok(())).expect_err("dst inside src should fail");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("目标路径不能位于源目录内部")),
+            "unexpected error: {err:?}"
+        );
+        assert!(src.exists(), "source should remain in place");
+        assert!(!dst.exists(), "destination must not be created");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrate_path_rejects_destination_inside_source_through_parent_symlink() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src_dir");
+        let alias = temp.path().join("src_alias");
+        let dst = alias.join("nested").join("dst_dir");
+        fs::create_dir_all(&src).expect("create source");
+        fs::write(src.join("payload.txt"), "payload").expect("write source");
+        symlink(&src, &alias).expect("symlink source alias");
+
+        let err =
+            migrate_path(&src, &dst, &mut |_event| Ok(())).expect_err("dst inside src should fail");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("目标路径不能位于源目录内部")),
+            "unexpected error: {err:?}"
+        );
+        assert!(src.exists(), "source should remain in place");
+        assert!(!dst.exists(), "destination must not be created");
+    }
+
+    #[test]
+    fn source_snapshot_detects_mutation_before_source_cleanup() {
+        let temp = tempdir().expect("temp dir");
+        let src = temp.path().join("src.txt");
+        fs::write(&src, "before").expect("write source");
+        let snapshot = SourceSnapshot::capture(&src).expect("snapshot");
+
+        fs::write(&src, "after-change").expect("mutate source");
+
+        let err = snapshot
+            .ensure_unchanged(&src)
+            .expect_err("source mutation should be detected");
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("源路径已变化")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(&src).expect("read source"),
+            "after-change"
+        );
     }
 
     #[test]

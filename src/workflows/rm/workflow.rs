@@ -304,12 +304,19 @@ fn records_from_ids(
             message: "未指定要操作的记录".to_string(),
         });
     }
-    let records = link_store::find_existing_by_ids(conn, ids)?;
+    let mut unique_ids = Vec::with_capacity(ids.len());
+    let mut seen_ids = std::collections::HashSet::new();
+    for id in ids {
+        if seen_ids.insert(*id) {
+            unique_ids.push(*id);
+        }
+    }
+    let records = link_store::find_existing_by_ids(conn, &unique_ids)?;
     let existing = records
         .iter()
         .map(|record| record.id)
         .collect::<std::collections::HashSet<_>>();
-    let failures = ids
+    let failures = unique_ids
         .iter()
         .filter(|id| !existing.contains(id))
         .map(|id| {
@@ -1092,5 +1099,24 @@ mod tests {
         let text = String::from_utf8(output).expect("utf8");
         assert!(text.contains("已删除链接关系"));
         assert!(text.contains("#99"));
+    }
+
+    #[test]
+    fn rm_by_ids_ignores_duplicate_ids_in_one_batch() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        symlink::create_link(&target, &link).expect("create link");
+        let conn = memory_db();
+        insert_record(&conn, "dup", &link, &target);
+        let mut output = Vec::new();
+
+        run_rm_by_ids_buffered(&conn, &[1, 1], &mut output)
+            .expect("duplicate ids should be a single operation");
+
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(target.exists());
+        assert_eq!(link_store::count(&conn).expect("count records"), 0);
     }
 }

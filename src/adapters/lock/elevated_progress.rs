@@ -3,12 +3,21 @@
 use crate::adapters::platform::process::LockProbeProgress;
 use crate::domain::error::SymmError;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::io::{BufWriter, Write};
+#[cfg(windows)]
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
+#[cfg(windows)]
 use std::sync::Arc;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use std::sync::mpsc::Sender;
+#[cfg(windows)]
 use std::thread::{self, JoinHandle};
+#[cfg(windows)]
 use std::time::Duration;
 
 const PROGRESS_MARKER: &str = "symm-lock-progress-v1";
@@ -71,6 +80,7 @@ impl ProgressAppender {
     }
 }
 
+#[cfg(windows)]
 pub fn spawn_progress_relay(
     path: PathBuf,
     tx: Sender<LockProbeProgress>,
@@ -88,6 +98,7 @@ pub fn spawn_progress_relay(
     })
 }
 
+#[cfg(windows)]
 fn relay_once(
     path: &Path,
     offset: &mut u64,

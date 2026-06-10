@@ -71,7 +71,7 @@ where
 
     #[cfg(unix)]
     {
-        elevated::list_locking_processes(path, &mut progress)
+        platform().list_locking_processes_with_progress(path, &mut progress)
     }
 }
 
@@ -88,7 +88,18 @@ pub fn kill_processes(pids: &[u32]) -> Result<(), SymmError> {
         return platform().kill_processes(pids);
     }
 
-    elevated::kill_processes(pids)
+    #[cfg(unix)]
+    {
+        match platform().kill_processes(pids) {
+            Ok(()) => Ok(()),
+            Err(_) => elevated::kill_processes(pids),
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        elevated::kill_processes(pids)
+    }
 }
 
 pub fn elevated_list_locks_entry(

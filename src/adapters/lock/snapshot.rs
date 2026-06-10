@@ -25,6 +25,7 @@ pub fn write_snapshot(path: &Path, procs: &[ProcInfo]) -> Result<(), SymmError> 
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn read_snapshot(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     let content = fs::read_to_string(path).map_err(|e| SymmError::IoError {
         message: format!("无法读取占用快照：{e}"),
@@ -32,6 +33,7 @@ pub fn read_snapshot(path: &Path) -> Result<Vec<ProcInfo>, SymmError> {
     parse_snapshot(&content)
 }
 
+#[cfg(any(windows, test))]
 pub fn parse_snapshot(content: &str) -> Result<Vec<ProcInfo>, SymmError> {
     let mut lines = content.lines();
     let header = lines.next().unwrap_or_default().trim();
