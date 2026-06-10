@@ -6,9 +6,13 @@ use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use std::fs;
 use std::fs::Metadata;
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::{symlink_dir, symlink_file};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use windows::Win32::Foundation::GetLastError;
+use windows::Win32::Storage::FileSystem::{MOVE_FILE_FLAGS, MoveFileExW};
+use windows::core::PCWSTR;
 
 pub struct Host;
 
@@ -26,7 +30,7 @@ impl HostFs for Host {
     }
 
     fn relocate_path(&self, src: &Path, dst: &Path) -> Result<(), RelocateFailure> {
-        match fs::rename(src, dst) {
+        match move_file_no_replace(src, dst) {
             Ok(()) => Ok(()),
             Err(e) if is_cross_device_rename_error(&e) => {
                 Err(RelocateFailure::no_replace_unsupported())
@@ -96,6 +100,26 @@ impl HostFs for Host {
         }
         Ok(())
     }
+}
+
+fn move_file_no_replace(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let src = path_to_wide(src);
+    let dst = path_to_wide(dst);
+    let result = unsafe {
+        MoveFileExW(
+            PCWSTR(src.as_ptr()),
+            PCWSTR(dst.as_ptr()),
+            MOVE_FILE_FLAGS(0),
+        )
+    };
+    result.map_err(|_| {
+        let code = unsafe { GetLastError() }.0 as i32;
+        std::io::Error::from_raw_os_error(code)
+    })
+}
+
+fn path_to_wide(path: &Path) -> Vec<u16> {
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

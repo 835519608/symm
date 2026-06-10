@@ -1,5 +1,5 @@
 use crate::adapters::errors::io::ioe;
-use crate::adapters::paths::{rebase_paths, remove};
+use crate::adapters::paths::rebase_paths;
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
@@ -110,7 +110,7 @@ fn replace_symlink_with_writer<F>(
 where
     F: FnMut(symlink::LinkRecreateSpec, &Path, &Path) -> Result<(), SymmError>,
 {
-    remove::remove_any(link_path)?;
+    remove_expected_internal_link(link_path, recreate_spec, raw)?;
     match write(recreate_spec, link_path, rebased) {
         Ok(()) => Ok(()),
         Err(write_err) => {
@@ -123,6 +123,33 @@ where
             }
             Err(write_err)
         }
+    }
+}
+
+fn remove_expected_internal_link(
+    link_path: &Path,
+    recreate_spec: symlink::LinkRecreateSpec,
+    raw: &Path,
+) -> Result<(), SymmError> {
+    let meta = fs::symlink_metadata(link_path).map_err(ioe)?;
+    if symlink::kind_from_path_and_metadata(link_path, &meta)?.is_none() {
+        return Err(internal_link_changed(link_path));
+    }
+    if symlink::capture_recreate_spec(link_path).map_err(|_| internal_link_changed(link_path))?
+        != recreate_spec
+    {
+        return Err(internal_link_changed(link_path));
+    }
+    let current = fs::read_link(link_path).map_err(ioe)?;
+    if current != raw {
+        return Err(internal_link_changed(link_path));
+    }
+    symlink::unlink(link_path)
+}
+
+fn internal_link_changed(link_path: &Path) -> SymmError {
+    SymmError::InvalidArgument {
+        message: format!("内部链接状态已变化，无法安全重写：{}", link_path.display()),
     }
 }
 
@@ -263,6 +290,38 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&link).expect("old link should be restored"),
             "old"
+        );
+    }
+
+    #[test]
+    fn replace_symlink_refuses_replaced_entity_before_remove() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("lnk");
+        let new_target = temp.path().join("new-target.txt");
+        fs::write(&target, "old").expect("write old target");
+        fs::write(&new_target, "new").expect("write new target");
+        symlink_file(&target, &link);
+        let spec = symlink::capture_recreate_spec(&link).expect("capture spec");
+        fs::remove_file(&link).expect("remove link");
+        fs::write(&link, "external entity").expect("replace with entity");
+
+        let err = replace_symlink_with_writer(
+            &link,
+            spec,
+            &target,
+            &new_target,
+            symlink::write_symlink_from_spec,
+        )
+        .expect_err("replaced entity should not be removed");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("内部链接状态已变化")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(&link).expect("entity should remain"),
+            "external entity"
         );
     }
 }

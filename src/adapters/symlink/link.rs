@@ -6,7 +6,7 @@ use crate::domain::error::SymmError;
 use crate::domain::model::LinkKind;
 use std::path::Path;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LinkRecreateSpec {
     #[cfg(windows)]
     kind: crate::adapters::platform::host::LinkWriteKind,

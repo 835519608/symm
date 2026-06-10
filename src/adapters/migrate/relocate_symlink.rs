@@ -1,7 +1,7 @@
 //! 同盘移动软链失败时，经 `symlink::write_symlink` 重建（含 Windows UAC 策略）。
 
 use crate::adapters::errors::io::ioe;
-use crate::adapters::paths::{presence, rebase_paths, remove};
+use crate::adapters::paths::{presence, rebase_paths};
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
 use std::fs;
@@ -33,17 +33,48 @@ fn relocate_symlink_with_rebase(
         let roots = rebase_paths::source_roots(src);
         rebase_paths::internal_target(dst, src, &link_target, &roots)
     } else {
-        link_target
+        link_target.clone()
     };
-    symlink::write_symlink_like(src, dst, &rebased)?;
-    remove::remove_any(src)?;
+    let recreate_spec = symlink::capture_recreate_spec(src)?;
+    symlink::write_symlink_from_spec(recreate_spec, dst, &rebased)?;
+    if let Err(err) = remove_expected_relocated_link(src, recreate_spec, &link_target) {
+        let _ = symlink::unlink(dst);
+        return Err(err);
+    }
     Ok(())
+}
+
+fn remove_expected_relocated_link(
+    src: &Path,
+    recreate_spec: symlink::LinkRecreateSpec,
+    expected_target: &Path,
+) -> Result<(), SymmError> {
+    let meta = fs::symlink_metadata(src).map_err(ioe)?;
+    if symlink::kind_from_path_and_metadata(src, &meta)?.is_none() {
+        return Err(source_link_changed(src));
+    }
+    if symlink::capture_recreate_spec(src).map_err(|_| source_link_changed(src))? != recreate_spec {
+        return Err(source_link_changed(src));
+    }
+    let current_target = fs::read_link(src).map_err(ioe)?;
+    if current_target != expected_target {
+        return Err(source_link_changed(src));
+    }
+    symlink::unlink(src)
+}
+
+fn source_link_changed(src: &Path) -> SymmError {
+    SymmError::InvalidArgument {
+        message: format!("源链接状态已变化，无法安全清理：{}", src.display()),
+    }
 }
 
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
-    use super::relocate_symlink_preserving_target;
+    use super::{relocate_symlink_preserving_target, remove_expected_relocated_link};
+    use crate::adapters::symlink as symlink_adapter;
+    use crate::domain::error::SymmError;
     use std::fs;
     use std::os::unix::fs::symlink;
     use tempfile::tempdir;
@@ -85,5 +116,29 @@ mod tests {
 
         assert!(fs::symlink_metadata(&link).is_ok(), "source link remains");
         assert_eq!(fs::read_to_string(&dst).expect("read dst"), "existing");
+    }
+
+    #[test]
+    fn remove_expected_relocated_link_refuses_replaced_entity() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link");
+        fs::write(&target, "payload").expect("write data");
+        symlink(&target, &link).expect("symlink");
+        let spec = symlink_adapter::capture_recreate_spec(&link).expect("capture spec");
+        fs::remove_file(&link).expect("remove source link");
+        fs::write(&link, "external entity").expect("replace source");
+
+        let err = remove_expected_relocated_link(&link, spec, &target)
+            .expect_err("replaced entity should not be removed");
+
+        assert!(
+            matches!(err, SymmError::InvalidArgument { ref message } if message.contains("源链接状态已变化")),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(&link).expect("entity should remain"),
+            "external entity"
+        );
     }
 }

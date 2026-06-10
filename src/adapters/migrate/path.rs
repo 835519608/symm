@@ -4,7 +4,9 @@ use crate::adapters::paths::{presence, remove};
 use crate::adapters::platform::{HostFs, format_relocate_failure, host_platform};
 use crate::adapters::symlink;
 use crate::domain::error::SymmError;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -62,20 +64,19 @@ where
         }
     }
 
-    let source_snapshot = SourceSnapshot::capture(src)?;
+    let source_fingerprint = SourceFingerprint::capture(src)?;
 
     if let Some(acl_file) = host_platform().snapshot_dir_acl(src)? {
         let acl_file = TempAclSnapshot::new(acl_file);
         copy_file::copy_path_with_progress(src, dst, reporter)?;
         if let Err(err) = host_platform().restore_dir_acl(dst, acl_file.path()) {
-            let _ = remove::remove_any(dst);
-            return Err(err);
+            eprintln!("提示：ACL 恢复失败，已保留复制结果并继续迁移：{}", err);
         }
     } else {
         copy_file::copy_path_with_progress(src, dst, reporter)?;
     }
 
-    if let Err(err) = source_snapshot.ensure_unchanged(src) {
+    if let Err(err) = source_fingerprint.ensure_unchanged(src) {
         let cleanup = remove::remove_any(dst).err();
         return Err(SymmError::InvalidArgument {
             message: match cleanup {
@@ -228,13 +229,17 @@ fn try_move_path_with_retry(src: &Path, dst: &Path, role: &str) -> Result<bool, 
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SourceSnapshot {
-    entries: Vec<SourceSnapshotEntry>,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SourceFingerprint {
+    // 聚合复制前后的条目元数据，避免为大目录在内存中保留完整文件列表。
+    entries: u64,
+    hash_xor: u64,
+    hash_sum: u64,
+    hash_square_sum: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SourceSnapshotEntry {
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct SourceEntryFingerprint {
     rel_path: PathBuf,
     kind: SourceEntryKind,
     len: u64,
@@ -243,7 +248,7 @@ struct SourceSnapshotEntry {
     link_target: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 enum SourcePlatformSnapshot {
     #[cfg(unix)]
     Unix {
@@ -263,7 +268,7 @@ enum SourcePlatformSnapshot {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 enum SourceEntryKind {
     File,
     Dir,
@@ -271,16 +276,16 @@ enum SourceEntryKind {
     Other,
 }
 
-impl SourceSnapshot {
+impl SourceFingerprint {
     fn capture(root: &Path) -> Result<Self, SymmError> {
-        let mut entries = Vec::new();
+        let mut fingerprint = Self::default();
         let root_meta = fs::symlink_metadata(root).map_err(|e| SymmError::IoError {
             message: format!("无法读取迁移源路径元数据：{}：{e}", root.display()),
         })?;
         if !root_meta.is_dir() || symlink::kind_from_path_and_metadata(root, &root_meta)?.is_some()
         {
-            entries.push(SourceSnapshotEntry::capture(root, PathBuf::new())?);
-            return Ok(Self { entries });
+            fingerprint.add_entry(root, PathBuf::new())?;
+            return Ok(fingerprint);
         }
 
         for entry in WalkDir::new(root).follow_links(false) {
@@ -289,10 +294,9 @@ impl SourceSnapshot {
             })?;
             let path = entry.path();
             let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-            entries.push(SourceSnapshotEntry::capture(path, rel)?);
+            fingerprint.add_entry(path, rel)?;
         }
-        entries.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
-        Ok(Self { entries })
+        Ok(fingerprint)
     }
 
     fn ensure_unchanged(&self, root: &Path) -> Result<(), SymmError> {
@@ -304,9 +308,21 @@ impl SourceSnapshot {
             message: format!("源路径已变化：{}", root.display()),
         })
     }
+
+    fn add_entry(&mut self, path: &Path, rel_path: PathBuf) -> Result<(), SymmError> {
+        let entry = SourceEntryFingerprint::capture(path, rel_path)?;
+        let hash = hash_entry(&entry);
+        self.entries = self.entries.saturating_add(1);
+        self.hash_xor ^= hash;
+        self.hash_sum = self.hash_sum.wrapping_add(hash);
+        self.hash_square_sum = self
+            .hash_square_sum
+            .wrapping_add(hash.wrapping_mul(hash.rotate_left(32) | 1));
+        Ok(())
+    }
 }
 
-impl SourceSnapshotEntry {
+impl SourceEntryFingerprint {
     fn capture(path: &Path, rel_path: PathBuf) -> Result<Self, SymmError> {
         let meta = fs::symlink_metadata(path).map_err(|e| SymmError::IoError {
             message: format!("无法读取迁移源路径元数据：{}：{e}", path.display()),
@@ -337,6 +353,12 @@ impl SourceSnapshotEntry {
             link_target,
         })
     }
+}
+
+fn hash_entry(entry: &SourceEntryFingerprint) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    entry.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(unix)]
@@ -392,7 +414,7 @@ impl Drop for TempAclSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{MigrationEvent, SourceSnapshot, migrate_path, move_path_without_progress};
+    use super::{MigrationEvent, SourceFingerprint, migrate_path, move_path_without_progress};
     use crate::adapters::migrate::copy_file::copy_path_with_progress;
     use crate::adapters::migrate::rebase;
     use crate::domain::error::SymmError;
@@ -531,15 +553,15 @@ mod tests {
     }
 
     #[test]
-    fn source_snapshot_detects_mutation_before_source_cleanup() {
+    fn source_fingerprint_detects_mutation_before_source_cleanup() {
         let temp = tempdir().expect("temp dir");
         let src = temp.path().join("src.txt");
         fs::write(&src, "before").expect("write source");
-        let snapshot = SourceSnapshot::capture(&src).expect("snapshot");
+        let fingerprint = SourceFingerprint::capture(&src).expect("fingerprint");
 
         fs::write(&src, "after-change").expect("mutate source");
 
-        let err = snapshot
+        let err = fingerprint
             .ensure_unchanged(&src)
             .expect_err("source mutation should be detected");
         assert!(
