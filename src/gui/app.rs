@@ -499,11 +499,14 @@ impl SymmApp {
                 let first_log_line = outcome.log.lines().next();
                 let msg = match (first_log_line, outcome.error.as_deref()) {
                     (Some(line), Some(err)) => {
-                        format!("{line}\n{}", self.state.texts().delete_failed(err))
+                        format!(
+                            "{line}\n{}",
+                            remove_failed_message(&self.state, outcome.mode, err)
+                        )
                     }
                     (Some(line), None) => line.to_string(),
-                    (None, Some(err)) => self.state.texts().delete_failed(err),
-                    (None, None) => self.state.texts().deleted().to_string(),
+                    (None, Some(err)) => remove_failed_message(&self.state, outcome.mode, err),
+                    (None, None) => remove_success_message(&self.state, outcome.mode).to_string(),
                 };
                 self.toast(msg, if outcome.error.is_some() { 4200 } else { 3600 });
             }
@@ -591,6 +594,22 @@ impl SymmApp {
                 form.error = Some(err.to_string());
             }
         }
+    }
+}
+
+fn remove_failed_message(state: &AppState, mode: RemoveMode, err: &str) -> String {
+    let t = state.texts();
+    match mode {
+        RemoveMode::DeleteLinkOnly => t.delete_failed(err),
+        RemoveMode::RestoreTargetToLink => t.restore_failed(err),
+    }
+}
+
+fn remove_success_message(state: &AppState, mode: RemoveMode) -> &'static str {
+    let t = state.texts();
+    match mode {
+        RemoveMode::DeleteLinkOnly => t.deleted(),
+        RemoveMode::RestoreTargetToLink => t.restored(),
     }
 }
 
@@ -752,6 +771,7 @@ mod tests {
             attempted_ids: HashSet::from([1, 2]),
             remaining_ids: HashSet::from([2]),
             error: Some("部分删除失败：other".to_string()),
+            mode: RemoveMode::DeleteLinkOnly,
         }));
 
         assert!(app.needs_reload);
@@ -773,6 +793,7 @@ mod tests {
             attempted_ids: HashSet::from([1]),
             remaining_ids: HashSet::new(),
             error: None,
+            mode: RemoveMode::DeleteLinkOnly,
         }));
 
         assert!(app.needs_reload);
@@ -791,6 +812,7 @@ mod tests {
             attempted_ids: HashSet::from([1, 2]),
             remaining_ids: HashSet::from([2]),
             error: Some("部分删除失败：other".to_string()),
+            mode: RemoveMode::DeleteLinkOnly,
         }));
 
         assert_eq!(app.state.selected_id, None);
@@ -822,11 +844,29 @@ mod tests {
             attempted_ids: HashSet::from([1]),
             remaining_ids: HashSet::new(),
             error: None,
+            mode: RemoveMode::DeleteLinkOnly,
         }));
 
         assert_eq!(app.state.selected_id, Some(9));
         assert!(app.selected_view.is_some());
         assert!(app.state.checked_ids.is_empty());
+    }
+
+    #[test]
+    fn restore_failure_toast_uses_restore_wording() {
+        let mut app = test_app();
+
+        app.finish_remove(Ok(RemoveOutcome {
+            log: String::new(),
+            attempted_ids: HashSet::from([1]),
+            remaining_ids: HashSet::from([1]),
+            error: Some("target 不存在".to_string()),
+            mode: RemoveMode::RestoreTargetToLink,
+        }));
+
+        let toast = app.state.toast.as_deref().expect("toast");
+        assert!(toast.contains("恢复失败"));
+        assert!(!toast.contains("删除失败"));
     }
 
     #[test]

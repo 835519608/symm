@@ -20,6 +20,7 @@ pub enum Icon {
     Gear,
     Info,
     Copy,
+    Undo,
     Previous,
     Next,
 }
@@ -43,6 +44,7 @@ impl Icon {
             Icon::Gear => regular::GEAR,
             Icon::Info => regular::INFO,
             Icon::Copy => regular::COPY,
+            Icon::Undo => regular::ARROW_COUNTER_CLOCKWISE,
             Icon::Previous => regular::CARET_LEFT,
             Icon::Next => regular::CARET_RIGHT,
         }

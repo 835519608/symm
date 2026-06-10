@@ -26,6 +26,7 @@ pub struct RemoveOutcome {
     pub attempted_ids: HashSet<i64>,
     pub remaining_ids: HashSet<i64>,
     pub error: Option<String>,
+    pub mode: RemoveMode,
 }
 
 pub enum GuiLinkOpError {
@@ -124,6 +125,12 @@ pub fn apply_link_op(
 ) -> Result<String, GuiLinkOpError> {
     let conn = link_store::open_at(data_dir).map_err(GuiLinkOpError::Workflow)?;
     if lock == LinkOpLockPolicy::Unlock {
+        if confirmed_lock_procs.is_none() {
+            crate::workflows::link_ops::workflow::preflight_operation(
+                &conn, operation, link, target, name,
+            )
+            .map_err(GuiLinkOpError::Workflow)?;
+        }
         let procs = locking_processes_for_confirmation(link)?;
         match confirmed_lock_procs.as_deref() {
             _ if procs.is_empty() => {}
@@ -185,6 +192,7 @@ pub fn remove_links(
             attempted_ids: HashSet::new(),
             remaining_ids: HashSet::new(),
             error: None,
+            mode,
         });
     }
     let conn = link_store::open_at(data_dir)?;
@@ -206,6 +214,7 @@ pub fn remove_links(
         attempted_ids: ids.iter().copied().collect(),
         remaining_ids,
         error,
+        mode,
     })
 }
 

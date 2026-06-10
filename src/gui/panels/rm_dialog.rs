@@ -58,9 +58,17 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
             }
             ModalSection::FooterCustom(ui) => {
                 right_aligned(ui, |ui| {
+                    let (icon, label) = match mode {
+                        RemoveMode::DeleteLinkOnly => {
+                            (crate::gui::icons::Icon::Trash, t.confirm_delete())
+                        }
+                        RemoveMode::RestoreTargetToLink => {
+                            (crate::gui::icons::Icon::Undo, t.confirm_restore())
+                        }
+                    };
                     if button(ui)
-                        .icon(crate::gui::icons::Icon::Trash)
-                        .label(t.confirm_delete())
+                        .icon(icon)
+                        .label(label)
                         .enabled(enabled)
                         .show()
                         .clicked()

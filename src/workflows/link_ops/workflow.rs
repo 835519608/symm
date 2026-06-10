@@ -87,6 +87,45 @@ pub fn run_operation_buffered<W: Write>(
     )
 }
 
+#[cfg(feature = "gui")]
+pub fn preflight_operation(
+    conn: &rusqlite::Connection,
+    operation: LinkOperation,
+    link: &Path,
+    target: &Path,
+    name: &str,
+) -> Result<(), SymmError> {
+    let link_norm = runtime_paths::normalize_link(link)?;
+    let existing = link_store::find_by_link_path(conn, &link_norm)?;
+    let link_path = Path::new(&link_norm);
+    let link_state = symlink::inspect_link_path(link_path)?;
+    let change = plan_filesystem_change(operation, link_path, target, link_state)?;
+    let mut decisions = PreflightDecisions { name };
+    prepare_record_name(conn, &mut decisions, existing.as_ref())?;
+    ensure_planned_link_state_unchanged(link_path, &change)
+}
+
+#[cfg(feature = "gui")]
+struct PreflightDecisions<'a> {
+    name: &'a str,
+}
+
+#[cfg(feature = "gui")]
+impl LinkOpDecisionProvider for PreflightDecisions<'_> {
+    fn name(&mut self, default_name: &str) -> Result<String, SymmError> {
+        let name = self.name.trim();
+        if name.is_empty() {
+            Ok(default_name.to_string())
+        } else {
+            Ok(name.to_string())
+        }
+    }
+
+    fn lock_choice(&mut self, _procs: &[ProcInfo]) -> Result<LinkOpLockChoice, SymmError> {
+        Ok(LinkOpLockChoice::Cancel)
+    }
+}
+
 fn run_operation_with_progress_mode<W: Write>(
     conn: &rusqlite::Connection,
     operation: LinkOperation,
@@ -945,6 +984,30 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn gui_preflight_trims_name_before_conflict_check() {
+        let temp = tempdir().expect("temp dir");
+        let conn = Connection::open_in_memory().expect("open memory db");
+        schema::migrate(&conn).expect("migrate");
+        link_store::upsert_link(
+            &conn,
+            "taken",
+            "/tmp/existing-link",
+            "/tmp/existing-target",
+            crate::domain::model::LinkKind::Symlink,
+        )
+        .expect("insert existing record");
+        let link = temp.path().join("link.txt");
+        let target = temp.path().join("target.txt");
+        std::fs::write(&target, "payload").expect("write target");
+
+        let err = preflight_operation(&conn, LinkOperation::Add, &link, &target, " taken ")
+            .expect_err("trimmed conflict should fail before expensive lock scan");
+
+        assert!(matches!(err, SymmError::NameConflict { name } if name == "taken"));
     }
 
     #[test]

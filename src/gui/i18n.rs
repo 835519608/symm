@@ -404,8 +404,8 @@ impl GuiTexts {
 
     pub fn name_hint(&self) -> &'static str {
         match self.locale {
-            Locale::ZhCn => "留空则使用链接文件名",
-            Locale::En => "Leave empty to use the link file name",
+            Locale::ZhCn => "留空则不保存名称，列表会显示链接文件名",
+            Locale::En => "Leave empty to store no name; the list shows the link file name",
         }
     }
 
@@ -694,6 +694,13 @@ impl GuiTexts {
         }
     }
 
+    pub fn confirm_restore(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "确认恢复",
+            Locale::En => "Restore",
+        }
+    }
+
     pub fn cancel(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "取消",
@@ -736,10 +743,24 @@ impl GuiTexts {
         }
     }
 
+    pub fn restored(&self) -> &'static str {
+        match self.locale {
+            Locale::ZhCn => "已恢复",
+            Locale::En => "Restored",
+        }
+    }
+
     pub fn delete_failed(&self, err: &str) -> String {
         match self.locale {
             Locale::ZhCn => format!("删除失败：{err}"),
             Locale::En => format!("Delete failed: {err}"),
+        }
+    }
+
+    pub fn restore_failed(&self, err: &str) -> String {
+        match self.locale {
+            Locale::ZhCn => format!("恢复失败：{err}"),
+            Locale::En => format!("Restore failed: {err}"),
         }
     }
 
