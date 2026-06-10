@@ -333,34 +333,41 @@ impl SourceSnapshotEntry {
             kind,
             len: meta.len(),
             modified: meta.modified().ok(),
-            platform: source_platform_snapshot(&meta),
+            platform: source_platform_snapshot(path, &meta)?,
             link_target,
         })
     }
 }
 
 #[cfg(unix)]
-fn source_platform_snapshot(meta: &fs::Metadata) -> SourcePlatformSnapshot {
+fn source_platform_snapshot(
+    _path: &Path,
+    meta: &fs::Metadata,
+) -> Result<SourcePlatformSnapshot, SymmError> {
     use std::os::unix::fs::MetadataExt;
-    SourcePlatformSnapshot::Unix {
+    Ok(SourcePlatformSnapshot::Unix {
         dev: meta.dev(),
         ino: meta.ino(),
         ctime: meta.ctime(),
         ctime_nsec: meta.ctime_nsec(),
         mode: meta.mode(),
-    }
+    })
 }
 
 #[cfg(windows)]
-fn source_platform_snapshot(meta: &fs::Metadata) -> SourcePlatformSnapshot {
+fn source_platform_snapshot(
+    path: &Path,
+    meta: &fs::Metadata,
+) -> Result<SourcePlatformSnapshot, SymmError> {
     use std::os::windows::fs::MetadataExt;
-    SourcePlatformSnapshot::Windows {
-        volume: meta.volume_serial_number(),
-        index: meta.file_index(),
+    let identity = crate::adapters::paths::entity::windows_file_identity(path)?;
+    Ok(SourcePlatformSnapshot::Windows {
+        volume: Some(identity.volume),
+        index: Some(identity.index),
         creation_time: meta.creation_time(),
         last_write_time: meta.last_write_time(),
         file_attributes: meta.file_attributes(),
-    }
+    })
 }
 
 struct TempAclSnapshot {

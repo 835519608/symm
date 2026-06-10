@@ -31,7 +31,7 @@ enum EntityFingerprintInner {
 impl EntityFingerprint {
     pub(crate) fn for_non_link_entity(path: &Path) -> Result<Self, SymmError> {
         let meta = fs::symlink_metadata(path).map_err(|e| SymmError::IoError {
-            message: format!("无法确认 link 路径实体身份：{e}"),
+            message: format!("无法确认路径实体身份：{e}"),
         })?;
         if symlink::kind_from_path_and_metadata(path, &meta)?.is_some() {
             return Err(entity_changed(path));
@@ -71,7 +71,7 @@ impl EntityFingerprint {
     fn from_metadata(path: &Path, _meta: &fs::Metadata) -> Result<Self, SymmError> {
         Err(SymmError::InvalidArgument {
             message: format!(
-                "当前平台无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
+                "当前平台无法可靠确认路径实体身份，请重新执行本次操作：{}",
                 path.display()
             ),
         })
@@ -88,16 +88,16 @@ pub(crate) fn entity_changed(path: &Path) -> SymmError {
 }
 
 #[cfg(windows)]
-struct WindowsFileIdentity {
-    volume: u32,
-    index: u64,
-    creation_time: u64,
-    last_write_time: u64,
-    len: u64,
+pub(crate) struct WindowsFileIdentity {
+    pub(crate) volume: u32,
+    pub(crate) index: u64,
+    pub(crate) creation_time: u64,
+    pub(crate) last_write_time: u64,
+    pub(crate) len: u64,
 }
 
 #[cfg(windows)]
-fn windows_file_identity(path: &Path) -> Result<WindowsFileIdentity, SymmError> {
+pub(crate) fn windows_file_identity(path: &Path) -> Result<WindowsFileIdentity, SymmError> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS,
@@ -109,7 +109,7 @@ fn windows_file_identity(path: &Path) -> Result<WindowsFileIdentity, SymmError> 
     let wide_path =
         super::windows::verbatim_wide_path(path).ok_or_else(|| SymmError::InvalidArgument {
             message: format!(
-                "无法可靠确认 link 路径实体身份，请重新执行本次操作：{}",
+                "无法可靠确认路径实体身份，请重新执行本次操作：{}",
                 path.display()
             ),
         })?;
@@ -125,14 +125,14 @@ fn windows_file_identity(path: &Path) -> Result<WindowsFileIdentity, SymmError> 
         )
     }
     .map_err(|e| SymmError::IoError {
-        message: format!("无法确认 link 路径实体身份：{e}"),
+        message: format!("无法确认路径实体身份：{e}"),
     })?;
 
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     let result = unsafe { GetFileInformationByHandle(handle, &mut info) };
     let _ = unsafe { CloseHandle(handle) };
     result.map_err(|e| SymmError::IoError {
-        message: format!("无法确认 link 路径实体身份：{e}"),
+        message: format!("无法确认路径实体身份：{e}"),
     })?;
 
     Ok(WindowsFileIdentity {
