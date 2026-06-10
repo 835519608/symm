@@ -98,7 +98,6 @@ pub struct SettingsDraft {
     pub locale: Locale,
     pub color_scheme: ColorScheme,
     pub font_size_pt: f32,
-    pub sidebar_width: f32,
     pub data_dir: String,
 }
 
@@ -110,7 +109,6 @@ impl SettingsDraft {
             locale: state.locale,
             color_scheme: state.color_scheme,
             font_size_pt: state.font_size_pt,
-            sidebar_width: state.sidebar_width,
             data_dir: state.data_dir.clone(),
         }
     }
@@ -123,7 +121,6 @@ impl SettingsDraft {
             locale: d.locale,
             color_scheme: d.color_scheme,
             font_size_pt: d.font_size_pt,
-            sidebar_width: d.sidebar_width,
             data_dir: String::new(),
         }
     }
@@ -334,19 +331,6 @@ mod tests {
     }
 
     #[test]
-    fn settings_draft_uses_persisted_sidebar_width_not_transient_layout() {
-        let state = AppState {
-            sidebar_width: 300.0,
-            transient_sidebar_width: 420.0,
-            ..AppState::default()
-        };
-
-        let draft = SettingsDraft::from_state(&state);
-
-        assert_eq!(draft.sidebar_width, 300.0);
-    }
-
-    #[test]
     fn settings_draft_restore_defaults_resets_all_editable_appearance_fields() {
         let mut draft = SettingsDraft {
             section: SettingsSection::About,
@@ -354,7 +338,6 @@ mod tests {
             locale: Locale::En,
             color_scheme: ColorScheme::Ember,
             font_size_pt: 22.0,
-            sidebar_width: 260.0,
             data_dir: "/tmp/symm-custom".to_string(),
         };
 
@@ -366,7 +349,6 @@ mod tests {
         assert_eq!(draft.locale, defaults.locale);
         assert_eq!(draft.color_scheme, defaults.color_scheme);
         assert_eq!(draft.font_size_pt, defaults.font_size_pt);
-        assert_eq!(draft.sidebar_width, defaults.sidebar_width);
         assert_eq!(draft.data_dir, "");
     }
 
@@ -378,7 +360,6 @@ mod tests {
             locale: Locale::En,
             color_scheme: ColorScheme::Ember,
             font_size_pt: 22.0,
-            sidebar_width: 260.0,
             data_dir: "/tmp/symm-env".to_string(),
         };
 

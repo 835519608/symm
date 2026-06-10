@@ -17,7 +17,7 @@ use std::path::Path;
 
 pub struct ReloadedLinks {
     pub snapshot: LinkSnapshot,
-    pub all_ids: HashSet<i64>,
+    pub existing_tracked_ids: HashSet<i64>,
     pub page_index: u32,
 }
 
@@ -64,7 +64,7 @@ pub fn reload(
     }
     Ok(ReloadedLinks {
         snapshot: LinkSnapshot::with_counts(items, total_count, matched_count, kind_counts),
-        all_ids: link_store::existing_ids(&conn, &ids_to_check)?,
+        existing_tracked_ids: link_store::existing_ids(&conn, &ids_to_check)?,
         page_index,
     })
 }

@@ -1,7 +1,7 @@
 use crate::gui::fonts::icon_font_id;
 use crate::gui::icons::Icon;
 use crate::gui::theme::{self, typography_from_ui};
-use egui::{Button, Response, RichText, Ui, Vec2, WidgetInfo, WidgetType};
+use egui::{Button, Color32, Response, RichText, Stroke, Ui, Vec2, WidgetInfo, WidgetType};
 
 const BTN_MIN_W: f32 = 96.0;
 
@@ -37,6 +37,7 @@ pub struct UiButton<'a> {
     label: &'a str,
     tip: &'a str,
     enabled: bool,
+    danger: bool,
 }
 
 impl<'a> UiButton<'a> {
@@ -47,6 +48,7 @@ impl<'a> UiButton<'a> {
             label: "",
             tip: "",
             enabled: true,
+            danger: false,
         }
     }
 
@@ -70,29 +72,43 @@ impl<'a> UiButton<'a> {
         self
     }
 
-    fn button(self) -> (Button<'a>, &'a mut Ui, &'a str, Option<&'a str>) {
+    pub fn danger(mut self) -> Self {
+        self.danger = true;
+        self
+    }
+
+    fn button(self) -> (Button<'a>, &'a mut Ui, &'a str, Option<&'a str>, bool, bool) {
         let typo = typography_from_ui(self.ui);
+        let dark = if self.danger {
+            theme::palette_from_ui(self.ui).dark
+        } else {
+            false
+        };
         let text = widget_text(self.icon, self.label, &typo);
         let size = default_min_size(&typo, self.icon, self.label);
+        let button = Button::new(text).min_size(size);
         let semantic_label = if self.label.is_empty() && self.icon.is_some() && !self.tip.is_empty()
         {
             Some(self.tip)
         } else {
             None
         };
-        (
-            Button::new(text).min_size(size),
-            self.ui,
-            self.tip,
-            semantic_label,
-        )
+        (button, self.ui, self.tip, semantic_label, self.danger, dark)
     }
 
     pub fn show(self) -> Response {
         let enabled = self.enabled;
-        let (button, ui, tip, semantic_label) = self.button();
+        let (button, ui, tip, semantic_label, danger, dark) = self.button();
         let semantic_enabled = enabled && ui.is_enabled();
-        let mut resp = ui.add_enabled(enabled, button);
+        let mut resp = if danger && semantic_enabled {
+            ui.scope(|ui| {
+                apply_danger_visuals(ui, dark);
+                ui.add_enabled(enabled, button)
+            })
+            .inner
+        } else {
+            ui.add_enabled(enabled, button)
+        };
         if let Some(label) = semantic_label {
             resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, semantic_enabled, label));
         }
@@ -104,11 +120,19 @@ impl<'a> UiButton<'a> {
 
     pub fn show_sized(self, size: Vec2) -> Response {
         let enabled = self.enabled;
-        let (button, ui, tip, semantic_label) = self.button();
+        let (button, ui, tip, semantic_label, danger, dark) = self.button();
         let semantic_enabled = enabled && ui.is_enabled();
-        let mut resp = ui
-            .add_enabled_ui(enabled, |ui| ui.add_sized(size, button.min_size(size)))
-            .inner;
+        let mut resp = if danger && semantic_enabled {
+            ui.scope(|ui| {
+                apply_danger_visuals(ui, dark);
+                ui.add_enabled_ui(enabled, |ui| ui.add_sized(size, button.min_size(size)))
+                    .inner
+            })
+            .inner
+        } else {
+            ui.add_enabled_ui(enabled, |ui| ui.add_sized(size, button.min_size(size)))
+                .inner
+        };
         if let Some(label) = semantic_label {
             resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, semantic_enabled, label));
         }
@@ -121,6 +145,66 @@ impl<'a> UiButton<'a> {
 
 pub fn button(ui: &mut Ui) -> UiButton<'_> {
     UiButton::new(ui)
+}
+
+#[derive(Clone, Copy)]
+struct DangerVisuals {
+    text: Color32,
+    text_hover: Color32,
+    fill: Color32,
+    fill_hover: Color32,
+    fill_active: Color32,
+    stroke: Color32,
+    stroke_hover: Color32,
+}
+
+fn danger_visuals(dark: bool) -> DangerVisuals {
+    if dark {
+        DangerVisuals {
+            text: Color32::from_rgb(0xFC, 0xA5, 0xA5),
+            text_hover: Color32::from_rgb(0xFE, 0xCA, 0xCA),
+            fill: Color32::from_rgb(0x3B, 0x1D, 0x25),
+            fill_hover: Color32::from_rgb(0x4C, 0x1D, 0x25),
+            fill_active: Color32::from_rgb(0x7F, 0x1D, 0x1D),
+            stroke: Color32::from_rgb(0x7F, 0x1D, 0x1D),
+            stroke_hover: Color32::from_rgb(0xEF, 0x44, 0x44),
+        }
+    } else {
+        DangerVisuals {
+            text: Color32::from_rgb(0xB9, 0x1C, 0x1C),
+            text_hover: Color32::from_rgb(0x99, 0x1B, 0x1B),
+            fill: Color32::from_rgb(0xFE, 0xE2, 0xE2),
+            fill_hover: Color32::from_rgb(0xFE, 0xCA, 0xCA),
+            fill_active: Color32::from_rgb(0xFC, 0xA5, 0xA5),
+            stroke: Color32::from_rgb(0xFC, 0xA5, 0xA5),
+            stroke_hover: Color32::from_rgb(0xDC, 0x26, 0x26),
+        }
+    }
+}
+
+fn apply_danger_visuals(ui: &mut Ui, dark: bool) {
+    let p = danger_visuals(dark);
+    let widgets = &mut ui.style_mut().visuals.widgets;
+
+    widgets.inactive.weak_bg_fill = p.fill;
+    widgets.inactive.bg_fill = p.fill;
+    widgets.inactive.fg_stroke = Stroke::new(1.0, p.text);
+    widgets.inactive.bg_stroke = Stroke::new(1.0, p.stroke);
+
+    widgets.hovered.weak_bg_fill = p.fill_hover;
+    widgets.hovered.bg_fill = p.fill_hover;
+    widgets.hovered.fg_stroke = Stroke::new(1.0, p.text_hover);
+    widgets.hovered.bg_stroke = Stroke::new(1.3, p.stroke_hover);
+
+    widgets.active.weak_bg_fill = p.fill_active;
+    widgets.active.bg_fill = p.fill_active;
+    widgets.active.fg_stroke = Stroke::new(1.0, p.text_hover);
+    widgets.active.bg_stroke = Stroke::new(1.3, p.stroke_hover);
+
+    widgets.open.weak_bg_fill = p.fill_hover;
+    widgets.open.bg_fill = p.fill_hover;
+    widgets.open.fg_stroke = Stroke::new(1.0, p.text_hover);
+    widgets.open.bg_stroke = Stroke::new(1.3, p.stroke_hover);
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use crate::gui::state::{AppState, LinkOpForm, LinkOpLockPolicy};
 use crate::gui::theme;
 use crate::gui::widgets::{
     ModalOptions, ModalSection, ModalSize, PathBrowse, PathPickMode, button, path_field,
-    show_modal, split_row, text_field,
+    radio_value, show_modal, split_row, text_field,
 };
 use crate::workflows::link_ops::workflow::LinkOperation;
 use egui::{CollapsingHeader, Ui};
@@ -159,9 +159,27 @@ fn show_link_op_form(
         form.lock_policy,
     );
     ui.horizontal_wrapped(|ui| {
-        ui.radio_value(&mut form.operation, LinkOperation::Add, t.link_op_add());
-        ui.radio_value(&mut form.operation, LinkOperation::Adopt, t.link_op_adopt());
-        ui.radio_value(&mut form.operation, LinkOperation::Point, t.link_op_point());
+        radio_value(
+            ui,
+            p,
+            &mut form.operation,
+            LinkOperation::Add,
+            t.link_op_add(),
+        );
+        radio_value(
+            ui,
+            p,
+            &mut form.operation,
+            LinkOperation::Adopt,
+            t.link_op_adopt(),
+        );
+        radio_value(
+            ui,
+            p,
+            &mut form.operation,
+            LinkOperation::Point,
+            t.link_op_point(),
+        );
     });
     ui.add_space(theme::gap(ui));
     if let Some(path) = path_field(ui, p, t.link_path_label(), &mut form.link_path, browse) {
@@ -185,12 +203,16 @@ fn show_link_op_form(
     CollapsingHeader::new(t.advanced_options())
         .id_salt("link_op_advanced")
         .show(ui, |ui| {
-            ui.radio_value(
+            radio_value(
+                ui,
+                p,
                 &mut form.lock_policy,
                 LinkOpLockPolicy::Unlock,
                 t.lock_unlock(),
             );
-            ui.radio_value(
+            radio_value(
+                ui,
+                p,
                 &mut form.lock_policy,
                 LinkOpLockPolicy::Cancel,
                 t.lock_cancel(),

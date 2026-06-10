@@ -6,9 +6,10 @@ use egui::{
     Color32, Context, FontDefinitions, Frame, Margin, Rounding, Stroke, Ui, Visuals, epaint::Shadow,
 };
 pub use palette::UiPalette;
+pub use palette::{accent_for_scheme, accent_text_for_scheme};
 pub use typography::{
     UiTypography, apply_text_styles, custom_text_styles_registered, rich_body, rich_body_muted,
-    rich_detail_title, rich_section, rich_small, typography_from_ui,
+    rich_section, rich_small, typography_from_ui,
 };
 
 pub const SIDEBAR_PANEL_ID: &str = "sidebar";
@@ -19,6 +20,7 @@ pub const SIDEBAR_WIDTH_MIN: f32 = 280.0;
 pub const SIDEBAR_DEFAULT_WIDTH: f32 = 280.0;
 
 pub const RADIUS: f32 = 8.0;
+const WIDGET_RADIUS: f32 = 4.0;
 
 pub type ThemePreference = ThemeMode;
 
@@ -67,8 +69,18 @@ fn set_ctx_palette(ctx: &Context, palette: UiPalette) {
     ctx.data_mut(|d| d.insert_temp(palette_id(), palette));
 }
 
+pub fn palette_from_ui(ui: &Ui) -> UiPalette {
+    ui.ctx()
+        .data(|d| d.get_temp::<UiPalette>(palette_id()))
+        .unwrap_or_else(|| resolve(ThemeMode::Light, ColorScheme::default()))
+}
+
 pub fn rounding() -> Rounding {
     Rounding::same(RADIUS)
+}
+
+fn widget_rounding() -> Rounding {
+    Rounding::same(WIDGET_RADIUS)
 }
 
 pub fn apply(ctx: &Context, theme: ThemeMode, scheme: ColorScheme, font_size_pt: f32) {
@@ -83,34 +95,42 @@ pub fn apply(ctx: &Context, theme: ThemeMode, scheme: ColorScheme, font_size_pt:
         Visuals::light()
     };
 
-    let r = rounding();
+    let r = widget_rounding();
     visuals.dark_mode = p.dark;
     visuals.panel_fill = p.surface;
     visuals.window_fill = p.bg;
-    visuals.extreme_bg_color = p.bg;
+    visuals.extreme_bg_color = p.surface_alt;
     visuals.faint_bg_color = p.surface_alt;
-    visuals.override_text_color = Some(p.text);
+    visuals.override_text_color = None;
     visuals.selection.bg_fill = p.accent_soft;
-    visuals.selection.stroke = Stroke::new(1.0, p.accent);
+    visuals.selection.stroke = Stroke::new(1.0, p.accent_text);
     visuals.hyperlink_color = p.accent_text;
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.text);
     // 顶栏 / 侧栏 / 底栏与主区之间的分隔线（egui Panel 默认绘制，读此 stroke）
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
     visuals.widgets.inactive.bg_fill = p.surface;
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, p.text);
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, p.control_border);
     visuals.widgets.inactive.rounding = r;
-    visuals.widgets.hovered.bg_fill = p.surface_hover;
+    visuals.widgets.hovered.weak_bg_fill = p.accent_soft;
+    visuals.widgets.hovered.bg_fill = p.accent_soft;
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, p.text_hover);
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, p.accent.gamma_multiply(0.45));
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.2, p.accent_text);
     visuals.widgets.hovered.rounding = r;
-    visuals.widgets.active.bg_fill = p.surface_active;
+    visuals.widgets.hovered.expansion = 1.0;
+    visuals.widgets.active.weak_bg_fill = p.accent_active;
+    visuals.widgets.active.bg_fill = p.accent_active;
     visuals.widgets.active.fg_stroke = Stroke::new(1.0, p.accent_text);
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.2, p.accent_text);
     visuals.widgets.active.rounding = r;
-    visuals.widgets.open.bg_fill = p.surface_hover;
+    visuals.widgets.active.expansion = 1.0;
+    visuals.widgets.open.weak_bg_fill = p.accent_soft;
+    visuals.widgets.open.bg_fill = p.accent_soft;
     visuals.widgets.open.fg_stroke = Stroke::new(1.0, p.text_hover);
-    visuals.window_rounding = r;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.2, p.accent_text);
+    visuals.widgets.open.rounding = r;
+    visuals.widgets.open.expansion = 1.0;
+    visuals.window_rounding = rounding();
     visuals.window_stroke = Stroke::new(1.0, p.border);
     visuals.window_shadow = Shadow {
         offset: egui::vec2(0.0, 6.0),
@@ -196,7 +216,9 @@ pub fn sidebar_frame(p: &UiPalette) -> Frame {
 }
 
 pub fn central_panel_frame(p: &UiPalette) -> Frame {
-    panel_frame(p)
+    Frame::none()
+        .fill(p.bg)
+        .inner_margin(Margin::symmetric(PANEL_MARGIN_H, PANEL_MARGIN_V))
 }
 
 pub fn sidebar_max_width(ctx: &Context) -> f32 {

@@ -3,7 +3,7 @@ use crate::gui::i18n::GuiTexts;
 use crate::gui::state::{AppState, RmDialog};
 use crate::gui::theme::{self, rich_section};
 use crate::gui::widgets::{
-    ModalOptions, ModalSection, ModalSize, button, right_aligned, show_modal,
+    ModalOptions, ModalSection, ModalSize, button, radio_value, right_aligned, show_modal,
 };
 use crate::workflows::rm::workflow::RemoveMode;
 
@@ -44,12 +44,16 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
                             .wrap(),
                     );
                     ui.add_space(theme::gap_lg(ui));
-                    ui.radio_value(
+                    radio_value(
+                        ui,
+                        &p,
                         &mut mode,
                         RemoveMode::DeleteLinkOnly,
                         t.rm_mode_delete_only(),
                     );
-                    ui.radio_value(
+                    radio_value(
+                        ui,
+                        &p,
                         &mut mode,
                         RemoveMode::RestoreTargetToLink,
                         t.rm_mode_restore(),
@@ -66,13 +70,11 @@ pub fn show_rm_dialog(ctx: &egui::Context, state: &mut AppState) -> RmDialogActi
                             (crate::gui::icons::Icon::Undo, t.confirm_restore())
                         }
                     };
-                    if button(ui)
-                        .icon(icon)
-                        .label(label)
-                        .enabled(enabled)
-                        .show()
-                        .clicked()
-                    {
+                    let mut action_button = button(ui).icon(icon).label(label).enabled(enabled);
+                    if mode == RemoveMode::DeleteLinkOnly {
+                        action_button = action_button.danger();
+                    }
+                    if action_button.show().clicked() {
                         action = RmDialogAction::Confirm;
                     }
                 });

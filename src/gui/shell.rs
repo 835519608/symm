@@ -14,6 +14,7 @@ pub struct FrameActions {
     pub delete_checked_requested: bool,
     pub page_changed: bool,
     pub selected_id: Option<i64>,
+    pub sidebar_width_changed: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,6 +95,11 @@ fn show_sidebar_panel(
     if sidebar_resp.response.dragged() {
         state.transient_sidebar_width = sidebar_resp.response.rect.width();
     }
+    if sidebar_resp.response.drag_stopped() {
+        state.sidebar_width = sidebar_resp.response.rect.width();
+        state.transient_sidebar_width = state.sidebar_width;
+        actions.sidebar_width_changed = true;
+    }
 }
 
 fn show_central_panel(
@@ -127,7 +133,7 @@ fn show_central_panel(
                     ui.label(msg);
                     ui.add_space(theme::gap(ui));
                 }
-                show_content(ui, state, selected_view);
+                show_content(ui, state, selected_view, p);
             });
         });
 }

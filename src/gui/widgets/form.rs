@@ -60,13 +60,28 @@ fn add_text_edit(
     size: egui::Vec2,
     hint: Option<&str>,
     label: &str,
-) {
+) -> egui::Response {
+    add_text_edit_with_id(ui, value, size, hint, label, None)
+}
+
+fn add_text_edit_with_id(
+    ui: &mut Ui,
+    value: &mut String,
+    size: egui::Vec2,
+    hint: Option<&str>,
+    label: &str,
+    id_salt: Option<&'static str>,
+) -> egui::Response {
     let mut edit = singleline_text_edit(value, size.x);
     if let Some(h) = hint {
         edit = edit.hint_text(h);
     }
+    if let Some(id_salt) = id_salt {
+        edit = edit.id_salt(id_salt);
+    }
     let resp = ui.add_sized(size, edit);
     resp.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, ui.is_enabled(), label));
+    resp
 }
 
 pub fn field_label(ui: &mut Ui, p: &theme::UiPalette, text: &str) {
@@ -247,14 +262,20 @@ pub fn path_field(
 /// 侧栏搜索框（egui [`TextEdit`] + 图标前缀）。
 pub fn search_field(ui: &mut Ui, value: &mut String, label: &str, hint: &str) {
     let typo = typography_from_ui(ui);
+    let p = theme::palette_from_ui(ui);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(Icon::Search.glyph()).font(icon_font_id(typo.icon)));
-        add_text_edit(
+        ui.label(
+            RichText::new(Icon::Search.glyph())
+                .font(icon_font_id(typo.icon))
+                .color(p.text_muted),
+        );
+        add_text_edit_with_id(
             ui,
             value,
             egui::vec2(ui.available_width(), typo.field_row_h),
             Some(hint),
             label,
+            Some("sidebar_search_field"),
         );
     });
 }

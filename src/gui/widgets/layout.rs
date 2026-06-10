@@ -27,9 +27,15 @@ pub fn split_row<L, R>(
 
 /// 内容卡片（egui [`Frame::group`]）。
 pub fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let width = ui.available_width();
+    let height = ui.available_height();
     Frame::group(ui.style())
         .inner_margin(Margin::same(CARD_INNER_MARGIN))
-        .show(ui, add)
+        .show(ui, |ui| {
+            ui.set_min_width((width - 2.0 * CARD_INNER_MARGIN).max(1.0));
+            ui.set_min_height((height - 2.0 * CARD_INNER_MARGIN).max(1.0));
+            add(ui)
+        })
         .inner
 }
 

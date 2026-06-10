@@ -92,13 +92,6 @@ impl GuiTexts {
         }
     }
 
-    pub fn settings_sidebar_width(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "侧栏宽度",
-            Locale::En => "Sidebar width",
-        }
-    }
-
     pub fn settings_data_dir(&self) -> &'static str {
         match self.locale {
             Locale::ZhCn => "数据目录",
@@ -335,13 +328,6 @@ impl GuiTexts {
         match self.locale {
             Locale::ZhCn => "无匹配",
             Locale::En => "No matches",
-        }
-    }
-
-    pub fn no_selection(&self) -> &'static str {
-        match self.locale {
-            Locale::ZhCn => "请选择左侧链接",
-            Locale::En => "Select a link",
         }
     }
 
@@ -631,10 +617,6 @@ impl GuiTexts {
             Locale::ZhCn => "目标路径",
             Locale::En => "Target path",
         }
-    }
-
-    pub fn field_id(&self) -> &'static str {
-        "ID"
     }
 
     pub fn copy_field_tip(&self, label: &str) -> String {

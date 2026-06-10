@@ -6,6 +6,8 @@ mod layout;
 mod modal;
 mod nav;
 mod scroll;
+mod selection;
+mod slider;
 
 pub use button::button;
 pub use form::{PathBrowse, PathPickMode, path_control_row, path_field, search_field, text_field};
@@ -17,3 +19,7 @@ pub use modal::{
 };
 pub use nav::settings_nav;
 pub use scroll::vertical_when_overflow;
+pub use selection::{
+    SelectableTextStyle, checkbox_icon, radio_value, selectable_row_rect, selectable_text_row,
+};
+pub use slider::value_slider;

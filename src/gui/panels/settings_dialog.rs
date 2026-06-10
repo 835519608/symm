@@ -2,12 +2,11 @@ use crate::domain::gui_settings::{
     ColorScheme, FONT_SIZE_PT_MAX, FONT_SIZE_PT_MIN, Locale, ThemeMode,
 };
 use crate::gui::state::{AppState, SettingsDraft, SettingsSection};
-use crate::gui::theme::SIDEBAR_WIDTH_MIN;
 use crate::gui::theme::{self, rich_body, rich_body_muted, rich_section};
 use crate::gui::widgets::{
     ModalOptions, ModalSection, ModalSize, PathBrowse, PathPickMode, button, fill_ui_width,
-    modal_scroll_vertical, path_control_row, settings_content_frame, settings_nav, show_modal,
-    split_row,
+    modal_scroll_vertical, path_control_row, selectable_row_rect, settings_content_frame,
+    settings_nav, show_modal, split_row, value_slider,
 };
 use egui::{Grid, Ui};
 
@@ -19,8 +18,8 @@ pub enum SettingsDialogAction {
 }
 
 const SETTINGS_MODAL: ModalSize = ModalSize::preferred(600.0, 460.0);
-const SETTINGS_NAV_W: f32 = 108.0;
-/// 与 [`settings_nav`] 项内 `shrink2(12, 0)` 一致，使画框内文与侧栏文字左右对齐。
+const SETTINGS_NAV_W: f32 = 148.0;
+/// 与 [`settings_nav`] 项内按钮文字内边距一致，使画框内文与侧栏文字左右对齐。
 const SETTINGS_CONTENT_PAD: f32 = 12.0;
 const SETTINGS_FIELD_GAP: f32 = 12.0;
 const SETTINGS_FIELD_VALUE_W: f32 = 56.0;
@@ -30,19 +29,17 @@ pub fn open_settings(state: &mut AppState) {
 }
 
 pub fn show_settings_dialog(ctx: &egui::Context, state: &mut AppState) -> SettingsDialogAction {
-    let Some(mut draft) = state.settings_draft.clone() else {
-        return SettingsDialogAction::None;
-    };
-
     let t = state.texts();
     let p = theme::resolve(state.theme, state.color_scheme);
     let enabled = !state.busy;
     let data_dir_runtime_override = state.data_dir_runtime_override;
-    let sidebar_max = theme::sidebar_max_width(ctx);
-    draft.sidebar_width = draft.sidebar_width.clamp(SIDEBAR_WIDTH_MIN, sidebar_max);
     let mut open = true;
     let mut action = SettingsDialogAction::None;
     let modal_id = egui::Id::new("settings_dialog");
+
+    let Some(draft) = state.settings_draft.as_mut() else {
+        return SettingsDialogAction::None;
+    };
 
     let Some(modal) = show_modal(
         ctx,
@@ -54,14 +51,7 @@ pub fn show_settings_dialog(ctx: &egui::Context, state: &mut AppState) -> Settin
         |section| match section {
             ModalSection::Main(ui) => {
                 ui.add_enabled_ui(enabled, |ui| {
-                    settings_main_body(
-                        ui,
-                        &p,
-                        &t,
-                        &mut draft,
-                        sidebar_max,
-                        data_dir_runtime_override,
-                    );
+                    settings_main_body(ui, &p, &t, draft, data_dir_runtime_override);
                 });
             }
             ModalSection::FooterCustom(ui) => {
@@ -103,8 +93,6 @@ pub fn show_settings_dialog(ctx: &egui::Context, state: &mut AppState) -> Settin
         action = SettingsDialogAction::Close;
     }
 
-    state.settings_draft = Some(draft);
-
     if !open {
         action = SettingsDialogAction::Close;
     }
@@ -124,7 +112,6 @@ fn settings_main_body(
     p: &theme::UiPalette,
     t: &crate::gui::i18n::GuiTexts,
     draft: &mut SettingsDraft,
-    sidebar_max: f32,
     data_dir_runtime_override: bool,
 ) {
     fill_ui_width(ui);
@@ -157,7 +144,7 @@ fn settings_main_body(
                 modal_scroll_vertical(ui, "settings_dialog_body", |ui| {
                     ui.vertical(|ui| match draft.section {
                         SettingsSection::Appearance => {
-                            appearance_page(ui, p, t, draft, sidebar_max, data_dir_runtime_override)
+                            appearance_page(ui, p, t, draft, data_dir_runtime_override)
                         }
                         SettingsSection::About => about_page(ui, p, t),
                     });
@@ -165,6 +152,73 @@ fn settings_main_body(
             })
         });
     });
+}
+
+fn color_scheme_combo(
+    ui: &mut Ui,
+    t: &crate::gui::i18n::GuiTexts,
+    value: &mut ColorScheme,
+    width: f32,
+    dark: bool,
+) {
+    let selected_text = rich_body(
+        t.color_scheme_label(*value),
+        theme::accent_text_for_scheme(*value, dark),
+    );
+    egui::ComboBox::from_id_salt("settings_color_scheme")
+        .selected_text(selected_text)
+        .width(width)
+        .show_ui(ui, |ui| {
+            ui.set_min_width(width);
+            for scheme in ColorScheme::ALL {
+                if color_scheme_option(ui, t.color_scheme_label(scheme), scheme, *value, dark)
+                    .clicked()
+                {
+                    *value = scheme;
+                    ui.close_menu();
+                }
+            }
+        });
+}
+
+fn color_scheme_option(
+    ui: &mut Ui,
+    label: &str,
+    scheme: ColorScheme,
+    current: ColorScheme,
+    dark: bool,
+) -> egui::Response {
+    let typo = theme::typography_from_ui(ui);
+    let width = ui.available_width().max(120.0);
+    let height = typo.field_row_h;
+    let selected = scheme == current;
+    let accent = theme::accent_for_scheme(scheme, dark);
+    let accent_text = theme::accent_text_for_scheme(scheme, dark);
+    let (rect, resp) = selectable_row_rect(ui, selected, true, label, width, height);
+
+    if ui.is_rect_visible(rect) {
+        let pad = ui.spacing().button_padding.x;
+        let swatch_size = (height * 0.42).clamp(10.0, 16.0);
+        let swatch_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + pad, rect.center().y - swatch_size * 0.5),
+            egui::vec2(swatch_size, swatch_size),
+        );
+        ui.painter().rect(
+            swatch_rect,
+            egui::Rounding::same(4.0),
+            accent,
+            egui::Stroke::new(1.0, accent.gamma_multiply(0.72)),
+        );
+        ui.painter().text(
+            egui::pos2(swatch_rect.right() + pad * 0.75, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            typo.button_font(),
+            accent_text,
+        );
+    }
+
+    resp
 }
 
 fn settings_slider_width(control_w: f32) -> f32 {
@@ -178,18 +232,15 @@ fn settings_slider_value(
     range: std::ops::RangeInclusive<f32>,
     control_w: f32,
 ) {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            egui::vec2(
-                settings_slider_width(control_w),
-                ui.spacing().interact_size.y,
-            ),
-            egui::Slider::new(value, range)
-                .show_value(false)
-                .smart_aim(false),
-        );
-        ui.label(rich_body(&format!("{:.0}px", value.round()), p.text));
-    });
+    let value_text = format!("{:.0}px", value.round());
+    value_slider(
+        ui,
+        p,
+        value,
+        range,
+        settings_slider_width(control_w),
+        &value_text,
+    );
 }
 
 fn settings_content_pane<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
@@ -223,7 +274,6 @@ fn appearance_page(
     p: &theme::UiPalette,
     t: &crate::gui::i18n::GuiTexts,
     draft: &mut SettingsDraft,
-    sidebar_max: f32,
     data_dir_runtime_override: bool,
 ) {
     let font_size_hint = t.settings_font_size_hint(FONT_SIZE_PT_MIN, FONT_SIZE_PT_MAX);
@@ -260,18 +310,7 @@ fn appearance_page(
             });
 
             settings_grid_row(ui, p, t.settings_color_scheme(), None, |ui, control_w| {
-                egui::ComboBox::from_id_salt("settings_color_scheme")
-                    .selected_text(t.color_scheme_label(draft.color_scheme))
-                    .width(control_w)
-                    .show_ui(ui, |ui| {
-                        for scheme in ColorScheme::ALL {
-                            ui.selectable_value(
-                                &mut draft.color_scheme,
-                                scheme,
-                                t.color_scheme_label(scheme),
-                            );
-                        }
-                    });
+                color_scheme_combo(ui, t, &mut draft.color_scheme, control_w, p.dark);
             });
 
             settings_grid_row(
@@ -291,12 +330,6 @@ fn appearance_page(
                     draft.font_size_pt = size;
                 },
             );
-
-            settings_grid_row(ui, p, t.settings_sidebar_width(), None, |ui, control_w| {
-                let mut w = draft.sidebar_width;
-                settings_slider_value(ui, p, &mut w, SIDEBAR_WIDTH_MIN..=sidebar_max, control_w);
-                draft.sidebar_width = w;
-            });
 
             settings_grid_row(
                 ui,

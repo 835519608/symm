@@ -205,9 +205,9 @@ impl SymmApp {
                 }
                 self.state
                     .checked_ids
-                    .retain(|id| reloaded.all_ids.contains(id));
+                    .retain(|id| reloaded.existing_tracked_ids.contains(id));
                 if let Some(selected_id) = self.state.selected_id
-                    && !reloaded.all_ids.contains(&selected_id)
+                    && !reloaded.existing_tracked_ids.contains(&selected_id)
                 {
                     self.state.selected_id = None;
                     self.selected_view = None;
@@ -263,7 +263,8 @@ impl SymmApp {
             theme: draft.theme,
             locale: draft.locale,
             color_scheme: draft.color_scheme,
-            sidebar_width: draft
+            sidebar_width: self
+                .state
                 .sidebar_width
                 .clamp(theme::SIDEBAR_WIDTH_MIN, sidebar_max),
             font_size_pt: crate::domain::gui_settings::sanitize_font_size_pt(draft.font_size_pt),
@@ -272,6 +273,44 @@ impl SymmApp {
             } else {
                 Some(data_dir.to_string())
             },
+        }
+    }
+
+    fn settings_from_state(&self, ctx: &egui::Context) -> GuiSettings {
+        let data_dir = if self.state.data_dir_runtime_override {
+            self.state.persisted_data_dir.trim()
+        } else {
+            self.state.data_dir.trim()
+        };
+        GuiSettings {
+            theme: self.state.theme,
+            locale: self.state.locale,
+            color_scheme: self.state.color_scheme,
+            sidebar_width: self
+                .state
+                .sidebar_width
+                .clamp(theme::SIDEBAR_WIDTH_MIN, theme::sidebar_max_width(ctx)),
+            font_size_pt: crate::domain::gui_settings::sanitize_font_size_pt(
+                self.state.font_size_pt,
+            ),
+            data_dir: if data_dir.is_empty() {
+                None
+            } else {
+                Some(data_dir.to_string())
+            },
+        }
+    }
+
+    fn persist_sidebar_width(&mut self, ctx: &egui::Context) {
+        let settings = self.settings_from_state(ctx);
+        self.state.sidebar_width = settings.sidebar_width;
+        self.state.transient_sidebar_width = settings.sidebar_width;
+        theme::pin_side_panel_width(ctx, theme::SIDEBAR_PANEL_ID, settings.sidebar_width);
+        if let Err(err) = settings_store::save(&settings) {
+            self.toast(
+                self.state.texts().settings_save_failed(&err.to_string()),
+                4200,
+            );
         }
     }
 
@@ -441,13 +480,18 @@ impl SymmApp {
         let Some(path) = &self.debug_screenshot_to else {
             return;
         };
-        let events = ctx.input(|input| input.events.clone());
-        for event in events {
-            if let egui::Event::Screenshot { image, .. } = event {
-                self.save_debug_screenshot(&image, path);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                break;
-            }
+        let image = ctx.input(|input| {
+            input.events.iter().find_map(|event| {
+                if let egui::Event::Screenshot { image, .. } = event {
+                    Some(image.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(image) = image {
+            self.save_debug_screenshot(&image, path);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -693,6 +737,9 @@ impl eframe::App for SymmApp {
         }
         if frame_actions.delete_checked_requested {
             self.begin_rm_checked();
+        }
+        if frame_actions.sidebar_width_changed {
+            self.persist_sidebar_width(ctx);
         }
 
         let dialog_actions = shell::show_dialogs(ctx, &mut self.state);
@@ -1066,7 +1113,7 @@ mod tests {
 
         app.apply_reload_result(Ok(ReloadedLinks {
             snapshot: LinkSnapshot::new(Vec::new()),
-            all_ids: HashSet::from([9]),
+            existing_tracked_ids: HashSet::from([9]),
             page_index: 0,
         }));
 
@@ -1098,7 +1145,7 @@ mod tests {
 
         app.apply_reload_result(Ok(ReloadedLinks {
             snapshot: LinkSnapshot::new(Vec::new()),
-            all_ids: HashSet::new(),
+            existing_tracked_ids: HashSet::new(),
             page_index: 0,
         }));
 
@@ -1113,7 +1160,7 @@ mod tests {
 
         app.apply_reload_result(Ok(ReloadedLinks {
             snapshot: LinkSnapshot::new(Vec::new()),
-            all_ids: HashSet::from([2, 3, 4]),
+            existing_tracked_ids: HashSet::from([2, 3, 4]),
             page_index: 1,
         }));
 

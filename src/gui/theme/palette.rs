@@ -9,20 +9,20 @@ pub struct UiPalette {
     pub surface: Color32,
     pub surface_alt: Color32,
     pub surface_hover: Color32,
-    pub surface_active: Color32,
     pub border: Color32,
+    pub control_border: Color32,
     pub text: Color32,
     pub text_muted: Color32,
     pub text_hover: Color32,
-    pub accent: Color32,
     pub accent_text: Color32,
     pub accent_soft: Color32,
+    pub accent_active: Color32,
     pub shadow: Color32,
 }
 
 pub fn for_scheme(scheme: ColorScheme, dark: bool) -> UiPalette {
-    let accent = accent_for(scheme, dark);
-    let accent_text = accent_text_for(scheme, dark);
+    let accent = accent_for_scheme(scheme, dark);
+    let accent_text = accent_text_for_scheme(scheme, dark);
     if dark {
         dark_palette(accent, accent_text)
     } else {
@@ -30,7 +30,7 @@ pub fn for_scheme(scheme: ColorScheme, dark: bool) -> UiPalette {
     }
 }
 
-fn accent_for(scheme: ColorScheme, dark: bool) -> Color32 {
+pub fn accent_for_scheme(scheme: ColorScheme, dark: bool) -> Color32 {
     match scheme {
         ColorScheme::Slate => {
             if dark {
@@ -39,14 +39,38 @@ fn accent_for(scheme: ColorScheme, dark: bool) -> Color32 {
                 Color32::from_rgb(0x47, 0x55, 0x69)
             }
         }
-        ColorScheme::Ocean => Color32::from_rgb(0x3B, 0x82, 0xF6),
-        ColorScheme::Forest => Color32::from_rgb(0x22, 0xC5, 0x5E),
-        ColorScheme::Violet => Color32::from_rgb(0x8B, 0x5C, 0xF6),
-        ColorScheme::Ember => Color32::from_rgb(0xF5, 0x9E, 0x0B),
+        ColorScheme::Ocean => {
+            if dark {
+                Color32::from_rgb(0x60, 0xA5, 0xFA)
+            } else {
+                Color32::from_rgb(0x3B, 0x82, 0xF6)
+            }
+        }
+        ColorScheme::Forest => {
+            if dark {
+                Color32::from_rgb(0x34, 0xD3, 0x99)
+            } else {
+                Color32::from_rgb(0x22, 0xC5, 0x5E)
+            }
+        }
+        ColorScheme::Violet => {
+            if dark {
+                Color32::from_rgb(0xA7, 0x8B, 0xFA)
+            } else {
+                Color32::from_rgb(0x8B, 0x5C, 0xF6)
+            }
+        }
+        ColorScheme::Ember => {
+            if dark {
+                Color32::from_rgb(0xF5, 0xB8, 0x49)
+            } else {
+                Color32::from_rgb(0xF5, 0x9E, 0x0B)
+            }
+        }
     }
 }
 
-fn accent_text_for(scheme: ColorScheme, dark: bool) -> Color32 {
+pub fn accent_text_for_scheme(scheme: ColorScheme, dark: bool) -> Color32 {
     if dark {
         return match scheme {
             ColorScheme::Slate => Color32::from_rgb(0xCB, 0xD5, 0xE1),
@@ -66,41 +90,55 @@ fn accent_text_for(scheme: ColorScheme, dark: bool) -> Color32 {
 }
 
 fn light_palette(accent: Color32, accent_text: Color32) -> UiPalette {
+    let surface = Color32::from_rgb(0xFF, 0xFF, 0xFF);
     UiPalette {
         dark: false,
-        bg: Color32::from_rgb(0xF4, 0xF4, 0xF5),
-        surface: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-        surface_alt: Color32::from_rgb(0xFA, 0xFA, 0xFA),
-        surface_hover: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-        surface_active: Color32::from_rgb(0xF1, 0xF5, 0xF9),
-        border: Color32::from_rgb(0xE4, 0xE4, 0xE7),
-        text: Color32::from_rgb(0x18, 0x18, 0x1B),
-        text_muted: Color32::from_rgb(0x71, 0x71, 0x7A),
+        bg: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+        surface,
+        surface_alt: Color32::from_rgb(0xF1, 0xF5, 0xF9),
+        surface_hover: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+        border: Color32::from_rgb(0xE2, 0xE8, 0xF0),
+        control_border: Color32::from_rgb(0xCB, 0xD5, 0xE1),
+        text: Color32::from_rgb(0x0F, 0x17, 0x2A),
+        text_muted: Color32::from_rgb(0x64, 0x74, 0x8B),
         text_hover: accent_text,
-        accent,
         accent_text,
-        accent_soft: accent.gamma_multiply(0.12),
+        accent_soft: mix_color(surface, accent, 0.10),
+        accent_active: mix_color(surface, accent, 0.16),
         shadow: Color32::from_rgba_premultiplied(15, 23, 42, 28),
     }
 }
 
 fn dark_palette(accent: Color32, accent_text: Color32) -> UiPalette {
+    let surface = Color32::from_rgb(0x11, 0x18, 0x27);
     UiPalette {
         dark: true,
-        bg: Color32::from_rgb(0x09, 0x09, 0x0B),
-        surface: Color32::from_rgb(0x18, 0x18, 0x1B),
-        surface_alt: Color32::from_rgb(0x12, 0x12, 0x14),
-        surface_hover: Color32::from_rgb(0x27, 0x27, 0x2A),
-        surface_active: Color32::from_rgb(0x3F, 0x3F, 0x46),
-        border: Color32::from_rgb(0x3F, 0x3F, 0x46),
-        text: Color32::from_rgb(0xFA, 0xFA, 0xFA),
-        text_muted: Color32::from_rgb(0xA1, 0xA1, 0xAA),
+        bg: Color32::from_rgb(0x0B, 0x12, 0x20),
+        surface,
+        surface_alt: Color32::from_rgb(0x17, 0x24, 0x35),
+        surface_hover: Color32::from_rgb(0x20, 0x2C, 0x3F),
+        border: Color32::from_rgb(0x2A, 0x3A, 0x52),
+        control_border: Color32::from_rgb(0x52, 0x63, 0x7A),
+        text: Color32::from_rgb(0xF8, 0xFA, 0xFC),
+        text_muted: Color32::from_rgb(0xA8, 0xB3, 0xC7),
         text_hover: accent_text,
-        accent,
         accent_text,
-        accent_soft: accent.gamma_multiply(0.22),
-        shadow: Color32::from_rgba_premultiplied(0, 0, 0, 80),
+        accent_soft: mix_color(surface, accent, 0.18),
+        accent_active: mix_color(surface, accent, 0.26),
+        shadow: Color32::from_rgba_premultiplied(0, 0, 0, 96),
     }
+}
+
+fn mix_color(base: Color32, tint: Color32, amount: f32) -> Color32 {
+    fn mix_channel(a: u8, b: u8, amount: f32) -> u8 {
+        (f32::from(a) + (f32::from(b) - f32::from(a)) * amount).round() as u8
+    }
+
+    Color32::from_rgb(
+        mix_channel(base.r(), tint.r(), amount),
+        mix_channel(base.g(), tint.g(), amount),
+        mix_channel(base.b(), tint.b(), amount),
+    )
 }
 
 #[cfg(test)]
