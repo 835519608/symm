@@ -59,7 +59,6 @@ fn write_startup_log(message: &str) -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn show_startup_failure(message: &str, log_path: Option<&std::path::Path>) {
-    use std::os::windows::ffi::OsStrExt;
     use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
     use windows::core::PCWSTR;
 
@@ -88,6 +87,8 @@ fn show_startup_failure(_message: &str, _log_path: Option<&std::path::Path>) {}
 
 #[cfg(windows)]
 fn widestr(value: &str) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+
     std::ffi::OsStr::new(value)
         .encode_wide()
         .chain(std::iter::once(0))
