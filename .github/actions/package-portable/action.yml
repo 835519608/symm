@@ -24,6 +24,17 @@ runs:
       shell: bash
       run: cargo build --locked --release --features gui --bin symm --bin symm-cli
 
+    - name: 校验二进制版本
+      shell: bash
+      run: |
+        set -euo pipefail
+        actual="$(target/release/symm-cli --version)"
+        expected="symm-cli ${{ inputs.release_semver }}"
+        if [ "${actual}" != "${expected}" ]; then
+          echo "::error::symm-cli 版本不匹配：${actual}，预期 ${expected}"
+          exit 1
+        fi
+
     - name: 打包便携 zip
       shell: bash
       run: |

@@ -21,7 +21,7 @@ runs:
         KEEP_TAG: ${{ inputs.keep-tag }}
       run: |
         set -euo pipefail
-        managed_test_tag_regex='(^v[0-9]+\.[0-9]+\.[0-9]+-test($|-(windows|win|linux|macos|mac)(-|$)))|(^test-run-[0-9]+$)'
+        managed_test_tag_regex='^(v[0-9]+\.[0-9]+\.[0-9]+-test(-(windows|win|linux|macos|mac))*|test-run-[0-9]+)$'
 
         if [ -n "${KEEP_TAG}" ]; then
           if ! keep_json="$(gh release view "${KEEP_TAG}" --json tagName,isPrerelease)"; then

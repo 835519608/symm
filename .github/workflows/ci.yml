@@ -112,3 +112,38 @@ jobs:
             args+=(--target "${BUILD_TARGET}")
           fi
           cargo "${args[@]}"
+
+  package-smoke:
+    name: 打包烟测 (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64-portable
+            runner: ubuntu-24.04
+            package_action: portable
+          - name: windows-x64-installer
+            runner: windows-2025-vs2026
+            package_action: windows
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Linux 便携包烟测
+        if: ${{ matrix.package_action == 'portable' }}
+        uses: ./.github/actions/package-portable
+        with:
+          archive_name: symm-portable-linux-x64-smoke.zip
+          release_semver: 0.0.0
+
+      - name: Windows 安装包烟测
+        if: ${{ matrix.package_action == 'windows' }}
+        uses: ./.github/actions/package-windows
+        with:
+          release_semver: 0.0.0
+          portable_name: symm-portable-windows-x64-smoke.zip
+          installer_name: symm-setup-windows-x64-smoke.exe

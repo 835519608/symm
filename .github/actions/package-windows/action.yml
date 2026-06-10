@@ -51,6 +51,18 @@ runs:
         }
         cargo @args
 
+    - name: 校验二进制版本
+      shell: pwsh
+      run: |
+        $target = "${{ inputs.build_target }}"
+        $buildDir = if ($target) { "target\$target\release" } else { "target\release" }
+        $cli = Join-Path $buildDir "symm-cli.exe"
+        $actual = & $cli --version
+        $expected = "symm-cli ${{ inputs.release_semver }}"
+        if ($actual -ne $expected) {
+          throw "symm-cli 版本不匹配：$actual，预期 $expected"
+        }
+
     - name: 编译便携安装包
       if: ${{ inputs.build_installer == 'true' }}
       shell: pwsh

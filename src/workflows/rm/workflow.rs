@@ -395,8 +395,26 @@ fn apply_delete_link_only<W: Write>(
     if should_unlink_on_disk(link_status) {
         let current_status = status::try_for_record(record)?;
         if should_unlink_on_disk(current_status) {
-            symlink::unlink(link)?;
-            return Ok(true);
+            match symlink::unlink_expected(link, record.link_kind, Path::new(&record.target_path)) {
+                Ok(()) => return Ok(true),
+                Err(err) => {
+                    if !matches!(
+                        symlink::inspect_link_path(link)?,
+                        symlink::LinkPathState::Missing
+                    ) {
+                        return Err(err);
+                    }
+                    writeln!(
+                        writer,
+                        "提示：{} 状态已变化为 missing，只删记录（当前路径已不存在）",
+                        record.link_path
+                    )
+                    .map_err(|e| SymmError::IoError {
+                        message: e.to_string(),
+                    })?;
+                    return Ok(false);
+                }
+            }
         }
         writeln!(
             writer,
@@ -480,6 +498,17 @@ fn finish_restore_migration_error<W: Write>(
             })?;
             Ok(())
         }
+        SymmError::EntityMovedButPostMoveFailed {
+            source_path,
+            target_path,
+            message,
+        } => {
+            let _ = writeln!(
+                writer,
+                "提示：restore 已把实体恢复到 link 路径 {target_path}，但内部链接整理失败：{message}；旧 target {source_path} 已不存在，请手动检查恢复后的目录"
+            );
+            Ok(())
+        }
         err => Err(RestoreFailure::LinkRemoved(
             filesystem_applied_but_record_kept(record, err),
         )),
@@ -552,8 +581,7 @@ fn remove_current_link_for_restore(
 ) -> Result<(), SymmError> {
     match planned_status {
         LinkStatus::Ok => {
-            ensure_restore_link_still_matches_record(record, link, target)?;
-            symlink::unlink(link)?;
+            symlink::unlink_expected(link, record.link_kind, target)?;
             ensure_restore_link_missing_after_unlink(record, link)
         }
         LinkStatus::Missing => ensure_restore_link_still_missing(record, link),
@@ -561,20 +589,6 @@ fn remove_current_link_for_restore(
             Err(restore_link_state_changed(record))
         }
     }
-}
-
-fn ensure_restore_link_still_matches_record(
-    record: &LinkRecord,
-    link: &Path,
-    target: &Path,
-) -> Result<(), SymmError> {
-    let symlink::LinkPathState::Link { kind } = symlink::inspect_link_path(link)? else {
-        return Err(restore_link_state_changed(record));
-    };
-    if kind != record.link_kind || !symlink::link_points_to(link, target)? {
-        return Err(restore_link_state_changed(record));
-    }
-    Ok(())
 }
 
 fn ensure_restore_link_still_missing(record: &LinkRecord, link: &Path) -> Result<(), SymmError> {
@@ -698,6 +712,32 @@ mod tests {
         );
         let text = String::from_utf8(output).expect("utf8");
         assert!(text.contains("状态已变化"));
+    }
+
+    #[test]
+    fn delete_link_only_deletes_record_when_current_link_disappears_at_final_unlink() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, "payload").expect("write target");
+        symlink::create_link(&target, &link).expect("create link");
+        let record = record("missing-race", &link, &target);
+        let mut output = Vec::new();
+
+        symlink::set_before_expected_unlink_hook(|link| {
+            symlink::unlink(link).expect("remove link in hook");
+        });
+
+        let applied = apply_delete_link_only(&mut output, &record, &link, LinkStatus::Ok)
+            .expect("missing link race should still allow record deletion");
+
+        assert!(!applied);
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "link should remain missing"
+        );
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(text.contains("状态已变化为 missing"));
     }
 
     #[test]
@@ -914,6 +954,52 @@ mod tests {
             text.find(&format!("清理 {}", path_text(&target))).is_some(),
             "cleanup instruction should point at old target, not restored link: {text}"
         );
+    }
+
+    #[test]
+    fn restore_post_move_failure_can_still_delete_record_with_manual_check_warning() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target-dir");
+        let link = temp.path().join("link-dir");
+        let record = record("restore-rebase", &link, &target);
+        let mut output = Vec::new();
+
+        finish_restore_migration_error(
+            &mut output,
+            &record,
+            SymmError::EntityMovedButPostMoveFailed {
+                source_path: path_text(&target),
+                target_path: path_text(&link),
+                message: "内部链接重写失败".to_string(),
+            },
+        )
+        .expect("post-move failure should not keep restore record");
+
+        let text = String::from_utf8(output).expect("utf8");
+        assert!(text.contains("内部链接整理失败"));
+        assert!(text.contains("旧 target"));
+        assert!(text.contains(&path_text(&target)));
+        assert!(text.contains(&path_text(&link)));
+    }
+
+    #[test]
+    fn restore_post_move_failure_ignores_warning_output_failure() {
+        let temp = tempdir().expect("temp dir");
+        let target = temp.path().join("target-dir");
+        let link = temp.path().join("link-dir");
+        let record = record("restore-rebase-output", &link, &target);
+        let mut writer = FailWriter;
+
+        finish_restore_migration_error(
+            &mut writer,
+            &record,
+            SymmError::EntityMovedButPostMoveFailed {
+                source_path: path_text(&target),
+                target_path: path_text(&link),
+                message: "内部链接重写失败".to_string(),
+            },
+        )
+        .expect("warning output failure must not keep an unretryable restore record");
     }
 
     #[test]

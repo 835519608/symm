@@ -12,4 +12,6 @@ pub(crate) use link::{
     write_symlink_like,
 };
 pub use link::{create_link, write_symlink};
-pub use unlink::unlink;
+#[cfg(test)]
+pub(crate) use unlink::set_before_expected_unlink_hook;
+pub use unlink::{unlink, unlink_expected};
