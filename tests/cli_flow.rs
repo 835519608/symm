@@ -351,6 +351,49 @@ fn rm_multiple_selectors_deletes_all() {
         .stdout(contains("[]"));
 }
 
+#[test]
+fn rm_multiple_selectors_continues_when_one_selector_is_missing() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+
+    for name in ["keep", "delete-me"] {
+        let target = data_root.join(format!("target_{name}.txt"));
+        let link = data_root.join(format!("link_{name}.txt"));
+        fs::write(&target, "payload").expect("write target");
+        cmd()
+            .env("SYMM_HOME", &symm_home)
+            .env("SYMM_LINK_OP_NAME", name)
+            .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+            .assert()
+            .success();
+    }
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["rm", "missing-name", "delete-me"])
+        .assert()
+        .failure()
+        .stdout(contains("已删除链接关系：delete-me"))
+        .stdout(contains("失败：missing-name"))
+        .stderr(contains("\"code\": \"batch_failure\""));
+
+    let output = cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).expect("json stdout");
+    let json: Value = serde_json::from_str(&text).expect("ls json");
+    let items = json.as_array().expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["name"], "keep");
+}
+
 #[cfg(unix)]
 #[test]
 fn rm_multiple_partial_failure_returns_failure() {
@@ -539,6 +582,41 @@ fn rm_with_restore_moves_target_back_to_link_path() {
     let ls_json: Value = serde_json::from_str(&ls_text).expect("ls output should be json");
     let items = ls_json.as_array().expect("ls json should be an array");
     assert!(items.is_empty(), "rm 完成后应删除数据库记录，ls 结果应为空");
+}
+
+#[test]
+fn restore_missing_link_recreates_missing_parent_dir() {
+    let temp = tempdir().expect("temp dir");
+    let symm_home = temp.path().join("symm_home");
+    let data_root = temp.path().join("data");
+    fs::create_dir_all(&data_root).expect("create data root");
+    let parent = data_root.join("missing-parent");
+    let target = data_root.join("target_restore_parent.txt");
+    let link = parent.join("link_restore_parent.txt");
+    fs::create_dir_all(&parent).expect("create link parent");
+    fs::write(&target, "hello-parent").expect("write target");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .env("SYMM_LINK_OP_NAME", "restore-parent")
+        .args(["add", &link.to_string_lossy(), &target.to_string_lossy()])
+        .assert()
+        .success();
+    fs::remove_file(&link).expect("remove managed link");
+    fs::remove_dir(&parent).expect("remove link parent");
+
+    cmd()
+        .env("SYMM_HOME", &symm_home)
+        .args(["restore", "restore-parent"])
+        .assert()
+        .success()
+        .stdout(contains("已恢复实体位置：restore-parent"));
+
+    assert_eq!(
+        fs::read_to_string(&link).expect("read restored entity"),
+        "hello-parent"
+    );
+    assert!(!target.exists());
 }
 
 #[test]

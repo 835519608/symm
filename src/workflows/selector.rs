@@ -5,6 +5,11 @@ use crate::domain::error::SymmError;
 use crate::domain::model::LinkRecord;
 use std::collections::{BTreeMap, HashSet};
 
+pub struct ResolvedTokenRecords {
+    pub records: Vec<LinkRecord>,
+    pub failures: Vec<(String, SymmError)>,
+}
+
 /// 解析 `rm` / `show` 参数：纯数字 = `ls` 全表序号（1-based）；否则按 **name 精确匹配**。
 pub fn record_from_token(
     conn: &rusqlite::Connection,
@@ -70,6 +75,54 @@ pub fn records_from_tokens(
         }
     }
     Ok(records)
+}
+
+pub fn records_from_tokens_partial(
+    conn: &rusqlite::Connection,
+    tokens: &[String],
+) -> Result<ResolvedTokenRecords, SymmError> {
+    let mut resolved = vec![None; tokens.len()];
+    let mut numeric_positions: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    let mut name_positions: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+
+    for (pos, raw) in tokens.iter().enumerate() {
+        let token = raw.trim();
+        if token.is_empty() {
+            return Err(SymmError::InvalidArgument {
+                message: "选择器不能为空".to_string(),
+            });
+        }
+        if let Some(index) = parse_list_index(token)? {
+            numeric_positions.entry(index).or_default().push(pos);
+        } else {
+            name_positions
+                .entry(token.to_string())
+                .or_default()
+                .push(pos);
+        }
+    }
+
+    if !numeric_positions.is_empty() {
+        fill_numeric_records(conn, &numeric_positions, &mut resolved)?;
+    }
+    if !name_positions.is_empty() {
+        fill_name_records(conn, &name_positions, &mut resolved)?;
+    }
+
+    let mut records = Vec::with_capacity(tokens.len());
+    let mut failures = Vec::new();
+    let mut seen_ids = HashSet::new();
+    for (pos, record) in resolved.into_iter().enumerate() {
+        let selector = tokens[pos].trim().to_string();
+        let Some(record) = record else {
+            failures.push((selector.clone(), SymmError::NotFound { selector }));
+            continue;
+        };
+        if seen_ids.insert(record.id) {
+            records.push(record);
+        }
+    }
+    Ok(ResolvedTokenRecords { records, failures })
 }
 
 /// 与 `ls` 相同顺序（`id` 升序）下的 1-based 序号。

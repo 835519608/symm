@@ -155,10 +155,7 @@ fn run_remove<W: Write>(
 ) -> Result<(), SymmError> {
     let started = Instant::now();
     let resolved = match selection {
-        RmSelection::Selectors(selectors) => ResolvedRecords {
-            records: resolve_records(conn, selectors, mode)?,
-            failures: Vec::new(),
-        },
+        RmSelection::Selectors(selectors) => resolve_records(conn, selectors, mode)?,
         RmSelection::RecordIds(ids) => records_from_ids(conn, ids)?,
     };
     run_resolved_records(
@@ -281,18 +278,28 @@ fn resolve_records(
     conn: &rusqlite::Connection,
     selectors: &[String],
     mode: RemoveMode,
-) -> Result<Vec<LinkRecord>, SymmError> {
+) -> Result<ResolvedRecords, SymmError> {
     if selectors.is_empty() {
-        return select::pick_many_records(conn, mode.action_label());
-    }
-
-    let records = selector::records_from_tokens(conn, selectors)?;
-    if records.is_empty() {
-        return Err(SymmError::InvalidArgument {
-            message: format!("未指定要{}的记录", mode.action_label()),
+        return Ok(ResolvedRecords {
+            records: select::pick_many_records(conn, mode.action_label())?,
+            failures: Vec::new(),
         });
     }
-    Ok(records)
+
+    let resolved = selector::records_from_tokens_partial(conn, selectors)?;
+    let records = resolved.records;
+    if records.is_empty() {
+        if resolved.failures.is_empty() {
+            return Err(SymmError::InvalidArgument {
+                message: format!("未指定要{}的记录", mode.action_label()),
+            });
+        }
+        return Err(batch_failure_error(resolved.failures));
+    }
+    Ok(ResolvedRecords {
+        records,
+        failures: resolved.failures,
+    })
 }
 
 fn records_from_ids(
@@ -564,6 +571,7 @@ fn ensure_restore_target_ready(
             ),
         });
     }
+    ensure_restore_link_parent_exists(link)?;
     Ok(())
 }
 
@@ -574,10 +582,65 @@ fn restore_link_path_is_inside_target(link: &Path, target: &Path) -> Result<bool
     let target = dunce::canonicalize(target).map_err(|e| SymmError::IoError {
         message: format!("无法解析 target 路径：{}：{e}", target.display()),
     })?;
-    let link_parent = dunce::canonicalize(link_parent).map_err(|e| SymmError::IoError {
-        message: format!("无法解析 link 父目录：{}：{e}", link_parent.display()),
-    })?;
+    let link_parent = canonicalize_existing_prefix(link_parent)?;
     Ok(link_parent == target || link_parent.starts_with(&target))
+}
+
+fn ensure_restore_link_parent_exists(link: &Path) -> Result<(), SymmError> {
+    let Some(parent) = link.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(parent).map_err(|e| SymmError::IoError {
+        message: format!("无法创建 link 父目录：{}：{e}", parent.display()),
+    })
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> Result<std::path::PathBuf, SymmError> {
+    let clean = absolute_lexical(path)?;
+    if let Ok(canonical) = dunce::canonicalize(&clean) {
+        return Ok(canonical);
+    }
+
+    let mut missing = Vec::new();
+    let mut cursor = clean.as_path();
+    loop {
+        if cursor.as_os_str().is_empty() {
+            return Ok(clean);
+        }
+        if crate::adapters::paths::presence::path_itself_exists(cursor)? {
+            let mut out = dunce::canonicalize(cursor).map_err(|e| SymmError::IoError {
+                message: format!("无法规范化路径：{}：{e}", cursor.display()),
+            })?;
+            for component in missing.iter().rev() {
+                out.push(component);
+            }
+            return Ok(out);
+        }
+        let Some(name) = cursor.file_name() else {
+            return Ok(clean);
+        };
+        missing.push(name.to_os_string());
+        let Some(parent) = cursor.parent() else {
+            return Ok(clean);
+        };
+        cursor = parent;
+    }
+}
+
+fn absolute_lexical(path: &Path) -> Result<std::path::PathBuf, SymmError> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| SymmError::IoError {
+                message: format!("无法读取当前目录：{e}"),
+            })?
+            .join(path)
+    };
+    Ok(crate::adapters::paths::lexical::clean(&absolute))
 }
 
 fn remove_current_link_for_restore(
