@@ -145,7 +145,7 @@ impl SymmApp {
             font_size_pt: self.state.font_size_pt,
             resolved_dark: theme::resolve_dark(self.state.theme),
         };
-        if self.applied_theme == Some(key) {
+        if self.applied_theme == Some(key) && theme::custom_text_styles_registered(ctx) {
             return;
         }
         theme::apply(
@@ -758,6 +758,21 @@ mod tests {
             debug_screenshot_to: None,
             debug_screenshot_requested: false,
         }
+    }
+
+    #[test]
+    fn apply_theme_reinstalls_custom_text_styles_after_style_reset() {
+        let ctx = egui::Context::default();
+        let mut app = test_app();
+
+        app.apply_theme(&ctx);
+        assert!(theme::custom_text_styles_registered(&ctx));
+
+        ctx.set_style(egui::Style::default());
+        assert!(!theme::custom_text_styles_registered(&ctx));
+
+        app.apply_theme(&ctx);
+        assert!(theme::custom_text_styles_registered(&ctx));
     }
 
     #[test]

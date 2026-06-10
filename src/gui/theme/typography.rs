@@ -99,6 +99,12 @@ pub fn apply_text_styles(ctx: &Context, typo: &UiTypography) {
     ctx.set_style(style);
 }
 
+pub fn custom_text_styles_registered(ctx: &Context) -> bool {
+    let style = ctx.style();
+    style.text_styles.contains_key(&ts_section())
+        && style.text_styles.contains_key(&ts_detail_title())
+}
+
 pub fn rich_section(text: &str, color: egui::Color32) -> RichText {
     RichText::new(text)
         .text_style(ts_section())

@@ -7,8 +7,8 @@ use egui::{
 };
 pub use palette::UiPalette;
 pub use typography::{
-    UiTypography, apply_text_styles, rich_body, rich_body_muted, rich_detail_title, rich_section,
-    rich_small, typography_from_ui,
+    UiTypography, apply_text_styles, custom_text_styles_registered, rich_body, rich_body_muted,
+    rich_detail_title, rich_section, rich_small, typography_from_ui,
 };
 
 pub const SIDEBAR_PANEL_ID: &str = "sidebar";
