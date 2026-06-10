@@ -45,11 +45,22 @@ runs:
         if ($target) {
           rustup target add $target
         }
+        $rustflags = @($env:RUSTFLAGS, "-C target-feature=+crt-static") | Where-Object { $_ }
+        $env:RUSTFLAGS = $rustflags -join " "
         $args = @("build", "--locked", "--release", "--features", "gui", "--bin", "symm", "--bin", "symm-cli")
         if ($target) {
           $args += @("--target", $target)
         }
         cargo @args
+
+    - name: 校验 Windows 包不依赖动态 VC Runtime
+      shell: pwsh
+      run: |
+        $target = "${{ inputs.build_target }}"
+        $buildDir = if ($target) { "target\$target\release" } else { "target\release" }
+        .github\scripts\assert-windows-static-crt.ps1 `
+          (Join-Path $buildDir "symm.exe") `
+          (Join-Path $buildDir "symm-cli.exe")
 
     - name: 校验二进制版本
       shell: pwsh
