@@ -14,6 +14,14 @@ runs:
       run: |
         set -euo pipefail
         perl -i -pe 's/^version = .*/version = "${{ inputs.semver }}"/' Cargo.toml
-        SEMVER="${{ inputs.semver }}" perl -0pi -e 's/(^name = "symm"\nversion = ")[^"]+(")/${1}$ENV{SEMVER}$2/m' Cargo.lock
-        grep '^version' Cargo.toml
-        awk 'prev == "name = \"symm\"" && /^version = / {print; exit} {prev = $0}' Cargo.lock
+        SEMVER="${{ inputs.semver }}" perl -0pi -e 's/(\[\[package\]\]\r?\nname = "symm"\r?\nversion = ")[^"]+(")/$1$ENV{SEMVER}$2/' Cargo.lock
+
+        cargo_toml_version="$(awk -F'"' '/^version = / {print $2; exit}' Cargo.toml)"
+        cargo_lock_version="$(
+          perl -0ne 'print $1 if /\[\[package\]\]\r?\nname = "symm"\r?\nversion = "([^"]+)"/' Cargo.lock
+        )"
+
+        test "$cargo_toml_version" = "${{ inputs.semver }}"
+        test "$cargo_lock_version" = "${{ inputs.semver }}"
+        printf 'Cargo.toml version = %s\n' "$cargo_toml_version"
+        printf 'Cargo.lock version = %s\n' "$cargo_lock_version"
