@@ -42,7 +42,7 @@ runs:
         trap 'rm -f "${expected_file}" "${actual_file}"' EXIT
 
         printf '%s\n' "${EXPECTED_ASSETS}" \
-          | awk '{$1=$1}; NF {print}' \
+          | awk 'NF {$1=$1; print}' \
           | sort > "${expected_file}"
 
         if [ ! -d "${DIST_DIR}" ]; then
